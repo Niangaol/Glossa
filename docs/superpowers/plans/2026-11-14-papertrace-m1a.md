@@ -5,10 +5,10 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**195 passed**，第三至第六轮评审的必修项都已修完
+**状态（2026-11-14）**：Task 7–11 全部落地，**205 passed**，第三至第七轮评审的必修项都已修完
 （第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2；
-第六轮 C1/I2/I3 + 兜底撞名守卫），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `（本次）`。
+第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `（本次）`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -137,7 +137,7 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
 ## Task 11: 端到端验收与评审 ✅
 
 - [x] `python -m papertrace build --repo tests/fixtures/nanogpt --out output/final-check --force`
-      → nodes=126（算子 75 / 权重 18 / 输入 1），edges=101，degraded=2，fused=0，orphan=0，
+      → nodes=128（算子 75 / 权重 18 / 输入 1 / 模块 34），edges=101，degraded=2，fused=0，orphan=0，
       `shape_broken=0`、`shape_unchecked=0`；matmul `(2,4,8,8)`、softmax 同形、split 标 degraded。
 - [x] `python -m papertrace dump --trace output/m1a/trace.json --ops` 人工核对。
 - [x] 独立评审（m1a-reviewer）第一轮结果归档：C1/C2/C3 + I1–I9 + M1–M8，结论「需要修」。
@@ -223,7 +223,7 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 
 | 编号 | 问题 | 修法 |
 | --- | --- | --- |
-| C1 | `sub_x`（根参数）与 `sub.x`（子模块参数）压成同一个 `p_sub_x`，后者覆盖前者；`forward(p_x)` 与 `self.x` 的 `p_x`/`p_x_1` 也会整对调换 | 参数判定改由 `graph_signature.input_specs` 接管（`fx_signature.input_plan/classify`）：`spec.kind` 定 kind，`spec.target` 定所属模块。mangled 名只作没有 spec 时的兜底，且兜底一旦发现压平撞名就 `BuildError`（exit 2），不猜 |
+| C1 | `sub_x`（根参数）与 `sub.x`（子模块参数）压成同一个 `p_sub_x`，后者覆盖前者；`forward(p_x)` 与 `self.x` 的 `p_x`/`p_x_1` 也会整对调换 | 参数判定改由 `graph_signature.input_specs` 接管（`fx_signature.input_plan/classify`）：`spec.kind` 定 kind，`spec.target` 定所属模块。mangled 名兜底在第七轮被彻底删掉（见下）：没有 spec 就 fail-closed |
 | I2 | 常量：`torch.cat([torch.ones(2,4), x])` 的 `cat inputs=[[2,4],[1,4]]`；`self.const` 被标成 `input` | `CONSTANT_TENSOR` → 新 kind `const`，与权重同等对待（不进 `inputs`）；`fx_inputs.constant_names()` 把无入参的 `ones/zeros/full/empty/arange/linspace/eye` 也并进派生集合。schema 的 kind enum、摘要的「常量 N」、`dump --ops` 的 `kind=const` 同步——否则 build 写得出、dump 校验不过 |
 | I3 | 只有参数、没有算子的子模块（`Sub`）不进 `nn_module_stack`，权重的 `parent_id` 掉回 `root` | `fx_modules.``_all_module_types()`：先按 `named_modules()` 收全树（root 用类名），再拿图里的类型补，模块节点与 `module_ids` 因此完整 |
 | I4 | README/计划写着「第五轮已修完」、提交链止于 `6a87f7d`、`meta["val"]` 取形状 | 本节与上两处已改回事实 |
@@ -233,17 +233,36 @@ observe 也跟着改了：`exported.module()` 的 placeholder 被换成 target �
 `torch.fx.GraphModule(nn.Module(), exported.graph)` 包住**原图**，再按 `input_specs` 把
 权重/缓冲/常量/数据的真实张量按 placeholder 顺序排好（`fx_signature.placeholder_args`）。
 
-守卫测试：`tests/test_sixth_review.py`（11 条：`sub.x`+`sub_x` 权重 2/输入 1 且 parent 分别是
+守卫测试：`tests/test_sixth_review.py`（12 条：`sub.x`+`sub_x` 权重 2/输入 1 且 parent 分别是
 `root`/`root/sub`、`forward(p_x)` 的 data 入参不被吞、字面常量与 `self.const` 都不算输入、
 `--ops` 显示 kind、`edge.dst` 是 int 与 nodes 混字符串都 exit 2 且无 traceback、
-无 spec 时压平撞名必 `BuildError`）。
+无 spec 且图里有 placeholder 必 `BuildError`）。
 
 变异探针（均已还原）：`plan = []` → 6 条红；`types = dict(module_types)` → parent 用例红；
-去掉 kind 标注 → `--ops` 用例红；`mangled_collisions` 返回空 → 兜底用例
-`DID NOT RAISE BuildError`。
+去掉 kind 标注 → `--ops` 用例红。
 
 拆分（都因为 ≤200 行）：`fx_modules.py`（模块树）、`fx_signature.py`（input_specs 与真实张量）、
-`schema_structure.py`（结构校验），`fx_nodes` 147 行、`fx_graph` 175 行、`schema_validate` 96 行。
+`schema_structure.py`（结构校验），`fx_nodes` 144 行、`fx_graph` 136 行、`fx_signature` 166 行、
+`schema_validate` 96 行。
+
+### 第七轮评审（基线 b48f361，196 passed）：兜底、`*_like`、spec 契约
+
+const 修复本身通过了（build 摘要「算子 1 / 权重 0 / 常量 1 / 输入 1」，dump 接受），
+但评审指出三条契约漏洞，其中 C1 会让整类标反：
+
+| 编号 | 问题 | 修法 |
+| --- | --- | --- |
+| C1 | 没有 `input_specs` 的兜底分支仍按名字猜 param：`Shadow`（`self.x` + `forward(p_x)`）fallback 把 `p_x_1` 标 input、`p_x` 标 param（正好反了）；`ConstModel` 的 const 变 input；observe 也因 `exported.module()` 名错位拿不到参数值 | 删掉 mangled 兜底与 `owned_paths`/`mangled_collisions`：图里只要有 placeholder 而 plan 为空，直接 `BuildError`（exit 2，「无法区分权重/输入/常量，拒绝出图」）。真的没有 placeholder（纯常量模型）时空 plan 合法。observe 只剩一条路径：原图 GraphModule + `placeholder_args` |
+| I1 | `ones_like/zeros_like` 被当数据输入：`cat([ones_like(x), y])` 的 `cat shape_in` 是 `x` 的 (2,4) 而不是 `y` 的 (2,6) | `CONSTANT_LIKE_OPS`（`*_like`/`new_*`）并入常量种子：输出不进 `inputs`，也不把 `x` 算成它的数据入参；`rand_like` 明确不在名单里 |
+| I2 | `placeholder_args` 不校验 spec 完整性：缺 spec 的 placeholder 会被当普通输入 `pop`，example_inputs 顺序/数量不对会静默喂错 | 三道校验：spec 必须覆盖全部 placeholder（缺/多都 `TraceUnsupported`，exit 5）；USER_INPUT 个数必须等于 `len(example_inputs)`（错误信息要求「按 forward 形参顺序给」）；正常路径再断言参数拿到的就是模块里那个 Parameter |
+
+守卫测试：`tests/test_seventh_review.py`（9 条：有 placeholder 无 spec → `BuildError`；纯常量模型空 plan 仍出图；
+spec 缺项/多出图里没有的名字/example_inputs 少一项都 `TraceUnsupported`；正常路径按 forward 顺序拿到真实张量；
+`ones_like`/`zeros_like` 的 `inputs==[]` 且 `cat shape_in` 是 y；CLI 摘要「输入 2 / 权重 0」并能被 dump 接受）。
+
+变异探针（均已还原）：关掉 fail-closed 守卫 → 2 条 `DID NOT RAISE BuildError`；
+去掉 `CONSTANT_LIKE_OPS` 的 inputs 清空 → 2 条 `inputs==[[2,4]]`；
+去掉 spec 完备性检查 → 「缺少 placeholder」用例红。
 
 ## Review Focus
 

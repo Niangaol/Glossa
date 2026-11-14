@@ -77,9 +77,11 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `self.const`（CONSTANT_TENSOR）单独标 `kind=const`，摘要写「常量 N」而不是塞进「权重 N」；
   纯字面量 `torch.ones(2,4)` 在导出图里就是一个 `ones` 算子（`kind=op`），它的
   `inputs` 为空，两者都不会冒充数据输入。
-  只有拿不到 `input_specs` 的老 torch 才退回 mangled 名（`p_`/`b_` 前缀）；那种情况下
-  `sub.x` 与根上的 `sub_x` 会压成同一个 `p_sub_x`，`build` 直接 `BuildError`（exit 2），
-  绝不静默取一个（压平名也绝不认参数全名：`self.x` 的 `x` 会和形参 `x` 撞车）。
+  **拿不到 `input_specs` 就 fail-closed**：图里只要还有 placeholder，`build` 直接
+  `BuildError`（exit 2），不再退回 mangled 名猜——`p_+参数全名` 会把 `sub.x` 与根上的
+  `sub_x` 压成同一个 `p_sub_x`，也会把形参 `p_x` 和参数 `x` 的压平名混为一谈，
+  猜错的代价是整份 trace 的 kind 反过来（权重标 input、输入标 param、常量消失），
+  而且计数可能「看起来正常」。真的没有 placeholder（纯常量模型）时，空 plan 是合法的。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
@@ -90,6 +92,12 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
 - **权重派生量不算数据输入**：`self.w[0]`、`self.w[:, :2]`、权重的转置/切片这类**只由权重算出来**
   的中间张量，和权重本身同等对待——它们不进 `inputs`，`shape_in` 仍是模型数据入参的形状。
   反过来 `x[0]` 这种从数据张量上取的切片仍是输入，不会被误伤。
+- **常量派生量也不算数据输入**：`ones_like(x)`/`zeros_like(x)`/`full_like`/`new_*` 只借输入
+  的形状和 dtype，产出的是常量——它们自己的 `inputs` 记空，下游 `cat([ones_like(x), y])`
+  的 `shape_in` 是 `y` 的形状。`rand_like` 不在这个名单里（随机数不是常量）。
+  `example_inputs()` 必须按 `forward` 形参顺序给。数量对不上时 `build` 一律 `exit 5`：
+  多数情况 `torch.export` 当场报「missing a required argument」，漏到我们这层的则由
+  `placeholder_args` 明说「按 forward 形参顺序给，多/少都不猜」——两种情况都不写 trace。
 - **边**：按参数位置一条条连（`args[1][0]` 这种 label），`torch.cat([a, b])` 不会丢边。
   每条边同时记 `shape`（消费者这一项的真实输入）、`producer_shape`（生产者真实输出）和
   `checked`。`shape_consistent` 只在 `checked` 时才有意义；两边对不上就是 False，

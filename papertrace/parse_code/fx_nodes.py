@@ -10,19 +10,21 @@ from papertrace.parse_code.fx_graph import (
     all_val_shapes,
     fmt_shape,
     fused_items,
-    mangled_collisions,
     node_kind,
     op_name,
-    owned_paths,
     stack_paths,
     val_dtype,
 )
-from papertrace.parse_code.fx_inputs import constant_names, data_shapes, param_derived
+from papertrace.parse_code.fx_inputs import (
+    CONSTANT_LIKE_OPS,
+    constant_names,
+    data_shapes,
+    param_derived,
+)
 from papertrace.parse_code.fx_shapes import tree_shapes
 
 
 def build_op_nodes(
-    module,
     graph,
     module_id: str,
     module_ids: dict[str, str],
@@ -34,33 +36,29 @@ def build_op_nodes(
 
     形状只取真实执行观察到的值（`observed`）；观察失败时上层已 exit 5，不会走到这里。
     只有 interpreter 不经过的节点（get_attr/权重）才用 `node.meta["val"]`，那是它们的值本身。
+
+    kind 只认 `torch.export` 的 `input_specs`（见 fx_signature）：没有它就无法区分
+    权重/常量/数据输入，按名字猜会把整类标反（第七轮 C1）。缺 spec 时**拒绝出图**，
+    不再保留 mangled 名兜底。
     """
-    owner, mangled_owner = owned_paths(module)
     plan = plan or {}
     spec_inputs = set(plan.get("inputs") or ())
     spec_consts = set(plan.get("consts") or ())
     spec_owner: dict[str, str] = dict(plan.get("owner") or ())
+    param_names: set[str] = set(plan.get("params") or ()) | set(plan.get("consts") or ())
     observed = observed or {}
     nodes: list[dict] = []
     by_name: dict[str, str] = {}
     all_shapes: dict[str, list[list[int]]] = {}
     # 权重/缓冲/常量在 export 图里也是 placeholder，得先认出它们，才能从「入参」里
-    # 挑出真正的数据输入。优先用 input_specs（权威：sub.x 与根上的 sub_x 不会互相覆盖）；
-    # 拿不到 spec 时才退回 mangled 名（p_/b_）；那条路一旦发现压平撞名就报错，不静默取一个。
-    if plan:
-        param_names: set[str] = set(plan.get("params") or ()) | set(plan.get("consts") or ())
-    else:
-        clashes = mangled_collisions(module)
-        if clashes:
-            flat, first, second = clashes[0]
-            raise BuildError(
-                f"参数名压平后撞车：{first} 与 {second} 都会变成 {flat}；"
-                "这个 torch 版本没有 graph_signature.input_specs，无法区分，拒绝出图"
-            )
-        param_names = {
-            n.name for n in graph.nodes if node_kind(n) == "param"
-        } | {n.name for n in graph.nodes if n.name in mangled_owner}
-    # 只由权重/常量算出来的中间量（self.w[0]、torch.ones(...)）同样不是数据输入
+    # 挑出真正的数据输入。input_specs 是权威（sub.x 与根上的 sub_x 不会互相覆盖）；
+    # 老 torch 没有它时 fail-closed：猜错的代价是整份 trace 的 kind 全反，比不出图更糟。
+    if not plan and any(getattr(n, "op", None) == "placeholder" for n in graph.nodes):
+        raise BuildError(
+            "这个 torch 版本没有 graph_signature.input_specs，无法区分权重/输入/常量；"
+            "按约定拒绝出图（不再按 mangled 名猜，猜错会把参数和输入整类标反）"
+        )
+    # 只由权重/常量算出来的中间量（self.w[0]、torch.ones(...)、ones_like(x)）同样不是数据输入
     derived = param_derived(graph, param_names | constant_names(graph, op_name))
 
     for index, node in enumerate(graph.nodes):
@@ -98,19 +96,21 @@ def build_op_nodes(
             # 取权重的那一项不算数据输入（否则 shape_in 变权重形状）
             inputs = [shapes[0]]
             data_input = shapes[0]
+        if op in CONSTANT_LIKE_OPS:
+            # ones_like(x) 只借 x 的形状/类型，产出的是常量：它不是数据入参，
+            # 也不把 x 算成自己的数据入参（否则 cat([ones_like(x), y]) 的 shape_in 会取 x）
+            inputs = []
+            data_input = None
 
         paths = stack_paths(node)
         parent_key = paths[-1] if paths else ""
         # torch.export 把权重抬成图输入（placeholder）；kind 以 input_specs 为准，
         # 父模块也用它给的 target（参数全名），不再拿会被压平的名字猜。
-        if kind == "param" or node.name in param_names:
+        if node.name in param_names:
             # 常量（torch.ones(...)、self.const）不是训练权重：分开标，摘要才不会把
             # 「常量 1 / 权重 0」写成「权重 1」，让人以为模型有可训练参数。
             kind = "const" if node.name in spec_consts else "param"
-            if node.name in spec_owner:
-                parent_key = spec_owner[node.name]
-            else:
-                parent_key = mangled_owner.get(node.name) or owner.get(node.name) or parent_key
+            parent_key = spec_owner.get(node.name, parent_key)
         elif node.name in spec_inputs:
             kind = "input"
         parent_id = module_ids.get(parent_key, module_id)

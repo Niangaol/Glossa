@@ -36,7 +36,11 @@ def _spec_kind(spec) -> str:
 
 
 def input_plan(exported) -> list[dict]:
-    """把 input_specs 摊平成 [{name, kind, target}]，顺序即 placeholder 顺序。"""
+    """把 input_specs 摊平成 [{name, kind, target}]。
+
+    torch.export 保证顺序与图的 placeholder 顺序一致；但这是一份**约定**，
+    placeholder_args 会逐个核对名字，不靠顺序静默对齐。
+    """
     signature = getattr(exported, "graph_signature", None)
     specs = getattr(signature, "input_specs", None) or []
     plan: list[dict] = []
@@ -92,12 +96,36 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
     named.update(dict(module.named_buffers(remove_duplicate=False)))
     constants = dict(getattr(exported, "constants", None) or {})
     spec_by_name = {item["name"]: item for item in plan}
+    placeholders = [n.name for n in exported.graph.nodes if n.op == "placeholder"]
+    # 契约级防御：每个 placeholder 都必须有 spec。缺一个就说明这份 input_specs 不是
+    # 给这张图的（老 torch / 手工拼的 exported），继续往下走会把某个参数当成普通输入
+    # 悄悄 pop 掉一个 example_inputs，形状全错还没有报错。
+    missing = [name for name in placeholders if name not in spec_by_name]
+    if missing:
+        raise TraceUnsupported(
+            "graph_signature.input_specs 与图对不上，缺少 placeholder："
+            + "、".join(missing)
+            + "；无法判断谁是权重/输入，按约定拒绝出图"
+        )
+    extra = [name for name in spec_by_name if name not in placeholders]
+    if extra:
+        raise TraceUnsupported(
+            "graph_signature.input_specs 里有图里不存在的 placeholder："
+            + "、".join(extra)
+            + "；这份 spec 不是给这张图的，拒绝出图"
+        )
+    user_names = [item["name"] for item in plan if item.get("kind") == "input"]
+    if len(user_names) != len(example_inputs):
+        raise TraceUnsupported(
+            f"example_inputs 有 {len(example_inputs)} 项，图里有 {len(user_names)} 个数据输入"
+            f"（{'、'.join(user_names) or '无'}）；请按 forward 形参顺序给，多/少都不猜"
+        )
     queue = list(example_inputs)
     args: list = []
     for node in exported.graph.nodes:
         if node.op != "placeholder":
             continue
-        spec = spec_by_name.get(node.name) or {}
+        spec = spec_by_name[node.name]
         kind, target = spec.get("kind"), spec.get("target")
         if kind == "param":
             if target in named:

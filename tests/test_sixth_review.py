@@ -128,9 +128,8 @@ def test_submodule_param_hangs_under_its_submodule():
     assert parents == ["root", "root/sub"], parents
 
 
-def test_mangled_fallback_refuses_to_guess_when_names_collide():
-    """C1：老 torch 没有 input_specs 时，p_sub_x 撞车只能报错，不能静默把权重当输入。"""
-    import torch
+def test_missing_input_specs_refuses_to_guess():
+    """C1：没有 input_specs 时直接拒绝出图，不再按 mangled 名猜（猜错是整类标反）。"""
 
     class Sub(torch.nn.Module):
         def __init__(self):
@@ -149,8 +148,8 @@ def test_mangled_fallback_refuses_to_guess_when_names_collide():
     _ensure_export_cache()  # 本机 TORCHINDUCTOR_CACHE_DIR 指向不可写目录，export 会 PermissionError
     exported = torch.export.export(M().eval(), (torch.ones(1, 4),))
     with pytest.raises(BuildError) as info:
-        build_op_nodes(M().eval(), exported.graph, "root", {"root": "root"}, "root")
-    assert "撞车" in str(info.value), str(info.value)
+        build_op_nodes(exported.graph, "root", {"root": "root"}, "root", plan={})
+    assert "input_specs" in str(info.value), str(info.value)
 
 
 def test_cli_summary_counts_two_weights_and_one_input():

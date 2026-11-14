@@ -120,17 +120,15 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     # 跑不起来就**不能**冒充「真实追踪」：没有第二遍执行，形状只是 torch.export
     # 的推断，节点 source 也不再是 runtime。宁可 exit 5 不写 trace。
     plan = input_plan(exported)
-    classified = classify(plan) if plan else {}
+    classified = classify(plan)
     try:
-        if plan:
-            # 用原图 + 真实张量跑：node.name 和 exported.graph 完全一致，
-            # 参数/输入的内外名不会再错位（exported.module() 会换成 target 名）
-            runnable = torch_mod.fx.GraphModule(torch_mod.nn.Module(), exported.graph)
-            observed, observe_error = observe(
-                runnable, placeholder_args(module, exported, plan, example_inputs)
-            )
-        else:  # pragma: no cover - 老版本 torch 没有 input_specs
-            observed, observe_error = observe(exported.module(), example_inputs)
+        # 用原图 + 真实张量跑：node.name 和 exported.graph 完全一致，
+        # 参数/输入的内外名不会再错位（exported.module() 会换成 target 名）。
+        # 老 torch 没有 input_specs 时 placeholder_args 会直接拒绝（fail-closed）。
+        runnable = torch_mod.fx.GraphModule(torch_mod.nn.Module(), exported.graph)
+        observed, observe_error = observe(
+            runnable, placeholder_args(module, exported, plan, example_inputs)
+        )
     except TraceUnsupported:
         raise
     except Exception as exc:  # noqa: BLE001 - 统一翻译成可读原因
@@ -141,7 +139,7 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
             "按约定不写 trace 冒充结果：" + observe_error
         )
     op_nodes, by_name, all_shapes = build_op_nodes(
-        module, graph, module_id, module_ids, root_loc, observed=observed, plan=classified
+        graph, module_id, module_ids, root_loc, observed=observed, plan=classified
     )
     edges = build_edges(graph, by_name, op_nodes, all_shapes, observed=observed)
     nodes = list(tree) + op_nodes

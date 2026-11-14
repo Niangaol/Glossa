@@ -30,22 +30,33 @@ def _collect(value, found: list) -> None:
 
 
 # 不带张量实参的常量构造算子：它们的输出是常量，不是模型数据输入。
-# ones_like/zeros_like 这类带实参的不算（形状取决于输入，语义上仍是数据派生）。
 CONSTANT_OPS = frozenset({"ones", "zeros", "full", "empty", "arange", "linspace", "eye"})
+# 带实参的常量派生：形状随输入走，但产出的是常量，不是数据流。第七轮评审
+# （I1）用 cat([ones_like(x), y]) 抓到过：cat 的 shape_in 变成了 x 的形状。
+# 反向对照：rand_like 不在表里——它产出随机数，不能当常量忽略。
+CONSTANT_LIKE_OPS = frozenset(
+    {"ones_like", "zeros_like", "full_like", "empty_like", "new_ones", "new_zeros", "new_full", "new_empty"}
+)
 
 
 def constant_names(graph, op_of) -> set[str]:
-    """找出「无实参的常量构造」节点名（`torch.ones(2, 4)` 这类）。
+    """常量/常量派生节点的名字（`torch.ones(2, 4)`、`ones_like(x)`）。
 
+    两类都算：无实参的常量构造（`CONSTANT_OPS`），以及带实参但只借用形状/类型的
+    `*_like`（`CONSTANT_LIKE_OPS`）。它们的输出都不是模型的数据输入。
     `op_of` 由调用方传入（fx_graph.op_name），这里不 import torch 也不必知道 aten 命名。
     """
     names: set[str] = set()
     for node in graph.nodes:
         if getattr(node, "op", None) in ("placeholder", "get_attr", "output"):
             continue
+        op = op_of(node)
+        if op in CONSTANT_LIKE_OPS:
+            names.add(node.name)
+            continue
         if arg_nodes(node):
             continue
-        if op_of(node) in CONSTANT_OPS:
+        if op in CONSTANT_OPS:
             names.add(node.name)
     return names
 

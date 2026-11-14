@@ -138,50 +138,6 @@ def collect_module_types(graph) -> dict[str, str]:
     return types
 
 
-def owned_paths(module) -> tuple[dict[str, str], dict[str, str]]:
-    """返回 (参数全名 → 模块路径, export mangled 名 → 模块路径)。
-
-    两个映射必须分开：参数全名 `x` 与形参名 `x` 在真实模型里会撞
-    （`self.x = nn.Parameter(...)` + `forward(self, x)`），拿全名去认 placeholder
-    会把真输入当成权重。placeholder 只认 mangled 名（`p_x` / `b_x`），
-    全名只用于 get_attr 节点的归属。
-    """
-    owner: dict[str, str] = {}
-    mangled_owner: dict[str, str] = {}
-    # 直接遍历模块树，不走 named_parameters：tied weight（lm_head.weight 与 wte.weight
-    # 同一个 Parameter）会被 named_parameters 去重掉，只看它就漏了。
-    for mod_name, mod in module.named_modules():
-        prefix = f"{mod_name}." if mod_name else ""
-        for attr in list(getattr(mod, "_parameters", {}) or {}) + list(getattr(mod, "_buffers", {}) or {}):
-            full = f"{prefix}{attr}"
-            owner[full] = mod_name
-            mangled = full.replace(".", "_")
-            mangled_owner["p_" + mangled] = mod_name
-            mangled_owner["b_" + mangled] = mod_name
-    return owner, mangled_owner
-
-
-
-def mangled_collisions(module) -> list[tuple[str, str, str]]:
-    """(压平名, 全名A, 全名B)：`sub.x` 与根上的 `sub_x` 都会变成 `p_sub_x`。
-
-    这是 mangled 名唯一的致命缺陷。有 input_specs 时不走这条路；没有 spec 的老
-    torch 上必须显式报错——静默取后者会把权重和真输入整个换位（第五轮 C1）。
-    """
-    seen: dict[str, str] = {}
-    clashes: list[tuple[str, str, str]] = []
-    for mod_name, mod in module.named_modules():
-        prefix = f"{mod_name}." if mod_name else ""
-        for attr in list(getattr(mod, "_parameters", {}) or {}) + list(getattr(mod, "_buffers", {}) or {}):
-            full = f"{prefix}{attr}"
-            flat = full.replace(".", "_")
-            if flat in seen and seen[flat] != full:
-                clashes.append((flat, seen[flat], full))
-            else:
-                seen[flat] = full
-    return clashes
-
-
 def fmt_shape(shape) -> str:
     """() 表示 0 维标量；(?) 表示形状未知。"""
     if shape is None:
