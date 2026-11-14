@@ -38,7 +38,7 @@ sanitize 非字母数字、再 `lower()`，而我只按 `target.replace(".", "_"
 第十四轮 I-1 同形状跨模块互换 → 名字↔target 核对（第八道关）、M-1 「不可观测」用例按事实改写、M-3 拆出 `fx_kinds`、M-5 提交链与端到端路径补齐；
 第十五轮 C1 误杀 + C2 漏检 → 第八道关改**正向核对**（复刻 torch 的 `_strip_name`+`lower`）、I-1 文档纠正、I-2 六个真实命名模型 + 与导出器实际名字交叉核对、M-1 补 `obj_` 前缀、M-3 sanitize/lower、M-4 提交链补齐；
 第十六轮 I-1 未知前缀 fail-open → 拒绝、I-2 `CUSTOM_OBJ` 无真实导出背书 → 先拒绝（`obj_` 前缀一并删掉）、M-1 后缀伪造钉成「单关接受 + 端到端拒绝」两层、M-2 报错加观察到的 base、M-3 `checked` 改精确相等 + PARENTS 独立推导 + 补四类缺口、M-4 文档漂移），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1` → `c2608ea` → `e398d9f` → `e8757d2` → `af02aef` →（第十六轮，见提交锚点表）。
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1` → `c2608ea` → `e398d9f` → `e8757d2` → `af02aef` → `d83d2e5` → `ddeb9b9`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -999,5 +999,5 @@ schema_structure 129、**fx_names 125**、schema_validate 100、fx_shapes 98、f
 | `e398d9f` | 第十五轮必修：第八道关改**正向核对**（复刻 torch `_strip_name`+`lower`+sanitize，补 `obj_`）、六个真实命名模型 + 与导出器实际名字交叉核对、CLI 级互换 exit 2 与合法 exit 0、歧义断言加牙，417 passed |
 | `e8757d2` | 第十五轮文档：README 第八道关改正向核对与 C1/C2 反例、计划记录（torch 命名规则表、六模型实测、五组变异、结构化 diff）、提交链补 `c2608ea` |
 | `af02aef` | 钉第十五轮提交链 |
-| （本次） | 第十六轮硬化：未知前缀/无 target → fail-closed、`CUSTOM_OBJ` 移进 `REFUSED_KINDS`（删 `obj_` 前缀）、报错加观察到的 base、25 条新回归 + 三份既有测试按新语义适配，442 passed |
-| （本次文档） | 第十六轮文档：README kind 表/⑧ 段/残余边界三条/退出码表、计划记录（I-1/I-2/M-1…M-4、三组变异、结构化 diff 只差 created_at）、提交链补 `af02aef` |
+| `d83d2e5` | 第十六轮硬化：未知前缀/无 target → fail-closed、`CUSTOM_OBJ` 移进 `REFUSED_KINDS`（删 `obj_` 前缀）、报错加观察到的 base、25 条新回归 + 三份既有测试按新语义适配，442 passed |
+| `ddeb9b9` | 第十六轮文档：README kind 表/⑧ 段/残余边界三条/退出码表、计划记录（I-1/I-2/M-1…M-4、三组变异、结构化 diff 只差 created_at）、提交链补 `af02aef` |
