@@ -32,7 +32,7 @@ sanitize 非字母数字、再 `lower()`，而我只按 `target.replace(".", "_"
 第十三轮 I-1 target 互换 → 形状核对（第七道关）、M-1 pytree 措辞改准、M-3 TOKEN 归类说明、M-5 `cond`/`while_loop` 点名、M-6 补 target 互换回归；
 第十四轮 I-1 同形状跨模块互换 → 名字↔target 核对（第八道关）、M-1 「不可观测」用例按事实改写、M-3 拆出 `fx_kinds`、M-5 提交链与端到端路径补齐；
 第十五轮 C1 误杀 + C2 漏检 → 第八道关改**正向核对**（复刻 torch 的 `_strip_name`+`lower`）、I-1 文档纠正、I-2 六个真实命名模型 + 与导出器实际名字交叉核对、M-1 补 `obj_` 前缀、M-3 sanitize/lower、M-4 提交链补齐），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1` → `c2608ea` →（本次）。
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1` → `c2608ea` → `e398d9f` → `e8757d2`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -885,4 +885,5 @@ schema_validate 100、fx_shapes 98、fx_inputs 98、fx_kinds 54。
 | `0ca6837` | 第十四轮必修：第八道关 `fx_names.check_name_target`（名字↔target，反推唯一才比）、拆出 `fx_kinds`、「不可观测」用例按事实改写、残余洞钉成 trace 级证据、29 条新回归，375 passed |
 | `81581a1` | 第十四轮文档：八道关与残余边界、计划记录、行数重测 |
 | `c2608ea` | 钉第十四轮提交链 |
-| （本次） | 第十五轮必修：第八道关改**正向核对**（复刻 torch `_strip_name`+`lower`+sanitize，补 `obj_`）、六个真实命名模型 + 与导出器实际名字交叉核对、CLI 级互换 exit 2 与合法 exit 0、歧义断言加牙，417 passed |
+| `e398d9f` | 第十五轮必修：第八道关改**正向核对**（复刻 torch `_strip_name`+`lower`+sanitize，补 `obj_`）、六个真实命名模型 + 与导出器实际名字交叉核对、CLI 级互换 exit 2 与合法 exit 0、歧义断言加牙，417 passed |
+| `e8757d2` | 第十五轮文档：README 第八道关改正向核对与 C1/C2 反例、计划记录（torch 命名规则表、六模型实测、五组变异、结构化 diff）、提交链补 `c2608ea` |
