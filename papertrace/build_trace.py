@@ -1,16 +1,23 @@
 """build 的编排入口。
 
-本切片只会产出**空骨架**：合法的 trace.json，节点/边/锚点全为空。
-这不是 M1a 完成——没有算子图就是没有算子图，不允许塞示例节点冒充。
-真正的编排（ingest → parse_code → parse_paper → align → detail）在后续切片接。
+M1a 只做一件事：把一个 nn.Module 的真实算子图抓进合法的 trace.json。
+论文 ingest、对齐、mismatch 仍然是空的——**空就是空**，不塞示例数据。
 """
 
 from __future__ import annotations
 
+import importlib
 import subprocess
+import sys
 from pathlib import Path
 
+from papertrace.exceptions import BuildError
+from papertrace.parse_code.fx_trace import _require_torch, trace_module
 from papertrace.schema_validate import minimal_trace
+
+#: 默认示例输入：batch=2、序列长度 8（够让 Attention 的 (B, H, T, T) 显形）。
+DEFAULT_BATCH = 2
+DEFAULT_SEQ_LEN = 8
 
 
 def repo_commit(repo: str | Path) -> str:
@@ -48,3 +55,83 @@ def skeleton_trace(*, repo_url: str, commit: str | None = None) -> dict:
         repo_url=repo_url,
         commit=commit or "dirty-skeleton",
     )
+
+
+def load_entry(repo: str | Path, entry: str):
+    """把 `模块:类名` 解析成一个已构造的模型实例。
+
+    约定：entry 形如 `model:GPT`，模块按仓库根目录 import。
+    """
+    root = Path(repo)
+    if not root.is_dir():
+        raise BuildError(f"仓库目录不存在：{root}")
+    module_name, sep, attr = entry.partition(":")
+    if not sep or not module_name or not attr:
+        raise BuildError(f"--entry 要写成 模块:类名（例如 model:GPT），收到 {entry!r}")
+    root_str = str(root.resolve())
+    inserted = root_str not in sys.path
+    if inserted:
+        sys.path.insert(0, root_str)
+    try:
+        sys.modules.pop(module_name, None)  # 别让上一次 build 的旧模块顶替
+        module = importlib.import_module(module_name)
+    except ImportError as exc:
+        raise BuildError(f"导入 {module_name} 失败：{exc}") from exc
+    finally:
+        if inserted and root_str in sys.path:
+            sys.path.remove(root_str)
+    obj = getattr(module, attr, None)
+    if obj is None:
+        raise BuildError(f"{module_name} 里没有 {attr}")
+    try:
+        return obj()
+    except TypeError as exc:
+        raise BuildError(
+            f"{entry} 不能零参构造（{exc}）。"
+            "请改成 模块:工厂函数，比如 def build_model(): return GPT(GPTConfig(n_layer=2))"
+        ) from exc
+
+
+def example_inputs_for(model, *, batch: int = DEFAULT_BATCH, seq_len: int | None = None):
+    """给模型造一组示例输入。
+
+    优先级：模型自带的 `example_inputs()` > 按 GPT 惯例造 token id。
+    两条都不成立就报错，绝不拿随机形状糊弄过去。
+    """
+    factory = getattr(model, "example_inputs", None)
+    if callable(factory):
+        return tuple(factory())
+
+    torch_mod = _require_torch()
+    config = getattr(model, "config", None)
+    vocab_size = getattr(config, "vocab_size", None)
+    block_size = getattr(config, "block_size", None)
+    if vocab_size and block_size:
+        length = seq_len or min(int(block_size), DEFAULT_SEQ_LEN)
+        generator = torch_mod.Generator().manual_seed(0)
+        return (torch_mod.randint(0, int(vocab_size), (batch, length), generator=generator),)
+
+    raise BuildError(
+        f"{type(model).__name__} 既没有 example_inputs()，也没有 config.vocab_size/block_size；"
+        "请给它加一个 example_inputs() 返回示例张量。"
+    )
+
+
+def build_trace(
+    repo: str | Path,
+    *,
+    entry: str = "model:build_model",
+    module_id: str = "root",
+    batch: int = DEFAULT_BATCH,
+    seq_len: int | None = None,
+) -> dict:
+    """真实追踪一个模型，返回可校验的 trace 文档（节点/边已填充）。"""
+    model = load_entry(repo, entry)
+    inputs = example_inputs_for(model, batch=batch, seq_len=seq_len)
+    traced = trace_module(model, inputs, module_id=module_id)
+
+    doc = minimal_trace(repo_url=str(repo), commit=repo_commit(repo))
+    doc["meta"]["repo"]["entry_module"] = entry
+    doc["nodes"] = traced["nodes"]
+    doc["edges"] = traced["edges"]
+    return doc

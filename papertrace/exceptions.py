@@ -23,6 +23,10 @@ class IngestError(PaperTraceError):
     """输入仓库或论文无法 ingest（非 Python、非 PyTorch、解析失败等）。"""
 
 
+class BuildError(PaperTraceError):
+    """用户在命令行上给的东西对不上（仓库路径、entry、示例输入等）。"""
+
+
 class TraceUnsupported(PaperTraceError):
     """torch.export 追不动这个模型（自定义算子、数据依赖分支等）。
 

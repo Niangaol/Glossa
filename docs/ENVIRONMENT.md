@@ -23,6 +23,28 @@ python -m pytest -q
 `fetch_deps.py` 直接查 PyPI JSON、下载 wheel、用 zipfile 解到 `pydeps/`，绕开 pip 的临时目录。
 `pydeps/` 与 `wheels/` 都在 .gitignore 里。
 
+### 0.1 装 torch（M1a 真实算子追踪需要）
+
+```bat
+cd /d D:\AgentPrograms\PaperTrace
+python tmpinstall\fetch_deps.py pydeps wheels torch
+set PYTHONPATH=D:\AgentPrograms\PaperTrace\pydeps
+python -c "import torch; print(torch.__version__)"
+```
+
+实测结果：`torch-2.15.0+cpu`，Windows PyPI 轮子就是 CPU 版，正好合「探针默认 CPU」。
+下载断过线：`fetch_deps.py` 带 Range 断点续传（最多 8 次重试、按 PyPI JSON 的 size 校验、BadZipFile 重下），
+重新执行同一条命令会从断点接着下，不会从头来。
+
+**坑：机器级 `TORCHINDUCTOR_CACHE_DIR`。** 本机装过 Unsloth Studio，把该变量设成了
+`C:\Users\niangao\.unsloth\studio\cache\torchinductor`。这个目录在沙箱里不可写，
+而 `torch.export` / `make_fx` 都会拉起 inductor，于是 `import torch._dynamo` 会抛
+`PermissionError: [WinError 5] 拒绝访问`。
+
+`papertrace/parse_code/fx_trace.py` 的 `_ensure_export_cache()` 处理了这件事：先探测那个目录能不能写
+（写一个 `.papertrace-write-probe`），能写就尊重用户配置；不能写才退到 `%TEMP%\papertrace-torch-cache`
+或当前目录下的 `papertrace-torch-cache`。**不覆盖**用户的环境变量。
+
 ## 1. 安装 Python 3.11（可选）
 
 **框架切片不需要这一步**，系统 3.13.15 就能跑测试。等你真要跑 fx / 探针时再装。

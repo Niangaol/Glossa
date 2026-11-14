@@ -11,6 +11,8 @@ pydeps/
 wheels/
 .tmp/
 pip.log
+tmpinstall/pip-*/
+papertrace-torch-cache/
 _spec_extract.txt
 .pytest-tmp/
 pytest-cache-files-*/

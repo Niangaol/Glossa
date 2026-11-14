@@ -11,11 +11,15 @@ import argparse
 import sys
 from pathlib import Path
 
-from papertrace.build_trace import repo_commit, skeleton_trace
-from papertrace.exceptions import TraceSchemaError
+from papertrace.build_trace import BuildError, build_trace, repo_commit, skeleton_trace
+from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
 from papertrace.schema_validate import dump_trace, load_trace, validate_trace
 
 UNIMPLEMENTED = 2
+#: 缺运行时要件（典型：没装 torch）。不许降级成空 trace。
+MISSING_RUNTIME = 4
+#: 模型能加载但追不动（自定义算子、数据依赖分支等）。
+UNTRACEABLE = 5
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,13 +33,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_build.add_argument("--repo", required=True, help="本地仓库路径或 git URL")
     p_build.add_argument("--paper", default="none", help="arxiv:ID、本地 .tex/.pdf，或 none")
     p_build.add_argument("--out", default="output", help="输出目录")
-    p_build.add_argument("--skeleton", action="store_true", help="只写合法的空 trace.json")
+    p_build.add_argument(
+        "--entry",
+        default="model:build_model",
+        help="模型入口，写成 模块:符号（默认 model:build_model；工厂函数或零参类）",
+    )
+    p_build.add_argument("--batch", type=int, default=2, help="示例输入的 batch 大小")
+    p_build.add_argument("--seq-len", type=int, default=None, help="示例输入的序列长度")
+    p_build.add_argument(
+        "--skeleton", action="store_true", help="只写合法的空 trace.json（不追踪）"
+    )
     p_build.add_argument(
         "--force", action="store_true", help="允许覆盖已存在的 trace.json"
     )
 
     p_dump = sub.add_parser("dump", help="打印 trace.json 的规模计数")
     p_dump.add_argument("--trace", default="output/trace.json", help="trace.json 路径")
+    p_dump.add_argument(
+        "--ops", action="store_true", help="按拓扑序打印算子节点（形状 → 形状）"
+    )
 
     p_serve = sub.add_parser("serve", help="localhost 按需深钻")
     p_serve.add_argument("--trace", default="output/trace.json")
@@ -52,14 +68,25 @@ def _cmd_build(args: argparse.Namespace) -> int:
     if args.paper not in ("none", "", None):
         print("papertrace build：论文 ingest 尚未实现。", file=sys.stderr)
         return UNIMPLEMENTED
-    if not args.skeleton:
-        print(
-            "papertrace build：算子追踪尚未实现，请加 --skeleton 只写空骨架。",
-            file=sys.stderr,
-        )
-        return UNIMPLEMENTED
-
-    doc = skeleton_trace(repo_url=str(args.repo), commit=repo_commit(args.repo))
+    if args.skeleton:
+        doc = skeleton_trace(repo_url=str(args.repo), commit=repo_commit(args.repo))
+    else:
+        try:
+            doc = build_trace(
+                args.repo,
+                entry=args.entry,
+                batch=args.batch,
+                seq_len=args.seq_len,
+            )
+        except RuntimeUnavailable as exc:
+            print(f"papertrace build：{exc}", file=sys.stderr)
+            return MISSING_RUNTIME
+        except TraceUnsupported as exc:
+            print(f"papertrace build：{exc}", file=sys.stderr)
+            return UNTRACEABLE
+        except BuildError as exc:
+            print(f"papertrace build：{exc}", file=sys.stderr)
+            return UNIMPLEMENTED
     try:
         validate_trace(doc)
     except TraceSchemaError as exc:
@@ -72,7 +99,14 @@ def _cmd_build(args: argparse.Namespace) -> int:
     except FileExistsError as exc:
         print(f"papertrace build：{exc}", file=sys.stderr)
         return 3
-    print(f"已写出 {out_path}（nodes=0 edges=0 anchors=0，骨架）")
+    if args.skeleton:
+        print(f"已写出 {out_path}（nodes=0 edges=0 anchors=0，骨架）")
+    else:
+        ops = sum(1 for n in doc["nodes"] if n["level"] == "op")
+        print(
+            f"已写出 {out_path}（nodes={len(doc['nodes'])} 其中算子 {ops}，"
+            f"edges={len(doc['edges'])}，真实追踪）"
+        )
     return 0
 
 
@@ -83,6 +117,9 @@ def _cmd_dump(args: argparse.Namespace) -> int:
         return 2
     doc = load_trace(path)
     validate_trace(doc)
+    if args.ops:
+        _print_ops(doc)
+        return 0
     print(
         "nodes={} edges={} anchors={} mismatches={} unresolved={}".format(
             len(doc["nodes"]),
@@ -93,6 +130,26 @@ def _cmd_dump(args: argparse.Namespace) -> int:
         )
     )
     return 0
+
+
+def _fmt_shape(shape) -> str:
+    return "(" + ", ".join(str(d) for d in shape) + ")" if shape else "(?)"
+
+
+def _print_ops(doc: dict) -> None:
+    """按拓扑序打印算子：这是 M1a 的「肉眼验收」入口。"""
+    by_id = {n["id"]: n for n in doc["nodes"]}
+    for node in doc["nodes"]:
+        if node["level"] != "op":
+            continue
+        module = by_id.get(node.get("parent_id") or "")
+        where = module["label"] if module else "-"
+        flag = "  [degraded]" if node["degraded"] else ""
+        print(
+            f"{node['id']:<16} {where:<34} "
+            f"{_fmt_shape(node['shape_in'])} -> {_fmt_shape(node['shape_out'])} "
+            f"{node['op']}{flag}"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

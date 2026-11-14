@@ -58,16 +58,39 @@ def test_skeleton_build_writes_valid_empty_trace():
     assert doc["meta"]["repo"]["commit"] == "dirty-subdir"
 
 
-def test_build_without_skeleton_refuses():
-    out_dir = scratch_dir("build-refuse")
+def test_build_without_skeleton_runs_real_trace():
+    """去掉 --skeleton 就该真的追踪；没 torch 的话必须退出码 4 且不写文件。"""
+    import pytest
+
+    pytest.importorskip("torch", reason="真实追踪需要 torch")
+    out_dir = scratch_dir("build-real")
     r = run_cli(
         "build",
         "--repo", "tests/fixtures/nanogpt",
         "--paper", "none",
         "--out", str(out_dir),
     )
-    assert r.returncode == 2
-    assert "算子追踪尚未实现" in r.stderr
+    assert r.returncode == 0, r.stderr
+    doc = load_trace(out_dir / "trace.json")
+    validate_trace(doc)
+    assert len(doc["nodes"]) > 10
+
+
+def test_build_exits_4_when_torch_missing(monkeypatch):
+    """缺运行时要件时必须退出码 4，并且**不能**留下一个假的 trace.json。"""
+    from papertrace import cli
+    from papertrace.exceptions import RuntimeUnavailable
+    from papertrace.parse_code import fx_trace
+
+    def boom():
+        raise RuntimeUnavailable("没有 torch")
+
+    monkeypatch.setattr(fx_trace, "_require_torch", boom)
+    out_dir = scratch_dir("no-torch")
+    code = cli.main(
+        ["build", "--repo", "tests/fixtures/nanogpt", "--paper", "none", "--out", str(out_dir)]
+    )
+    assert code == 4
     assert not (out_dir / "trace.json").exists()
 
 
@@ -99,6 +122,51 @@ def test_dump_prints_counts():
     assert "nodes=0" in r.stdout
     assert "edges=0" in r.stdout
     assert "anchors=0" in r.stdout
+
+
+def test_dump_ops_prints_topological_operator_list():
+    """--ops 是 M1a 的肉眼验收入口：一行一个算子，带形状和所属模块。"""
+    import pytest
+
+    pytest.importorskip("torch", reason="真实追踪需要 torch")
+    out_dir = scratch_dir("dump-ops")
+    built = run_cli(
+        "build",
+        "--repo", "tests/fixtures/nanogpt",
+        "--paper", "none",
+        "--out", str(out_dir),
+    )
+    assert built.returncode == 0, built.stderr
+
+    r = run_cli("dump", "--trace", str(out_dir / "trace.json"), "--ops")
+    assert r.returncode == 0, r.stderr
+    lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
+    assert lines, "没有打印任何算子"
+
+    # 只打算子层，不打模块层
+    assert all(ln.startswith("root/op") for ln in lines), lines[:3]
+    # 形状用 (a, b) -> (a, b) 的形式
+    assert all("->" in ln for ln in lines), lines[:3]
+    joined = "\n".join(lines)
+    for want in ("matmul", "softmax", "masked_fill"):
+        assert want in joined, f"缺 {want}"
+    # 所属模块要能看出来（挂到 attn 上，而不是笼统的 root）
+    assert "transformer.h.0.attn" in joined
+
+
+def test_dump_ops_on_empty_trace_prints_nothing():
+    out_dir = scratch_dir("dump-ops-empty")
+    built = run_cli(
+        "build",
+        "--repo", "tests/fixtures/nanogpt",
+        "--paper", "none",
+        "--out", str(out_dir),
+        "--skeleton",
+    )
+    assert built.returncode == 0, built.stderr
+    r = run_cli("dump", "--trace", str(out_dir / "trace.json"), "--ops")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == ""
 
 
 def test_second_build_refuses_to_clobber_without_force():

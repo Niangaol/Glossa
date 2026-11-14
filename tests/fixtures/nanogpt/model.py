@@ -135,7 +135,7 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None):  # noqa: D102
         device = idx.device
         b, t = idx.size()
         assert t <= self.config.block_size, f"序列长度 {t} 超过 block_size {self.config.block_size}"
@@ -153,3 +153,19 @@ class GPT(nn.Module):
                 logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
             )
         return logits, loss
+
+
+def build_model():
+    """PaperTrace 入口工厂：给一个小而全的 GPT，只为能追踪，不为能训练。"""
+    return GPT(
+        GPTConfig(
+            block_size=16,
+            vocab_size=64,
+            n_layer=2,
+            n_head=4,
+            n_embd=32,
+            dropout=0.0,
+            bias=False,
+        )
+    )
+
