@@ -3,19 +3,19 @@ r"""把一条论文公式按乘结构切成有序 Term。只认 fixture 级文�
 契约（派发裁决，唯一正确读法）：
 - split_formula 先丢掉第一个顶层 `=` 及其左边的 LHS（R16），只拆等号右边；
 - 每一项的 latex 是原公式串的**真子串**（R15）：本模块从不重写公式。「1/\sqrt{d_k}
-  是缩放」这类语义由编排层（S9）写 reason 字符串，不许塞进 latex 字段——所以
-  t1.latex 就是 \sqrt{d_k}，不是 1/\sqrt{d_k}；
+  是缩放」这类语义由编排层（S9）写 reason，不塞进 latex 字段（t1 就是 \sqrt{d_k}）；
 - safe parse 先行：latex_to_sympy_safe 说 ok=False（白名单外的宏、串里带 `=`、
   文法外字符）就整条返回 []，由编排层整条进 unresolved，绝不猜项；
 - Term 只有 index / latex / kind 三个字段（R17）：term_id 由编排层拼
   f"{unit_id}-t{term.index}"，本模块永远看不到 unit_id。
 
-「项」指结构单元（乘因子、缩放、归一化、激活），不是代数加项：a + b 这种纯加减
-没有已知结构，两个叶子符号都不硬凑成项，整条交给编排层。
+「项」指结构单元（乘因子、缩放、归一化、激活），不是代数加项：a + b 没有已知结构，不硬凑。
 
 R27（fix round 1）：不嵌套、不乱贴标签。自底向上——\frac 只在分子分母都没产出项时
-才为自己产一项（\frac{a}{b} 是 1 个 scale 项），\sqrt 的 latex 永远盖住参数段；孤立
-符号不是运算（y = a → []），和别的因子并列才是乘积（夹具的 V 跟在 \right) 后）。
+才为自己产一项，\sqrt 的 latex 盖住参数段；孤立符号不是运算，并列因子才是乘积。
+R29（fix round 2）：\frac 透明（至少一侧产出项）时两侧都必须留下代表项——没产出
+项的那一侧按它自己的原文补一个 scale 项，不许连同除法一起静默消失（\frac{QK}{V}
+→ QK 的 matmul 项 + V 的 scale 项）；两侧都没项时仍是整段一项（\frac{a}{b}）。
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ _WORD = string.ascii_letters + string.digits + "_"
 
 class Term(NamedTuple):
     """公式里的一个有序项。index 是 0 基序号；kind 取值见 KINDS。"""
-
     index: int
     latex: str
     kind: str
@@ -52,7 +51,7 @@ def split_formula(latex: str) -> list[Term]:
         _scan(rhs, 0, len(rhs), True, out)
     except Exception:  # R18：只捕 Exception；扫描出 bug 也当作「不拆」，不吐裸 traceback
         return []
-    return out
+    return [Term(k, t.latex, t.kind) for k, t in enumerate(out)]  # R29：补项后统一重编号
 
 
 def _right_hand_side(latex: str) -> str:
@@ -78,9 +77,7 @@ def _scan(s: str, start: int, end: int, exposed: bool, out: list[Term]) -> None:
     i = start
     while i < end:
         ch = s[i]
-        if ch.isspace():
-            i += 1
-        elif ch in _PAIR:
+        if ch in _PAIR:
             close = match_delim(s, i, end, ch, _PAIR[ch])
             _scan(s, i + 1, close, exposed, out)  # 括号组对拆项透明
             i = close + 1
@@ -88,8 +85,8 @@ def _scan(s: str, start: int, end: int, exposed: bool, out: list[Term]) -> None:
             i = _scan_macro(s, i, end, exposed, out)
         elif ch in _WORD:
             i = _scan_run(s, i, start, end, exposed, out)
-        else:
-            i += 1  # 运算符、逗号、孤立的 ^ _ 都不产项
+        else:  # 空白、运算符、逗号、孤立的 ^ _ 都不产项
+            i += 1
 
 
 def _scan_run(s: str, i: int, start: int, end: int, exposed: bool, out: list[Term]) -> int:
@@ -133,10 +130,14 @@ def _scan_macro(s: str, i: int, end: int, exposed: bool, out: list[Term]) -> int
     if name == "frac":
         a0, a1 = group_span(s, skip_ws(s, j, end), end)
         b0, b1 = group_span(s, skip_ws(s, a1 + 1, end), end)
-        mark = len(out)
-        _scan(s, a0, a1, exposed, out)  # 分子分母各自照常拆（自底向上：先子后父）
-        _scan(s, b0, b1, exposed, out)
-        if exposed and len(out) == mark:  # 后代没项 → 这个除法自己是唯一的一项
+        num: list[Term] = []
+        den: list[Term] = []
+        _scan(s, a0, a1, exposed, num)  # 分子分母各自照常拆（自底向上：先子后父）
+        _scan(s, b0, b1, exposed, den)
+        if exposed and (num or den):  # R29：空的那一侧按原文补 scale 项，不许消失
+            out += num or [Term(0, s[a0:a1].strip(), "scale")]
+            out += den or [Term(0, s[b0:b1].strip(), "scale")]
+        elif exposed:  # 两侧都没项 → 这个除法自己是唯一的一项
             out.append(Term(len(out), s[i:b1 + 1], "scale"))
         return b1 + 1
     if name == "sqrt":
@@ -151,8 +152,7 @@ def _scan_macro(s: str, i: int, end: int, exposed: bool, out: list[Term]) -> int
         k = skip_ws(s, j, end)
         return k + 1 if k < end and s[k] in _DELIMS else j
     a, b = group_span(s, skip_ws(s, j, end), end)  # \mathrm{softmax} 等函数宏
-    inner = s[a:b].strip()
-    if inner not in KNOWN_FUNCTIONS:
+    if (inner := s[a:b].strip()) not in KNOWN_FUNCTIONS:
         _scan(s, a, b, exposed, out)  # 未知宏的组照扫：门一撤就会产出项（变异探针靠这个）
         return b + 1
     k = _scan_args(s, b + 1, end, exposed, out)
@@ -166,10 +166,7 @@ def _scan_args(s: str, i: int, end: int, exposed: bool, out: list[Term]) -> int:
     k = skip_ws(s, i, end)
     if k < end and s[k] == "(":
         close = match_delim(s, k, end, "(", ")")
-    elif s.startswith("\\left", k):
-        k = skip_ws(s, k + 5, end)
-        if k >= end or s[k] not in _DELIMS:
-            return i
+    elif s.startswith("\\left", k) and (k := skip_ws(s, k + 5, end)) < end and s[k] in _DELIMS:
         close = match_delim(s, k, end, s[k], _DELIMS[s[k]])
     else:
         return i

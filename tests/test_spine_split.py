@@ -17,6 +17,10 @@
   没产出项时才为自己产一项（\\frac{a}{b} → 1 个 scale 项）；位置决定标签——孤立单
   字母不是运算（y = a → []），但和别的因子并列就是乘积（夹具末尾的 V 与 \\right)
   并列 → matmul）。任何两项的区间不重叠，index 严格递增。
+- R29（fix round 2）：\\frac 透明（至少一侧产出了项）时两侧都必须留下代表项——没
+  产出项的那一侧按它自己的原文补一个 scale 项，不许连同除法一起静默消失：
+  \\frac{QK}{V} → QK 的 matmul 项 + V 的 scale 项，\\frac{h}{\\sqrt{d_k}} → h 的
+  scale 项 + \\sqrt{d_k} 的 scale 项；两侧都没项时（\\frac{a}{b}）仍是整段一项。
 """
 
 import itertools
@@ -220,15 +224,39 @@ INVARIANT_CASES = [
     "\\sqrt{d_k}V",
     "QK\\sqrt{d_k}",
     "\\frac{\\frac{a}{b}}{c}",
+    "\\frac{QK}{V}",
+    "\\frac{h}{\\sqrt{d_k}}",
+    "\\frac{QK^T}{d_k}",
+    "\\frac{\\mathrm{softmax}(x)}{V}",
+    "\\frac{QK}{V}W",
+    "\\frac{x}{n}",
+    "\\frac{\\sqrt{QK}}{V}",
+    "\\frac{QK^{T}}{\\sqrt{d_k}}V",
+    "\\mathrm{relu}(h)\\sqrt{d_k}",
+    "\\frac{h}{d_k}",
+    "QK^{T}V",
 ]
 
 
-def _span(text: str, latex: str) -> tuple[int, int]:
-    """latex 在 text 里的唯一区间；不唯一说明测试自己定位不可靠，先失败。"""
-    start = text.find(latex)
-    assert start >= 0, f"not a substring: {latex!r}"
-    assert text.find(latex, start + 1) < 0, f"not unique: {latex!r}"
-    return start, start + len(latex)
+def _disjoint_spans(text: str, terms: list[Term]) -> list[tuple[int, int]]:
+    """给每个 term 的 latex 选一个出现位置，要求选出的区间两两不重叠。
+
+    latex 在公式里可能不唯一（R29 给 \\frac{\\frac{a}{b}}{c} 补的 'c'，在
+    \\frac 这两个字母里也出现），按唯一出现定位会误报；穷举所有选法并断言
+    存在一种两两不重叠的，既抓得到真重叠，也不被定位歧义卡住。
+    """
+    options = []
+    for term in terms:
+        hits, i = [], text.find(term.latex)
+        while i >= 0:
+            hits.append((i, i + len(term.latex)))
+            i = text.find(term.latex, i + 1)
+        assert hits, f"not a substring: {term.latex!r}"
+        options.append(hits)
+    for combo in itertools.product(*options):
+        if all(a[1] <= b[0] or b[1] <= a[0] for a, b in itertools.combinations(combo, 2)):
+            return list(combo)
+    raise AssertionError(f"terms overlap in {text!r}: {[t.latex for t in terms]}")
 
 
 def test_division_of_plain_symbols_is_one_scale_term():
@@ -263,7 +291,7 @@ def test_terms_never_overlap_and_indices_increase(case):
     for term in terms:
         assert term.latex in formula  # R15：真子串
     assert [t.index for t in terms] == list(range(len(terms)))
-    spans = [_span(rhs, t.latex) for t in terms]
+    spans = _disjoint_spans(rhs, terms)
     for (a0, a1), (b0, b1) in itertools.combinations(spans, 2):
         assert a1 <= b0 or b1 <= a0, f"overlap: {(a0, a1)} vs {(b0, b1)}"
 
@@ -280,4 +308,87 @@ def test_exposed_flag_changes_scan_behavior():
     assert off == []
     # 黑盒同一件事：根号内容不暴露，所以 \\sqrt{QK} 只有 1 项
     assert split_formula("y = \\sqrt{QK}") == [Term(0, "\\sqrt{QK}", "scale")]
+
+# --- R29（fix round 2）：\frac 透明时两侧都必须有代表项 ---------------------------
+#: 每一侧单独出现时的项（先探针钉死再当期望值，不用被测代码自证）；空列表 = 纯叶子，
+#: 在分式里要按那一侧的原文补一个 scale 项。
+SIDE_TERMS = {
+    "a": [], "h": [], "c": [], "d_k": [],
+    "QK": [("QK", "matmul")], "QK^T": [("QK^T", "matmul")],
+    "K^{T}V": [("K^{T}V", "matmul")],
+    "\\sqrt{d_k}": [("\\sqrt{d_k}", "scale")],
+    "\\sqrt{QK}": [("\\sqrt{QK}", "scale")],
+    "\\sqrt{\\frac{a}{b}}": [("\\sqrt{\\frac{a}{b}}", "scale")],
+    "\\frac{a}{b}": [("\\frac{a}{b}", "scale")],
+    "\\frac{p}{q}": [("\\frac{p}{q}", "scale")],
+    "\\frac{\\frac{a}{b}}{c}": [("\\frac{a}{b}", "scale"), ("c", "scale")],
+    "\\mathrm{softmax}(x)": [("\\mathrm{softmax}", "norm")],
+    "\\mathrm{relu}(w)": [("\\mathrm{relu}", "act")],
+}
+#: 五族操作数：裸符号 / 乘积 / 根号 / 嵌套分式 / 函数调用
+FRAC_SIDES = list(SIDE_TERMS)
+
+#: R29 ② 钉死的精确输出，元素是 (index, latex, kind)——Term 的字段序
+R29_FRAC_CASES = [
+    ("y = \\frac{QK}{V}", [(0, "QK", "matmul"), (1, "V", "scale")]),
+    ("y = \\frac{h}{\\sqrt{d_k}}", [(0, "h", "scale"), (1, "\\sqrt{d_k}", "scale")]),
+    ("y = \\frac{QK^T}{d_k}", [(0, "QK^T", "matmul"), (1, "d_k", "scale")]),
+    ("y = \\frac{\\frac{a}{b}}{c}",
+     [(0, "\\frac{a}{b}", "scale"), (1, "c", "scale")]),
+    ("y = \\frac{\\mathrm{softmax}(x)}{V}",
+     [(0, "\\mathrm{softmax}", "norm"), (1, "V", "scale")]),
+    ("y = \\frac{QK}{V}W",
+     [(0, "QK", "matmul"), (1, "V", "scale"), (2, "W", "matmul")]),
+    ("y = \\frac{x}{n}", [(0, "\\frac{x}{n}", "scale")]),
+    ("y = \\frac{a}{b}", [(0, "\\frac{a}{b}", "scale")]),
+    ("y = \\sqrt{\\frac{a}{b}}", [(0, "\\sqrt{\\frac{a}{b}}", "scale")]),
+    ("y = a", []),
+    ("y = \\sqrt{d_k}", [(0, "\\sqrt{d_k}", "scale")]),
+    ("y = a + b", []),
+]
+
+
+@pytest.mark.parametrize("formula,expected", R29_FRAC_CASES)
+def test_fraction_keeps_both_sides_represented(formula, expected):
+    """R29 ②：一侧产项另一侧没有时，没项那一侧按原文补 scale 项，不许静默消失。"""
+    terms = split_formula(formula)
+    assert terms == [Term(i, latex, kind) for i, latex, kind in expected]
+    for term in terms:  # R15：补项的 latex 也必须是原串真子串
+        assert term.latex in formula
+
+
+def test_transparent_fraction_has_one_term_per_side():
+    """R29 ④：性质测试——\\frac 透明时两侧各有一个代表项，空的一侧按原文补 scale 项。
+
+    遍历五族操作数的全部 16x16 组合；期望值来自上面的探针表而不是被测代码的自证，
+    所以「一侧连同除法一起消失」这条测试自己就能发现。
+    """
+    pairs = list(itertools.product(FRAC_SIDES, repeat=2))
+    assert len(pairs) >= 25
+    for left, right in pairs:
+        composed = f"\\frac{{{left}}}{{{right}}}"
+        want = list(SIDE_TERMS[left]) or [(left, "scale")]
+        want += list(SIDE_TERMS[right]) or [(right, "scale")]
+        if not SIDE_TERMS[left] and not SIDE_TERMS[right]:
+            want = [(composed, "scale")]  # 两侧都是叶子 → 整个分式自己是唯一一项
+        terms = split_formula(composed)
+        assert [(t.latex, t.kind) for t in terms] == want, composed
+        assert [t.index for t in terms] == list(range(len(want)))
+        for term in terms:  # R15：任何情况下 latex 都是原串真子串
+            assert term.latex in composed
+
+
+def test_exposed_flag_has_a_third_context():
+    """R29 ⑤：exposed 不是死参数——第三种上下文决定要不要给空的一侧补项。"""
+    from papertrace.parse_paper.split_terms import _scan  # 白盒：直接证明参数活着
+
+    text = "\\frac{QK}{V}"
+    on: list[Term] = []
+    off: list[Term] = []
+    _scan(text, 0, len(text), True, on)
+    _scan(text, 0, len(text), False, off)
+    assert [(t.latex, t.kind) for t in on] == [("QK", "matmul"), ("V", "scale")]
+    assert off == []
+    # 黑盒同一件事：两侧都是叶子时，暴露的父结构自己产一项
+    assert split_formula("y = \\frac{a}{h}") == [Term(0, "\\frac{a}{h}", "scale")]
 
