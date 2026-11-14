@@ -68,6 +68,11 @@ def retrieve_bidirectional(code_units: list, paper_terms: list, k: int = 5) -> d
     except LLMUnavailable:
         return _zero(_OFFLINE_REASON)
 
+    # R54：先验数量，再配对。少返回（或多返回）一条向量就抛，绝不让任何单元被
+    # 静默踢出计分——那会得到一个在没人验证过的子集上算出来的 s_retr。
+    _require_paired(term_vectors, paper_terms)
+    _require_paired(code_vectors, code_units)
+
     forward = {
         term["term_id"]: _topk(
             vector, code_units, code_vectors, "code_id", k
@@ -96,6 +101,25 @@ def retrieve_bidirectional(code_units: list, paper_terms: list, k: int = 5) -> d
         "conflicts": _conflicts(forward, backward),
         "reason": None,
     }
+
+
+def _require_paired(vectors: list, units: list) -> None:
+    """后端返回的向量数必须与输入条数一致，否则抛 ValueError（R54）。
+
+    与 cosine 的维度守卫同一标准、同一语气：维度不齐明抛，数量不齐也明抛。
+    不许静默补齐、不许截断、不许兜底成 0.0、不许返回部分结果（fail-closed，
+    与 R21/R36 一脉相承）。
+
+    为什么两处就够、不在 _topk 里再查一遍：这两对校验正好覆盖全部三处 zip——
+    forward 的键配对 (paper_terms, term_vectors)、backward 的键配对
+    (code_units, code_vectors)，以及 _topk 内部的 (units, vectors)。_topk 是模块
+    私有函数，喂给它的只有这两对已经校验过的组合，在它里面再查只是重复校验同一
+    件事；而只查 _topk 又会漏掉两处键配对造成的静默丢键。
+    """
+    if len(vectors) != len(units):
+        raise ValueError(
+            f"后端返回向量数与输入数不一致：{len(vectors)} != {len(units)}"
+        )
 
 
 def _zero(reason: str, forward: dict | None = None, backward: dict | None = None) -> dict:

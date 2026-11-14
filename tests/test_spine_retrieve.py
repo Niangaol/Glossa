@@ -235,6 +235,62 @@ def test_topk_is_capped_and_ordered(monkeypatch):
     assert result["s_retr"] > sum(scores) / len(scores)
 
 
+class _ShortBackend:
+    """故意少返回一条向量的后端（R54）。
+
+    模拟的是 S8 之后 OpenAICompatBackend 解析 HTTP JSON 时最典型的失误：返回条数
+    与请求条数不一致。按 R43 用 monkeypatch 换掉 embed.py 自己引用的 get_llm，
+    绝不改 client.py，绝不联网（Constraint 2）。
+    """
+
+    name = "short"
+
+    def __init__(self, vectors: dict[str, list[float]], drop_last_text: str):
+        self.vectors = vectors
+        self.drop_last_text = drop_last_text
+
+    def chat(self, prompt: str, *, system: str | None = None):
+        raise AssertionError("检索路径不该调 chat")
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        rows = [list(self.vectors[t]) for t in texts]
+        if texts and texts[-1] == self.drop_last_text:
+            rows = rows[:-1]  # 少返回一条：数量与请求对不上
+        return rows
+
+
+def _patch_short(monkeypatch, vectors: dict[str, list[float]], drop_last_text: str):
+    backend = _ShortBackend(vectors, drop_last_text)
+    monkeypatch.setattr(embed_module, "get_llm", lambda: backend)
+    return backend
+
+
+def test_term_vector_shortfall_is_refused(monkeypatch):
+    """R54：后端少返回一条论文项向量 → ValueError，不许静默把 term 踢出计分。
+
+    静默截断会让 s_retr 变成一个「在没人验证过的子集上算出来的最大值」，看起来
+    完全合法——那正是本项目要防止的那类失败。
+    """
+    _patch_short(monkeypatch, _MIRROR, drop_last_text="qk")
+    with pytest.raises(ValueError, match=r"后端返回向量数与输入数不一致：1 != 2"):
+        retrieve_bidirectional(
+            [{"code_id": "root/@037", "text": "attn"}],
+            _CONFLICT_TERMS,
+            k=5,
+        )
+
+
+def test_code_vector_shortfall_is_refused(monkeypatch):
+    """R54：后端少返回一条代码向量 → ValueError，与 cosine 的维度守卫同标准同语气。"""
+    _patch_short(monkeypatch, _MIRROR, drop_last_text="softmax")
+    with pytest.raises(ValueError, match=r"后端返回向量数与输入数不一致：1 != 2"):
+        retrieve_bidirectional(
+            _CONFLICT_UNITS,
+            [{"term_id": "S3.2-eq-attn-t0", "text": "matmul"}],
+            k=5,
+        )
+
+
 def test_empty_inputs_are_zero_not_a_crash(monkeypatch):
     """空输入 → 空表 + 0.0 + reason，不许抛异常也不许假装有结果。"""
     _patch(monkeypatch, _MIRROR)
