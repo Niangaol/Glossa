@@ -231,6 +231,12 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   会被数出来。
   **已知取舍：本切片不做死代码检测**——「有入边但没人用」的死算子按这个定义不算 orphan，
   也不计入任何其它计数。`orphan == 0` 不等于「没有死代码」，要查死代码得另做输出可达性分析。
+- **`symbols`（M1b 起）**：代码侧符号表与论文侧符号表的对照，符号名冻结 `B`/`T`/`D`/`H`/`Dh`。
+  `T` 记的是**声明的**超参数 `config.block_size`（夹具 16），不是运行时序列长度——后者是
+  `min(block_size, DEFAULT_SEQ_LEN)`（夹具 8），另记在 `meta.runtime.seq_len`。两者不是一回事，
+  拿 `T` 去对论文里的序列长度会对错账。`Dh = D // H` 是**派生量**（夹具 `GPTConfig` 没有
+  `head_dim` 字段），与论文侧 `d_k` 的精确对账由 M4 负责；整除不成立时也只发向下取整的值，
+  `codeSymbol` 没有「约等」字段，不会假装两侧相等。
 - **结构校验**：`validate_trace` 除了 JSON Schema 还查 `id`/`parent_id`/边的 `id`/`src`/`dst`
   必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、
