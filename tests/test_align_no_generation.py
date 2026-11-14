@@ -9,7 +9,10 @@ from pathlib import Path
 
 import pytest
 
-ALIGN_DIR = Path(__file__).resolve().parents[1] / "papertrace" / "align"
+PKG = Path(__file__).resolve().parents[1] / "papertrace"
+ALIGN_DIR = PKG / "align"
+# prompt 正文是最容易写进「请列出对应关系」的地方，必须一起扫
+SCAN_DIRS = [ALIGN_DIR, PKG / "llm"]
 
 FORBIDDEN_SNIPPETS = [
     "generate_alignment",
@@ -26,10 +29,12 @@ def test_align_dir_exists():
 @pytest.mark.parametrize("snippet", FORBIDDEN_SNIPPETS)
 def test_align_sources_have_no_free_generation(snippet):
     offenders = []
-    for path in sorted(ALIGN_DIR.glob("*.py")):
-        text = path.read_text(encoding="utf-8")
-        if snippet in text:
-            offenders.append(path.name)
+    for base in SCAN_DIRS:
+        # 递归：将来 align/ 再分子目录，守卫也跟着进去
+        for path in sorted(base.rglob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            if snippet in text:
+                offenders.append(f"{base.name}/{path.name}")
     assert not offenders, f"{snippet!r} 出现在 {offenders}"
 
 
@@ -39,6 +44,10 @@ def test_judge_signature_takes_no_mapping_dict():
 
     from papertrace.align.judge import judge
 
+    from papertrace.align.judge import JudgeResult
+
     params = inspect.signature(judge).parameters
     assert "mapping" not in params
     assert len(params) >= 2
+    # 出口类型只能是 (yes, evidence)：多一个字段就可能变成映射表
+    assert JudgeResult._fields == ("yes", "evidence")
