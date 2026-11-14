@@ -5,7 +5,8 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**442 passed**，第三至第十六轮评审的必修项都已修完。
+**状态（2026-11-14）**：Task 7–11 全部落地，**448 passed**，第三至第十七轮评审的必修项都已修完。
+**第十七轮结论：Critical 0，M1a 必修项为空，可以收尾、建议进入 M1b。**
 第十三轮评审结论：**可以进入 M1b，必修项无**；唯一的条件项（target 互换）我选择**修**而不是只写文档——
 补了第七道关：`placeholder_args` 取到真实张量后与 `node.meta["val"]` 的形状核对（两个独立字段，真核对）。
 第十四轮评审推翻了第七道关留下的那句「同形状互换不可观测」：**同形状、跨模块**互换 target 会把
@@ -38,7 +39,7 @@ sanitize 非字母数字、再 `lower()`，而我只按 `target.replace(".", "_"
 第十四轮 I-1 同形状跨模块互换 → 名字↔target 核对（第八道关）、M-1 「不可观测」用例按事实改写、M-3 拆出 `fx_kinds`、M-5 提交链与端到端路径补齐；
 第十五轮 C1 误杀 + C2 漏检 → 第八道关改**正向核对**（复刻 torch 的 `_strip_name`+`lower`）、I-1 文档纠正、I-2 六个真实命名模型 + 与导出器实际名字交叉核对、M-1 补 `obj_` 前缀、M-3 sanitize/lower、M-4 提交链补齐；
 第十六轮 I-1 未知前缀 fail-open → 拒绝、I-2 `CUSTOM_OBJ` 无真实导出背书 → 先拒绝（`obj_` 前缀一并删掉）、M-1 后缀伪造钉成「单关接受 + 端到端拒绝」两层、M-2 报错加观察到的 base、M-3 `checked` 改精确相等 + PARENTS 独立推导 + 补四类缺口、M-4 文档漂移），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1` → `c2608ea` → `e398d9f` → `e8757d2` → `af02aef` → `d83d2e5` → `ddeb9b9`。
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1` → `c2608ea` → `e398d9f` → `e8757d2` → `af02aef` → `d83d2e5` → `ddeb9b9` → `db500fe` →（第十七轮，见提交锚点表）。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -911,6 +912,65 @@ schema_structure 129、**fx_names 125**、schema_validate 100、fx_shapes 98、f
 **一道关的 `continue` 分支就是它的失效模式**。写守卫时要把「我认不出这个输入」当成错误，
 而不是当成「与我无关」。fail-open 的关在测试全绿时看起来和 fail-closed 一模一样，
 只有专门构造「关认不出的输入」才分得出来，所以这类用例必须显式存在。
+### 第十七轮评审（基线 d83d2e5，442 passed / 文档 HEAD db500fe）：M1a 必修项为空
+
+结论：**Critical 0，正常 CLI 路径上未发现「所有检查全过却写出错误 trace」的问题；
+本轮新增的 fail-closed 判断没有误拒已测的合法模型。M1a 可以收尾，建议进入 M1b。**
+评审快照 `output/review16/d83d2e5` 实跑 442 passed in 52.96s，fixture build 逐项一致，OVER200=[]。
+
+#### 五个自问的答复（都给了实测，不是确认）
+
+1. **新 fail-closed 会不会误杀？** 不会（已测范围内）。评审造了 `PxInput`（forward 形参 `p_x`
+   + `self.x` 参数）、`PxParam`、`PxBuffer`、`SelfName`（参数名就叫 `self_`），全部 `trace_module`
+   成功且 kind/计数正确。`DictInput`/`KwOnly` 的失败来自既有的 `tuple(example_inputs)`
+   pytree/kwargs 限制，**不是名字关**。证据 `output/review16/probe_17_falsepos.py`。
+2. **CUSTOM_OBJ 拒绝有没有代价？** 本机造不出可证伪的反例。评审试了
+   `torch.jit._recursive.create_script_class(obj)._c` 当输入，export 依次报 `__obj_flatten__` 缺失、
+   `Expect flat x to be a tuple`、`Could not split full_qualname='__torch__.C1', expected 5 parts`，
+   `strict=True/False` 都一样。**纯 Python 造不出完整 CUSTOM_OBJ 导出** → 先拒绝是当前最安全的做法。
+3. **不收紧 `_matches` 有没有「单关接受且端到端也接受」的模型？** 没找到。常量场景报
+   「target=a，但拿不到它的值」或重复认领。故不收紧可接受。
+4. **PARENTS 独立推导是否同源？** **半独立**——它用 `input_plan`（被测代码）取 target，
+   能抓 trace 管线写错 parent，抓不到 `input_plan` 自己把 name→target 映射错。
+   真正独立的地面真相应是 `module.named_parameters()/named_buffers()` 的键 + 手写预期表。
+5. **CLI 改名用例是否自娱自乐？** 不是，但**只证明 fail-closed**，不证明新前缀下映射仍正确。
+
+#### Minor 处理（五条全修）
+
+| 项 | 处理 |
+| --- | --- |
+| 1 README:112 句子残缺（「在 build 时把，」缺谓语） | 改成「在 build 时**把守**」 |
+| 2 计划提交链漏文档 pin `db500fe` | 已补 |
+| 3 PARENTS 测试半独立 | **新增手写 `TARGETS` 表 + 6 条用例**（见下） |
+| 4 CLI 改名用例只是模拟 | README 写明「证明的是认不出前缀会 exit 2，不是映射仍正确」 |
+| 5 动态形状未在 README 说明 | ⑦ 段补「SymInt 时静默跳过；M1a 无路径；M1b 必须记 `shape_gate_skipped`」 |
+
+**Minor 3 的修法与变异证据**：`tests/test_sixteenth_review.py` 新增手写 `TARGETS` 表
+（placeholder 名 → 模块属性路径，依据是六个模型类的**源码结构**，不是 `input_plan` 的输出），
+用例 `test_hand_written_targets_are_real_module_attributes_and_match_input_plan` 三层断言：
+①每个 target 真的是 `named_parameters()/named_buffers()` 的键；②`input_plan` 的输出与手写表相等；
+③由手写表推的 owner 与 `PARENTS` 相等。
+变异：在 `input_plan` 里**互换同一模块内前两个 target**（`self_attn.weight` ↔ `self_attn.bias`，
+owner 不变）→ **新用例 4 failed（SelfAttnClash/Upper/NestedSelf/SelfX），旧用例 6 条全过**。
+这正是评审说的「半独立」的实证：旧用例抓不到 `input_plan` 自身的映射错，新用例抓得到。已还原。
+
+全量 **448 passed in 52.74s**（442 + 6）。
+
+#### I-1（M1b 范围，不阻塞 M1a）：压平撞名
+
+评审确认这是**唯一**仍能写出错误 trace 的路径，且需要就地修改真导出产物，正常 CLI 不可达。
+**M1b 若承诺完整 parent 正确性，必须处理**：不再靠名字反推，改为从**模块结构 +
+`graph_signature.input_specs`** 直接建 owner 映射；对无法唯一判定的组 **fail-closed 而不是跳过**。
+这条写进 M1b 的开工前提，不是「以后再说」。
+
+#### M1b 开工前的工程卫生（评审建议，采纳）
+
+- `fx_nodes` 187 / `fx_edges` 184 已接近 200 行，**加字段前先按职责拆**（如 `fx_plan` / `fx_node_fields`），
+  否则行数约束会挡路。`placeholder_args` 先拆到 `fx_args.py`。
+- M-2 SymInt 静默跳过 → M1b 补 `shape_gate_skipped` 计数；M-4 `build_op_nodes(exported=None)`
+  → M1b 拆公开/私有入口。评审确认这两项留 M1b 可接受（M1a 静态形状下无路径；CLI 始终传 `exported=`）。
+- 第一块按工程计划 **Task 6 符号表与 shape 传播**：`symbols/code_table.py` → `shape_prop.py` → `mapping.py`，
+  先钉 `B/T/D/H/Dh`、`n_embd↔D`、`Dh=D/H`；**不要先做论文 PDF/LaTeX 解析或双向检索**（属 M2.5 / M3）。
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
@@ -1000,4 +1060,6 @@ schema_structure 129、**fx_names 125**、schema_validate 100、fx_shapes 98、f
 | `e8757d2` | 第十五轮文档：README 第八道关改正向核对与 C1/C2 反例、计划记录（torch 命名规则表、六模型实测、五组变异、结构化 diff）、提交链补 `c2608ea` |
 | `af02aef` | 钉第十五轮提交链 |
 | `d83d2e5` | 第十六轮硬化：未知前缀/无 target → fail-closed、`CUSTOM_OBJ` 移进 `REFUSED_KINDS`（删 `obj_` 前缀）、报错加观察到的 base、25 条新回归 + 三份既有测试按新语义适配，442 passed |
+| `db500fe` | 钉第十六轮提交链 |
+| （本次） | 第十七轮 Minor 全修：README 残句/动态形状说明/改名用例边界、手写 `TARGETS` 表 + 6 条独立回归（变异证明旧用例半独立），448 passed |
 | `ddeb9b9` | 第十六轮文档：README kind 表/⑧ 段/残余边界三条/退出码表、计划记录（I-1/I-2/M-1…M-4、三组变异、结构化 diff 只差 created_at）、提交链补 `af02aef` |

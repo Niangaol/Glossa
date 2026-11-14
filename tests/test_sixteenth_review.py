@@ -277,3 +277,50 @@ def test_parents_table_is_derived_from_the_module_not_the_trace(cls):
         assert owner in owners, (owner, sorted(owners))
         expected["root." + item["name"]] = "root" + ("/" + owner if owner else "")
     assert expected == PARENTS[cls.__name__], (expected, PARENTS[cls.__name__])
+
+
+# ------------------------------------------- M-3（第十七轮）期望表要真正独立
+
+# 手写表：placeholder 名 → **模块里的属性路径**。依据是六个模型类的源码结构
+# （self_attn=Linear、attn=Linear、add_module('a-b') 等），不是 input_plan 的输出。
+# 第十七轮评审指出原来那条用例「半独立」：它用被测的 input_plan 取 target，
+# 所以抓得到 trace 管线写错 parent，却抓不到 input_plan 自己把 name→target 映射错。
+# 这张表补上那一层：先核每个 target 真的是模块的参数/缓冲键，再核 input_plan 与表一致。
+TARGETS = {
+    "SelfAttnClash": {
+        "p_attn_weight": "self_attn.weight", "p_attn_bias": "self_attn.bias",
+        "p_attn_weight_1": "attn.weight", "p_attn_bias_1": "attn.bias",
+    },
+    "SelfAB": {"p_a_weight": "self_a.weight", "p_b_weight": "self_b.weight"},
+    "Hyphen": {"p_a_b_weight": "a-b.weight", "p_a_b_weight_1": "a_b.weight"},
+    "Upper": {"p_w": "W", "p_w_1": "w"},
+    "NestedSelf": {
+        "p_sub_self_attn_weight": "sub.self_attn.weight",
+        "p_sub_self_attn_bias": "sub.self_attn.bias",
+        "p_sub_attn_weight": "sub.attn.weight",
+        "p_sub_attn_bias": "sub.attn.bias",
+    },
+    "SelfX": {"p_x": "x", "p_x_1": "self_x"},
+}
+
+
+@pytest.mark.parametrize("cls", MODELS, ids=[c.__name__ for c in MODELS])
+def test_hand_written_targets_are_real_module_attributes_and_match_input_plan(cls):
+    """地面真相是模块自己的参数/缓冲注册表，不是被测代码的映射。"""
+    module, exported = _exported(cls(), ONE)
+    registry = {n for n, _ in module.named_parameters(remove_duplicate=False)}
+    registry |= {n for n, _ in module.named_buffers(remove_duplicate=False)}
+    table = TARGETS[cls.__name__]
+    for name, target in table.items():
+        assert target in registry, (name, target, sorted(registry))
+    from_plan = {
+        i["name"]: i["target"] for i in input_plan(exported) if i["kind"] != "input"
+    }
+    assert from_plan == table, (from_plan, table)
+    owners = {name for name, _ in module.named_modules()}
+    expected = {}
+    for name, target in table.items():
+        owner = target.rpartition(".")[0]
+        assert owner in owners, (owner, sorted(owners))
+        expected["root." + name] = "root" + ("/" + owner if owner else "")
+    assert expected == PARENTS[cls.__name__], (expected, PARENTS[cls.__name__])

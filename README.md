@@ -109,7 +109,7 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   不传就等于声明「这份 plan 已经核过契约」——只有已经跑过 `placeholder_args` 的调用方
   才该这么用（`fx_trace` 自己是传 `exported=` 的）。
   trace.json 里不存 input_specs，所以 `validate_trace` 只查 schema 与结构，**查不出 kind 标反**
-  ——那一道关在 build 时把，地面真相是模块与导出器，不是 plan 自己（存一份同源摘要也查不出）。
+  ——那一道关在 build 时**把守**，地面真相是模块与导出器，不是 plan 自己（存一份同源摘要也查不出）。
   **这两道「与导出器核对」的关，牙齿到底在哪**（实测写死，别当成万能）：正常 CLI 路径里
   `plan` 与关里的 `expected` 是**同一个纯函数算两遍**（`input_plan(exported)`），平时根本不触发。
   真正抓得住的是两类：① **管线自己漂移**——`fx_trace.classify`/`fx_trace.input_plan` 与
@@ -137,6 +137,10 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   那是导出器在图上做 fake 传播的结果，与 `input_specs` 的 `target` 映射是**两个独立字段**，
   所以这是真核对而不是同源比对。不同形状的 target 互换（参数↔参数、参数↔缓冲、常量↔常量）
   一律 exit 2 并点名「取到的张量是 (1,4)，但导出图里这个节点是 (2,4)」。
+  **这一关在动态形状下会静默跳过**：`node.meta["val"]` 的维是 `SymInt` 时无法与整数逐项比，
+  实现直接 return。M1a 不传 `dynamic_shapes`，所以当前没有路径走到这里；M1b 支持动态批长时
+  **必须记一个独立的 `shape_gate_skipped` 计数**（不复用边级 `shape_unchecked`），
+  或者干脆对动态形状 `TraceUnsupported`——不能让一道关悄悄失效而计数看起来全 0。
   **第十四轮补的第八道**（评审实测：⑦ 之后，**同形状、跨模块**的 target 互换仍然全过——
   `Sub.w` 与根 `M.a` 都是 `(2,4)` 时，trace 把 `root.p_a` 的 `parent_id` 写成 `root/sub`、
   `root.p_sub_w` 写成 `root`，而 `shape_broken`/`orphan` 全 0、`validate_trace` 通过、CLI exit 0。
@@ -168,6 +172,9 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   对应的种类已在更早一步被拒，万一直接 API 传进来会撞上「认不出前缀」而不是走没验证过的分支。
   `tests/test_sixteenth_review.py` 真的把图上的 placeholder 改名（`node.name` 是可写成员）
   来模拟「torch 换了命名规则」，并钉到 CLI 级 exit 2。
+  **这条用例证明的是「认不出前缀会 exit 2」，不是「torch 真换了前缀之后映射仍然正确」**——
+  它防的是版本漂移导致的静默失效；映射本身的正确性靠 `KIND_MAP` 钉死值、model zoo
+  与真实导出用例，别把这两件事混为一谈（第十七轮评审 Minor 4）。
   期望值不是我自己拍的：`tests/test_fifteenth_review.py` 用六个真实模型
   （`self_attn`+`attn`、`self_a`/`self_b`、`a-b`+`a_b`、`W`+`w`、嵌套 `self_attn`、`x`+`self_x`）
   把我们的 `strip_name` 与 torch **真实生成的名字**逐个交叉核对，并断言 `parent_id` 精确正确；
