@@ -5,8 +5,8 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**140 passed**，第二轮评审的必修项已修完，
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a`。
+**状态（2026-11-14）**：Task 7–11 全部落地，**164 passed**，第三轮评审的必修项已修完（C1/I1/I2/I3 + M2/M3/M5），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮记录）。
 
@@ -116,7 +116,9 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
 
 ## Task 10: dump 可读输出 ✅
 
-**Files:** `papertrace/cli.py`、`tests/test_cli.py`
+**Files:** `papertrace/cli.py`、`papertrace/report.py`、`tests/test_cli.py`
+
+（`cli.py` 只留参数与退出码，排版拆到 `report.py`：`cli.py` 曾涨到 275 行，违反 ≤200 行约束。）
 
 - [x] `dump --trace X --ops` 按拓扑序打印 `id 模块 (in) -> (out) op [degraded: 原因]`；
       `kind != "op"` 的输入形状打 `-`，输入确实未知打 `(?)`（与 0 维的 `()` 区分）。
@@ -126,7 +128,7 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
 - [x] 测试：只打算子层、带 `->`、含 matmul/softmax/masked_fill、能看出模块路径；空 trace 不打印任何行；
       `--ops` 的输出必须按 id 序号递增（拓扑序）。
 
-## Task 11: 端到端验收与评审（进行中）
+## Task 11: 端到端验收与评审 ✅
 
 - [x] `python -m papertrace build --repo tests/fixtures/nanogpt --out output/final-check --force`
       → nodes=126（算子 75 / 权重 18 / 输入 1），edges=101，degraded=2，fused=0，orphan=0，
@@ -139,7 +141,7 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
       I3 `runtime.requested` 与实际形状分开；I4 融合表改真实 aten 名 + 前缀兜底；
       I5/I6/I7 计数、裸张量输入、0 维标量；M1/M3/M4/M5 输出与 schema。
 - [x] 复审期间自查补的三处：边 id 重复、父子链成环、parent 指向算子——都改成
-      `TraceSchemaError` 并配反例测试；130 passed。
+      `TraceSchemaError` 并配反例测试；当时 130 passed。
 - [x] 更新 `docs/ENVIRONMENT.md` 与 `README.md`（torch 装法、入口契约、退出码表、trace 字段约定）。
 
 ### 这一轮评审指出了什么（值得记住的）
@@ -150,8 +152,30 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
 `shape_in` 记成权重 `(64,32)`、`x.sum()` 的 0 维输出被当成「未知」、算子 id 与模块 id
 可能撞车，这些都没被测试抓到。
 
-教训：**测试要能失败**。现在每条关键行为都配了反例——`split([2,6])` 后 `b+1` 必须断链、
-`cat` 必须两条边、`sum()` 必须 `outputs==[[]]`、重复 id/悬空边必须抛错。
+教训：**测试要能失败**。现在每条关键行为都配了反例——伪造生产者 `(2,4,8,8)` 对消费者
+`(2,4,8,4)` 必须判 `shape_consistent=false`（`tests/test_review_regressions.py::test_edge_shape_compares_consumer_against_producer`）、
+`cat` 必须两条边、`sum()` 必须 `outputs==[[]]`、重复 id/悬空边/自环必须抛错、
+observe 失败必须 `exit 5` 且不覆盖已有 trace。
+注意：真实的 `split([2,6])` 每一项在真实执行里是**自洽**的（`tests/test_fusion_and_shapes.py` 断言每项边
+`shape_consistent=True`）——断链要用伪造数据造，不能拿合法图当反例（第二版文档这里写错过）。
+
+### 第三轮评审（基线 8b710ee，140 passed）指出了什么
+
+结论仍是「需要修」，四条 Critical/Important 全部成立：
+
+| 编号 | 问题 | 修法 |
+| --- | --- | --- |
+| C1 | observe 失败仍照常写 trace，算子照样 `source="runtime"`、`runtime.ok=true`，摘要还写「真实追踪」——与 README 承诺的「追不动就退出码 5、不写 trace」相反 | observe 一失败就 `raise TraceUnsupported`，**exit 5 且不写/不覆盖 trace.json**（含 `--force`）；删掉「real_execution 不 ok 也放行」的死分支 |
+| I1 | 工厂函数/example_inputs/模块顶层抛异常 → 裸 traceback + exit 1；畸形 JSON 做 dump 也 exit 1 | 全部翻成 `BuildError`（exit 2）或 `TraceUnsupported`（exit 5）；dump 捕 `OSError/ValueError` → exit 2，不出 traceback |
+| I2 | `inputs` 里塞着权重，param-only 算子把权重冒充 `shape_in` | `inputs` 只放数据入参：按参数位置跳过 `param_names` 里的名字；param-only → `inputs=[]`、`shape_in=[]`，dump 打 `(?)` |
+| I3 | 结构校验允许 module→op、op→module、自环 | 边两端必须 `level=="op"`，禁 `src==dst`，补四条反例 |
+| M5 | getitem 的多生产者容器把同一索引套到每个生产者 | 只有 `args[0]` 本身就是一个生产者节点时才按索引取项，否则 `checked=false` |
+| M2 | `FUSED_OPS` 有死键（`multi_head_attention_forward` 在 `torch.ops.aten` 不存在） | 删死键；参数化测试逐个 `hasattr(torch.ops.aten, name)`，前缀兜底单独测 |
+| M3 | 测试用相对路径，只有从仓库根跑才成立 | 夹具路径改 `Path(__file__).resolve().parents[1]` |
+| M1 | exit 5 时 stderr 前面有 torch 自己打的十几行诊断图 | 拦不住（torch 内部输出），改为 README 明说「结论永远在最后一行」 |
+
+守门测试：`tests/test_third_review.py`（24 条，含真实自定义算子 `boom` 的 exit 5、
+工厂/example_inputs 异常的 exit 2、畸形 JSON 的 exit 2、param-only 的 `inputs=[]`）。
 
 ## Review Focus
 
@@ -159,7 +183,7 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
    现在不但测试钉死四个算子同时存在，还加了 `FUSED_OPS` 表：真的遇到融合算子时
    **标 degraded + stderr 警告**，绝不安静通过。
 2. **假形状**：`shape_in/shape_out` 全部来自 `node.meta["val"]`，没有写死的列表。
-3. **静默降级**：没有 torch 时退出码 4，不写空 trace；`--ops` 里 degraded 带原因。
+3. **静默降级**：没有 torch 时退出码 4；export 追不动或导出图不能再真实执行时退出码 5；两者都不写 trace。`--ops` 里 degraded 一定带原因。
 4. **形状链断裂**：多输出按 `getitem` 索引取那一项；边的两端分别来自**同一次真实执行**的
    消费者入参与生产者输出，未核实记 `checked=false`（`?`），不拿「有形状」冒充「一致」。
 5. **层级造假**：`parent_id` 已断言必须指向真实 module 节点。
@@ -184,6 +208,10 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
 | 一条边的「形状」只有一列 | 拆成 `shape`（消费者）/ `producer_shape`（生产者）/ `checked` | 一列里塞两边，断链根本看不出来 |
 | `shape_consistent = bool(shape)` | `checked and 两边相等`，没观察就 `?` | 恒真是最危险的绿灯 |
 | `runtime.batch/seq_len` 写 CLI 的值 | 写**实际**喂进去的，CLI 值另记 `requested` | 否则 `example_inputs()` 与 CLI 冲突时 trace 自相矛盾 |
+| observe 失败也照常写 trace（标 degraded） | 直接 `TraceUnsupported` / exit 5，不写 trace | 「降级写」和「真实追踪」在一个文件里没法自证；假形状比没有形状更坏 |
+| `inputs` 含权重位置 | 只放数据入参，`shape_in = inputs[0]` | 否则 embedding 的输入是权重 `(64,32)`，形状链从第一跳就假 |
+| 边可以接模块节点 | 边两端必须都是算子，且禁自环 | 模块不是算子，接上只会制造「看起来有形状链」的错觉 |
+| `cli.py` 堆下所有打印 | 拆出 `papertrace/report.py` | 275 行违反 ≤200 行；参数/退出码与排版混在一起难审 |
 
 ### 提交锚点
 
@@ -198,3 +226,5 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
 | `58dc5c7` | 拒绝成环、重复边、非 module 父节点 |
 | `82228eb` | 评审修复的文档与账本 |
 | `cca2a1a` | 第二遍真实执行判定边形状；`fx_shapes` 拆出；`requested`/`real_execution`；模块路径禁 `@` |
+| `8b710ee` | 第三轮前的文档与账本 |
+| `f58b123` | 第三轮必修：observe 失败即 exit 5、异常翻成 2/5、inputs 只含数据、边两端必须算子且禁自环 |
