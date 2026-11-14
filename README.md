@@ -91,7 +91,7 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   输入标 param、常量消失），而且计数可能「看起来正常」。
   真的没有 placeholder（纯常量模型）时，空 plan 是合法的。
   **边界要说清**：`build_op_nodes` 自己只保证「覆盖齐全、不重叠、无幽灵名、kind 都认识」；
-  「这个 kind 标得**对不对**」由 `fx_contract` + `placeholder_args` 把七道关，地面真相各不相同：
+  「这个 kind 标得**对不对**」由 `fx_contract` + `placeholder_args` 把八道关，地面真相各不相同：
   ① spec 说它是权重 → **模块**里必须真有这个参数/缓冲；
   ② **模块**里每个参数/缓冲 → 必须被某个 `param`/`const` spec 认领；
   ③ 传入的 plan 必须与 **`torch.export` 自己的 `input_specs`** 逐项一致（name/kind/target/顺序）。
@@ -133,10 +133,26 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   那是导出器在图上做 fake 传播的结果，与 `input_specs` 的 `target` 映射是**两个独立字段**，
   所以这是真核对而不是同源比对。不同形状的 target 互换（参数↔参数、参数↔缓冲、常量↔常量）
   一律 exit 2 并点名「取到的张量是 (1,4)，但导出图里这个节点是 (2,4)」。
-  残余边界照旧说清：就地篡改真产物的 spec 属于「篡改权威本身」，与 monkeypatch 掉全部 `input_plan`
-  同一类，不在本切片的威胁模型内；⑤⑥⑦ 只抓其中**可观测**的改法——**同形状**的 target 互换
-  抓不到（`tests/test_thirteenth_review.py::test_same_shape_target_swap_is_not_observable` 把这条
-  钉成显式用例），但它在 trace 里也没有任何可见差异，所以不假装封死。
+  **第十四轮补的第八道**（评审实测：⑦ 之后，**同形状、跨模块**的 target 互换仍然全过——
+  `Sub.w` 与根 `M.a` 都是 `(2,4)` 时，trace 把 `root.p_a` 的 `parent_id` 写成 `root/sub`、
+  `root.p_sub_w` 写成 `root`，而 `shape_broken`/`orphan` 全 0、`validate_trace` 通过、CLI exit 0。
+  那是**可见的错误数据**；第十三轮写的「同形状互换没有任何可见差异」是错的，已纠正）：
+  ⑧ **名字 ↔ target 核对**（`fx_names.check_name_target`）：placeholder 的**名字**在图上，
+  torch 按 `前缀 + target.replace(".", "_")` 生成（重名再加 `_N`）；`target` 在 `input_specs` 里。
+  改后者不会改前者——与 ⑦ 同一个道理：找另一份产物，而不是把同一份映射再算一遍。
+  反推出的 target 与 spec 说的不符就 exit 2，点名「`p_a` 的名字对应 `a`，但 spec 说它是 `sub.w`」。
+  11 个真实模型普查零 mismatch；嵌套/tied/ParameterList/ParameterDict/非持久缓冲/普通张量属性/
+  同名遮蔽都有正向对照用例，18 个 zoo 模型全过。
+  **只在反推唯一时比较**：`a.b` 与 `a_b` 压平后同名，名字区分不了两个 target，跳过不猜；
+  `ws.0` 这种本来就带数字的 target 必须**先按全名查、查不到才剥 `_N`**（剥错了会静默跳过，
+  `test_parameter_list_target_swap_is_refused` 钉死这个顺序）。
+  名字反推与模块无关，所以**同模块**的同形状互换也被拒——第十三轮那条「不可观测」用例
+  已按事实改写成 `test_same_shape_target_swap_is_refused_by_the_name_gate`。
+  残余边界（这次真的只剩这一条）：压平撞名时跳过，`parent_id` 确实会写反，
+  `tests/test_fourteenth_review.py::test_ambiguous_swap_really_does_change_parent_id`
+  构建整份 trace 把这个代价钉成可见事实，不假装封死。
+  就地篡改真产物的 spec 属于「篡改权威本身」，与 monkeypatch 掉全部 `input_plan` 同一类，
+  不在本切片的威胁模型内；⑤⑥⑦⑧ 只抓其中**可观测**的改法。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
@@ -196,7 +212,7 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 
 - 零参类也能用（`--entry model:TinyNet`），但 `GPT(config)` 这种必须给工厂，我们不猜你的配置。
 - 示例输入优先用模型自带的 `example_inputs()`；没有就按 `config.vocab_size` + `config.block_size` 造 token id；都没有就报 `BuildError`，不会拿随机形状糊弄。
-- 缺 torch → 退出码 **4**；追不动 → 退出码 **5**；仓库/入口对不上、`input_specs` 与图**或模块**对不上 → 退出码 **2**。三种情况都**不写** `trace.json`。
+- 缺 torch → 退出码 **4**；追不动 → 退出码 **5**；仓库/入口对不上、`input_specs` 与图**或模块**或**导出器自己**对不上（含名字与 `target` 对不上）→ 退出码 **2**。三种情况都**不写** `trace.json`。
   分界线一句话：**spec 与图/模块对不上是契约错误（2）**，**torch 追不动或 `example_inputs` 数量不对是能力边界（5）**。
   「追不动」有四种：① `torch.export` 就失败（数据依赖分支）；② 导出图能画出来，但拿真实张量
   **再跑一遍会炸**（自定义算子只有 meta 实现、真 CPU 实现抛错）；③ 图里有**非张量节点**
@@ -220,7 +236,7 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | --- | --- |
 | 0 | 成功 |
 | 1 | 内部错误：生成的 trace 不合 schema（属 bug，不是用法问题） |
-| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次/`target` 取到的张量形状与导出图里这个节点不符） |
+| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次/`target` 取到的张量形状与导出图里这个节点不符/placeholder 的名字与 `target` 对不上） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
 | 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行、图里有非张量的 `get_attr`/`call_module`（如 `forward` 内的 `no_grad`、`torch.cond`/`torch.while_loop` 的分支图），或 `example_inputs` 数量与数据输入个数对不上（含 pytree 输入未摊平）） |

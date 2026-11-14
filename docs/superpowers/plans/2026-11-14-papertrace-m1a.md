@@ -5,9 +5,14 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**345 passed**，第三至第十三轮评审的必修项都已修完。
+**状态（2026-11-14）**：Task 7–11 全部落地，**375 passed**，第三至第十四轮评审的必修项都已修完。
 第十三轮评审结论：**可以进入 M1b，必修项无**；唯一的条件项（target 互换）我选择**修**而不是只写文档——
 补了第七道关：`placeholder_args` 取到真实张量后与 `node.meta["val"]` 的形状核对（两个独立字段，真核对）。
+第十四轮评审推翻了第七道关留下的那句「同形状互换不可观测」：**同形状、跨模块**互换 target 会把
+`parent_id` 写反（可见的错误数据，CLI 仍 exit 0）。补第八道关 `fx_names.check_name_target`：
+placeholder 的**名字**在图上、`target` 在 spec 里，是两个独立字段，反推唯一时不符就拒绝。
+名字反推与模块无关，所以**同模块**的同形状互换也一并被拒；真正剩下的洞只有「压平撞名」，
+已用整份 trace 的 `parent_id` 差异钉成显式用例，不假装封死。
 第十一轮把 kind 的最终权威交给 `torch.export` 自己（plan 逐项核对），并堵住了「两边互换」这个
 前四轮关卡全过却 kind 相反的洞；另外新增一条能力边界（`forward` 内 `no_grad` → exit 5）。
 第十二轮发现「与导出器核对」的 expected 也是从调用方传进来的对象重生的（同源），补了三道防线：
@@ -18,8 +23,9 @@
 第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5；第九轮 I-1 orphan 双向语义 + I-2 未知/错位 kind fail-closed + M-1…M-3；
 第十轮（自查）反向认领 + 常量不许顶替参数；第十一轮 C1 导出器逐项核对 + I-1 `CUSTOM_OBJ`/`TOKEN` + I-2 orphan 输出边界 + I-3 弱断言 + M-1…M-5；
 第十二轮 I-1 同源 expected → 类型守卫 + 顺序不变量 + 恰好认领一次、I-3 补 CLI 级退出码用例、Minor zoo 集合相等/dict 输出/mutation CLI；
-第十三轮 I-1 target 互换 → 形状核对（第七道关）、M-1 pytree 措辞改准、M-3 TOKEN 归类说明、M-5 `cond`/`while_loop` 点名、M-6 补 target 互换回归），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614`。
+第十三轮 I-1 target 互换 → 形状核对（第七道关）、M-1 pytree 措辞改准、M-3 TOKEN 归类说明、M-5 `cond`/`while_loop` 点名、M-6 补 target 互换回归；
+第十四轮 I-1 同形状跨模块互换 → 名字↔target 核对（第八道关）、M-1 「不可观测」用例按事实改写、M-3 拆出 `fx_kinds`、M-5 提交链与端到端路径补齐），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` →（本次）。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -554,7 +560,8 @@ expected 都从**调用方传进来的** exported 重生，篡改 spec 时两边
 去掉 `if want is None or got is None: return` 守卫 → **4 failed**（int 形参 + 三种非张量边界，
 `TypeError` at fx_shapes.py:90）——证明守卫不是死代码。还原后 16 passed。
 
-全量 **345 passed in 51.80s**（329 + 16）。端到端 `output/twelfth-check`：EXIT 0、nodes=128
+全量 **345 passed in 51.80s**（329 + 16）。端到端（当时复跑写入 `output/twelfth-check`；
+第十四轮起改用 `output/fourteenth-check`，见下节）：EXIT 0、nodes=128
 （module 34/param 18/input 1/op 75）、edges=101、degraded 2、fused 0、orphan 0、shape_broken 0、
 shape_unchecked 0、`real_execution={ok:true,reason:null}`——与第八至十二轮**逐项一致**，
 第七道关没有误伤 fixture。行数（pathlib splitlines 口径）**OVER200=[]**：fx_signature **198**
@@ -564,6 +571,114 @@ fx_trace 160、cli 157；新测试 `tests/test_thirteenth_review.py` 16 条。
 **教训**：一道关卡的价值取决于它的地面真相**独立性**，不取决于它看起来多严格。前六关里有三关
 （③⑤⑥）的地面真相都来自同一个可被篡改的对象；第七关之所以有牙，是因为它比的是导出器留在
 **图节点上**的另一份产物。评审那句「不要再造一个看起来独立的 expected」是这一轮最有用的一句话。
+
+### 第十四轮评审（基线 fb00b9b，345 passed）：「同形状互换不可观测」是错的
+
+评审结论 **需要修**，Critical 0。快照 `output/review13/fb00b9b`，345 passed in 52.68s，探针未改源码。
+
+**I-1（必修）同形状、跨模块的 target 互换，七道关全过、CLI exit 0，`parent_id` 写反。**
+评审的反例（`output/review13/repos/parent_swap/model.py`）：`Sub.w` 与根 `M.a` 都是 `(2,4)`，
+`forward = self.sub(x) + self.a`。互换两个 spec 的 target 后：
+
+```text
+NODE root/@000 root.p_a     param parent= root/sub   ← 正确应是 root
+NODE root/@001 root.p_sub_w param parent= root       ← 正确应是 root/sub
+degraded=0 fused=0 orphan=0 shape_broken=0 shape_unchecked=0   validate_trace PASS   EXIT 0
+```
+
+根因链：`fx_shapes.check_value_shape` 只比形状（同形状当然过）；`fx_nodes.py:142` 的
+`parent_key = spec_owner.get(node.name, parent_key)` 里 `spec_owner` 来自**被改过的 target**；
+`fx_contract` 只查 target 集合与恰好一次（互换后集合不变）；`validate_trace` 只查 parent 是否存在
+（`root/sub` 确实存在）。**README 那句「同形状互换在 trace 里没有任何可见差异」与实测相反。**
+
+我自己复现（`output/probes/probe16.py`，只读源码）确认成立。两个踩坑值得记：
+① 第一版伪造一个 `ex` 再调 `trace_module(m, ONE)`，`parent_id` 竟然正确——因为 **`trace_module`
+内部自己重新 export**，伪造的是另一个对象；必须 monkeypatch `torch.export.export` 返回被改过的产物。
+② `trace_module` 返回的顶层键是 `['edges','nodes','runtime']`（没有 `meta`），而 CLI 写出的
+`trace.json` 是 `meta.runtime`——两个口径不同，探针里 `t['meta']` 报 `KeyError: 'meta'` 是探针 bug。
+
+**修法：第八道关 `papertrace/parse_code/fx_names.py::check_name_target`。**
+地面真相是 placeholder 的**名字**：torch 按 `前缀 + target.replace(".", "_")` 生成（重名再加 `_N`），
+名字在**图上**、target 在 **spec 里**，改后者不改前者——与第七关同一个道理，找另一份产物，
+而不是把同一份映射再算一遍。前缀表 `PARAMETER→p_`、`BUFFER→b_`、`CONSTANT_TENSOR/CUSTOM_OBJ→c_`。
+
+落地前先做**命名普查**（11 个模型：nested/tied/plist/pdict/plainlist/nonpersist/constattr/
+shadowed/ambiguous/deep/parentswap）：**零 mismatch**，全部满足 `name == 前缀 + 压平 target`。
+普查同时量出三个必须处理的细节：
+
+| 细节 | 实测 | 处理 |
+| --- | --- | --- |
+| 压平撞名 | `Ambiguous`（`self.a_b` + `self.a.b`）→ `p_a_b` 反推候选 **2 个** | 反推不唯一就**跳过不猜**（评审明确要求） |
+| 重名后缀 | `p_a_b_1` 的 base `a_b_1` **不在索引里**，剥掉 `_1` 才查到 `a_b`（仍 2 个候选） | 查不到才剥 `_N`，剥完仍不唯一就跳过 |
+| 数字尾巴 | `p_ws_0`（target `ws.0`）的 base `ws_0` **本来就在索引里** | **先按全名查、查不到才剥后缀**；剥错了会把 `ws.0` 当成 `ws` 而静默跳过 |
+| 非持久缓冲 | `b_tmp` 候选数 2，但两个都是**同一个 target 字符串** `tmp`（同时在 `named_buffers` 与 `exported.constants`） | 索引用 **set of distinct targets**，不能数 list 长度 |
+
+**比评审要求更强的一点**：名字反推与模块无关，所以**同模块**的同形状互换也被拒。
+据此把第十三轮那条「不可观测」用例按事实改写：
+`test_same_shape_target_swap_is_not_observable` → **`test_same_shape_target_swap_is_refused_by_the_name_gate`**。
+评审 M-1 要求「改成 trace 级、限定同模块」，实测结果是它根本过不了新关，所以不需要那条对照；
+真正需要 trace 级证据的是**残余洞**：`test_ambiguous_swap_really_does_change_parent_id` 构建整份
+trace 比较 param 节点的 `parent_id`，`before != after` 且 `shape_broken == 0`——把「跳过不猜」的代价
+钉成可见事实，不假装封死。
+
+**M-3 拆分（部分采纳）**：`fx_signature` 198 行只剩 2 行余量，放不下新关。把 `KIND_MAP`/
+`REFUSED_KINDS`/`spec_kind`（原 `_spec_kind`）搬进新文件 **`fx_kinds.py`**（54 行，不 import torch），
+`fx_signature` 降到 **161 行**。评审建议的 `fx_args.py`（把 `placeholder_args` 也搬走）**留到 M1b**：
+本轮只需腾出空间，搬动解析逻辑会牵动 10 处测试 import，风险大于收益。
+调用顺序刻意安排成**形状关在前、名字关在后**：不同形状互换仍先命中形状关，保留带 `(1,4)/(2,4)`
+数字的原文案，第十三轮 16 条用例一条不破。
+
+**踩坑**：删 `KIND_MAP` 那一段时把中间的 `_spec_name` 一起删了 →
+`NameError: name '_spec_name' is not defined` at `papertrace/parse_code/fx_signature.py:36`，20 failed。
+补回后正常。教训：按「从 A 到 B」整段删除时，先确认 A、B 之间没有别的东西。
+
+**新回归 `tests/test_fourteenth_review.py`（29 条，423 行）**：跨模块互换参数化（root-vs-sub /
+sub-vs-sub，先显式跑 `check_contract`+`check_plan_source`+`check_plan_table`+`check_value_shape`
+证明前几关全过，再断言拒绝）；`test_the_swap_really_would_write_the_wrong_parent_id` 用
+`module_of_target` 复算 real `{'p_a':'','p_sub_w':'sub'}` vs forged `{'p_a':'sub','p_sub_w':''}`；
+**CLI 级**篡改 `torch.export.export` → exit 2 + stderr 含「名字」「对不上」+ 无 Traceback + 不写 trace，
+外加同仓库不篡改 exit 0 对照；`test_parameter_list_target_swap_is_refused` 钉死「先全名后剥后缀」；
+歧义两条（合法不拒 + 互换也不猜）；11 个合法模型正向对照参数化；`check_name_target` 单元边界
+（唯一 mismatch 拒绝、匹配接受、ambiguous/ambiguous-dedup/numeric-tail/user-input/unknown-target
+五种不猜、非持久缓冲同一 target 不算歧义）。
+
+变异探针（三组，均已还原，`restored=True` 逐个核过）：
+
+| 变异 | 结果 |
+| --- | --- |
+| A 关掉 `check_name_target(...)` 调用 | **6 failed**（跨模块两条 + CLI + 同模块 + PList + 第十三轮改写那条） |
+| B 唯一性判据 `if not candidates or len(candidates) != 1:` → `if True:` | **7 failed**（上面 6 条 + 单元 mismatch） |
+| C 先剥数字后缀再查全名 | **1 failed**，正是 `test_parameter_list_target_swap_is_refused` |
+
+C 只红一条是**预期的**：那条用例就是为钉这个顺序写的。还原后 46 passed。
+
+全量 **375 passed in 51.62s**（345 + 29 + 1）。端到端 `output/fourteenth-check`：EXIT 0、nodes=128
+（module 34/param 18/input 1/op 75）、edges=101、degraded 2、fused 0、orphan 0、shape_broken 0、
+shape_unchecked 0、`real_execution={ok:true,reason:null}`、123655 bytes——与第八至十三轮**逐项一致**，
+第八道关没有误伤 fixture。行数（pathlib splitlines 口径）**OVER200=[]**：fx_nodes 187、fx_edges 184、
+build_trace 181、fx_contract 175、report 165、**fx_signature 161**、fx_trace 160、cli 157、fx_graph 148、
+schema_structure 129、schema_validate 100、fx_shapes 98、fx_inputs 98、**fx_names 79**、**fx_kinds 54**。
+
+**M-2（SymInt 静默跳过）留 M1b**：`check_value_shape` 对 `None`/非整数维直接 return，动态形状会让
+第七关静默失效。评审建议返回 `checked/skipped_reason` 并在 `meta.runtime.counts` 记独立的
+`shape_gate_skipped`（不复用边级 `shape_unchecked`）。M1a 的 fixture 与 zoo 全是静态形状，
+现在加计数字段要动 schema 与 20 处断言；M1b 做 shape 传播时本来就要引入符号维度，那时一起加。
+**M-4（`build_op_nodes(exported=None)`）留 M1b**：评审明确「不算本轮阻塞项」，拆公开
+`build_from_export` + 私有 `_build_op_nodes` 会让 fx_nodes 贴近 200 行约束并牵动 10 处测试调用。
+**M-5 已修**：提交链补 `aeea7e6`，端到端路径写明各轮实际写入的目录。
+
+**M1b 的范围纠正（评审指出我给用户讲错了）**：按
+`docs/superpowers/plans/2026-11-14-papertrace-engineering-plan.md:424-447`，**M1b = Task 6
+「符号表与 shape 传播」**：先 `papertrace/symbols/code_table.py` + `tests/test_symbols_nanogpt.py`
+（`n_embd→D`、`n_head→H`、`head_dim→Dh`、`block_size→T`，每个符号带 `defined_at`，纯 Python 不依赖
+torch），再 `shape_prop.py`（推不出的边置 `shape_consistent=False`，**不得填 None 冒充成功**），
+最后 `mapping.py`；符号名冻结 `B,T,D,H,Dh`（`Dh=D/H`）。论文 PDF/LaTeX 解析属 **M2.5（Task 9）**、
+双向检索对齐属 **M3（Task 10）**，都不该在 M1b 之前做。我在给用户的阶段报告里把顺序讲反了，已纠正。
+
+**教训**：「不可观测」是一个**需要证据的断言**，不是「我这关没抓到」的同义词。第十三轮我只比了
+`args[0] is module.b` 就写下「trace 里没有任何可见差异」，而 `parent_id` 恰恰是用 target 定位的——
+没构建整份 trace 就宣称无差异，等于把错误行为钉成了规格。评审 M-1 要求的「trace 级断言」是对的，
+只是实测结果比它预期的更强：新关连同模块互换一起拒了。
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
@@ -645,3 +760,5 @@ fx_trace 160、cli 157；新测试 `tests/test_thirteenth_review.py` 16 条。
 | `a7311fc` | 钉 pytree 边界提交 |
 | `fb00b9b` | 第十三轮条件项：第七道关——取到的张量形状与 `node.meta["val"]` 核对（target 互换），16 条新回归，345 passed |
 | `870d614` | 第十三轮文档：七道关与残余边界、TOKEN 归类说明、`cond`/`while_loop` 点名、pytree 措辞改准、M-2 留 M1b 的理由 |
+| `aeea7e6` | 钉第十三轮提交链 |
+| （本次） | 第十四轮必修：第八道关 `fx_names.check_name_target`（名字↔target，反推唯一才比）、拆出 `fx_kinds`、「不可观测」用例按事实改写、残余洞钉成 trace 级证据、29 条新回归，375 passed |
