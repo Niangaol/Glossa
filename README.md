@@ -41,27 +41,39 @@ root/@037  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) matmul
 root/@043  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) softmax
 ```
 
-`--edges` 一行一条边，断链行首打 `!`，末行给 `edges=N shape_broken=M`：
+权重/输入节点不是算子，`--ops` 里它们的输入形状打 `-`；算子输入确实拿不到时打 `(?)`，
+和 0 维标量的 `()` 严格区分开。
+
+`--edges` 一行一条边，左列是**消费者真实拿到的输入形状**，右列是**生产者真实吐出的输出形状**。
+行首空格 = 两边核实相等，`!` = 对不上，`?` = 有一边没观察到（未核实，不等于一致）：
 
 ```text
-  (2, 8)           root/@018 (placeholder) -> root/@020 (embedding) e:root/@018->root/@020:args[1]
-! (2, 6)           root/@031 (split) -> root/@034 (add) e:root/@031->root/@034:args[1][0]
+  (64, 32)         生产者 (64, 32)         root/@015 (placeholder) -> root/@020 (embedding) e:root/@015->root/@020:args[0]
+  (2, 8)           生产者 (2, 8)           root/@018 (placeholder) -> root/@020 (embedding) e:root/@018->root/@020:args[1]
+! (2, 6)           生产者 (2, 8)           root/@031 (split) -> root/@034 (add) e:root/@031->root/@034:args[1][0]
 ```
+
+末行给 `edges=N shape_broken=M shape_unchecked=K`。两边的形状不是同一条推断抄两遍：导出图会用真实张量
+**再跑一遍**（`fx_observe`），边两端取的是这次执行里各自的实际形状。
 
 ### trace.json 的字段约定
 
 - **节点 id**：模块节点是路径（`root`、`root/transformer.h.0.attn`），算子/输入/权重节点一律
-  `root/@037`——`@` 不会出现在模块路径里，所以两种 id 不可能撞车。
+  `root/@037`——`@` 不会出现在模块路径里，所以两种 id 不可能撞车。真有子模块名里带 `@`，
+  `build` 直接报 `BuildError` 要求改名，而不是生成一份 id 打架的 trace。
 - **`kind`**：`op` | `input` | `param`。`input` 是图入口，`param` 是权重/缓冲（torch.export
   把权重抬成图输入，名字带 `p_`/`b_` 前缀），`parent_id` 指向它真正所属的模块。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
-  `[[]]` = 0 维标量）。`shape_in` 只从 `op`/`input` 入边取，权重边不会冒充输入。
+  `[[]]` = 0 维标量）。`inputs` 是这个算子实际吃到的张量入参形状（按参数顺序，权重位置跳过），
+  `shape_in` 就是 `inputs[0]`；权重边不会冒充输入。
 - **边**：按参数位置一条条连（`args[1][0]` 这种 label），`torch.cat([a, b])` 不会丢边。
-  `shape_consistent` 只在能独立核实的地方判 True：多输出索引解析、inplace 保持形状；
-  形状缺失或对不上就是 False，`dump --edges` 会打 `!`。
-- **`meta.runtime`**：这次追踪怎么来的——设备、torch 版本、dtype、batch/seq_len、示例输入、
-  entry，以及 `counts`（operators/degraded/fused/orphan/shape_broken）。没有它就没法判断
-  这份 trace 能不能复现。
+  每条边同时记 `shape`（消费者这一项的真实输入）、`producer_shape`（生产者真实输出）和
+  `checked`。`shape_consistent` 只在 `checked` 时才有意义；两边对不上就是 False，
+  `dump --edges` 打 `!`；没观察到就打 `?`，**未核实不算通过**。
+- **`meta.runtime`**：这次追踪怎么来的——设备、torch 版本、dtype、**实际**的 batch/seq_len、
+  示例输入、entry，`requested`（命令行请求的 batch/seq_len，和实际值分开记，免得自相矛盾），
+  `real_execution`（第二遍真实执行是否成功，失败原因），以及 `counts`
+  （operators/degraded/fused/orphan/shape_broken/shape_unchecked）。没有它就没法判断这份 trace 能不能复现。
 - **结构校验**：`validate_trace` 除了 JSON Schema 还查重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`。这些错误一律 `TraceSchemaError`，不静默放过。
 
