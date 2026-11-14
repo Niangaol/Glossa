@@ -72,16 +72,21 @@ def test_untraceable_input_is_refused_explicitly():
 
 
 def test_align_never_fakes_results():
-    """对齐三件套都不许造结果：judge 还是桩必须报 NotImplementedError；
-    S6 之后 embed / retrieve 已实现，改为断言它们 offline 时诚实归零——
+    """对齐三件套都不许造结果：offline 下 judge 必须诚实归零；
+    S6 之后 embed / retrieve 已实现，同样断言它们 offline 时诚实归零——
     judge 若写成 `return JudgeResult(True, "")`、embed 若返回假向量，
-    都会制造假绿线，这是本切片最该防的失败模式。"""
+    都会制造假绿线，这是本切片最该防的失败模式。
+
+    S7 起 judge 已实现（Task S7）：offline 下 `judge("x", "y")` 返回
+    `JudgeResult(False, "")` 且 `judge_score == 0.0`（R49：`JudgeResult`
+    没有 reason 字段，那句给用户看的 reason 由 S9 写进 unresolved / anchor）。"""
     from papertrace.align.embed import embed_texts
-    from papertrace.align.judge import judge
+    from papertrace.align.judge import JudgeResult, judge, judge_score
     from papertrace.align.retrieve import retrieve_bidirectional
 
-    with pytest.raises(NotImplementedError):
-        judge("x", "y")
+    result = judge("x", "y")
+    assert result == JudgeResult(False, "")
+    assert judge_score(result) == 0.0
     # R44：embed_texts 只转调，offline 就把 LLMUnavailable 原样抛出来
     with pytest.raises(LLMUnavailable):
         embed_texts(["x"])

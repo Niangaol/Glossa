@@ -18,7 +18,9 @@ FORBIDDEN_SNIPPETS = [
     "generate_alignment",
     "对应关系如下",
     "自由生成",
-    "请列出对应关系",
+    # R58：从 "请列出对应关系" 加严成 "请列出"（控制器已 grep 全 papertrace/ 零命中，
+    # prompts.py:14 是「不要列出多个候选」，不含「请列出」，加严不会误伤）
+    "请列出",
 ]
 
 
