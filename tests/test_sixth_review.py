@@ -26,7 +26,7 @@ from papertrace.build_trace import build_trace  # noqa: E402
 from papertrace.exceptions import BuildError  # noqa: E402
 from papertrace.parse_code.fx_nodes import build_op_nodes  # noqa: E402
 from papertrace.parse_code.fx_trace import _ensure_export_cache  # noqa: E402
-from papertrace.schema_validate import minimal_trace  # noqa: E402
+from papertrace.schema_validate import minimal_trace, validate_trace  # noqa: E402
 from tests._tmp import scratch_dir  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -243,10 +243,24 @@ def test_constants_are_not_data_inputs(name, source):
     """I2：常量（字面量或 self.const）不占 inputs，cat 的 shape_in 是数据形状。"""
     repo = _write_repo(name, source)
     doc = build_trace(repo, entry=ENTRY)
+    assert len(_by_kind(doc, "param")) == 0, _by_kind(doc, "param")
     assert len(_by_kind(doc, "input")) == 1, _by_kind(doc, "input")
     cat = _op(doc, "cat")
     assert cat["inputs"] == [[1, 4]], cat["inputs"]
     assert cat["shape_in"] == [1, 4], cat
+    validate_trace(doc)
+
+
+def test_constant_attribute_is_marked_const_not_param():
+    """I2：self.const 是 CONSTANT_TENSOR，必须 kind=const；标成 param 会让人以为它可训练。"""
+    repo = _write_repo("sig-const-kind", _CONST_ATTR)
+    doc = build_trace(repo, entry=ENTRY)
+    consts = _by_kind(doc, "const")
+    assert len(consts) == 1, [(n["id"], n["kind"]) for n in doc["nodes"] if n["level"] == "op"]
+    assert consts[0]["shape_out"] == [2, 4], consts[0]
+    assert _by_kind(doc, "param") == [], _by_kind(doc, "param")
+    # const 必须在 schema 允许的 kind 里，否则 dump 会拒收 build 自己写出的 trace
+    validate_trace(doc)
 
 
 def test_constant_attribute_cli_summary_counts_one_input():
@@ -257,6 +271,11 @@ def test_constant_attribute_cli_summary_counts_one_input():
     assert r.returncode == 0, r.stderr
     summary = _summary(r.stdout)
     assert "输入 1" in summary, summary
+    assert "常量 1" in summary, summary
+    assert "权重 0" in summary, summary
+    # build 的产物必须能被自己的 dump 校验：schema 的 kind enum 漏掉 const 会在这里炸
+    dumped = _run_cli("dump", "--trace", str(out_dir / "trace.json"))
+    assert dumped.returncode == 0, dumped.stderr
 
 
 # ---------------------------------------------------------------- Minor

@@ -73,7 +73,10 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
 - **`kind`**：`op` | `input` | `param` | `const`。**谁是谁由 `graph_signature.input_specs` 说了算**：
   `PARAMETER`/`BUFFER` → `param`，`CONSTANT_TENSOR` → `const`，`USER_INPUT` → `input`；
   `parent_id` 用 `spec.target` 的点分路径（`transformer.h.0.attn`）定位所属模块，不靠名字猜。
-  常量（`torch.ones(...)`、`self.const = torch.ones(...)`）是权重一类，不是数据入参。
+  常量（`torch.ones(...)`、`self.const = torch.ones(...)`）不是数据入参，也不是可训练权重：
+  `self.const`（CONSTANT_TENSOR）单独标 `kind=const`，摘要写「常量 N」而不是塞进「权重 N」；
+  纯字面量 `torch.ones(2,4)` 在导出图里就是一个 `ones` 算子（`kind=op`），它的
+  `inputs` 为空，两者都不会冒充数据输入。
   只有拿不到 `input_specs` 的老 torch 才退回 mangled 名（`p_`/`b_` 前缀）；那种情况下
   `sub.x` 与根上的 `sub_x` 会压成同一个 `p_sub_x`，`build` 直接 `BuildError`（exit 2），
   绝不静默取一个（压平名也绝不认参数全名：`self.x` 的 `x` 会和形参 `x` 撞车）。

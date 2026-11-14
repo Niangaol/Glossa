@@ -224,7 +224,7 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 | 编号 | 问题 | 修法 |
 | --- | --- | --- |
 | C1 | `sub_x`（根参数）与 `sub.x`（子模块参数）压成同一个 `p_sub_x`，后者覆盖前者；`forward(p_x)` 与 `self.x` 的 `p_x`/`p_x_1` 也会整对调换 | 参数判定改由 `graph_signature.input_specs` 接管（`fx_signature.input_plan/classify`）：`spec.kind` 定 kind，`spec.target` 定所属模块。mangled 名只作没有 spec 时的兜底，且兜底一旦发现压平撞名就 `BuildError`（exit 2），不猜 |
-| I2 | 常量：`torch.cat([torch.ones(2,4), x])` 的 `cat inputs=[[2,4],[1,4]]`；`self.const` 被标成 `input` | `CONSTANT_TENSOR` → 新 kind `const`，与权重同等对待（不进 `inputs`）；`fx_inputs.constant_names()` 把无入参的 `ones/zeros/full/empty/arange/linspace/eye` 也并进派生集合 |
+| I2 | 常量：`torch.cat([torch.ones(2,4), x])` 的 `cat inputs=[[2,4],[1,4]]`；`self.const` 被标成 `input` | `CONSTANT_TENSOR` → 新 kind `const`，与权重同等对待（不进 `inputs`）；`fx_inputs.constant_names()` 把无入参的 `ones/zeros/full/empty/arange/linspace/eye` 也并进派生集合。schema 的 kind enum、摘要的「常量 N」、`dump --ops` 的 `kind=const` 同步——否则 build 写得出、dump 校验不过 |
 | I3 | 只有参数、没有算子的子模块（`Sub`）不进 `nn_module_stack`，权重的 `parent_id` 掉回 `root` | `fx_modules.``_all_module_types()`：先按 `named_modules()` 收全树（root 用类名），再拿图里的类型补，模块节点与 `module_ids` 因此完整 |
 | I4 | README/计划写着「第五轮已修完」、提交链止于 `6a87f7d`、`meta["val"]` 取形状 | 本节与上两处已改回事实 |
 

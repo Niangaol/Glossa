@@ -144,7 +144,7 @@
         "op": { "type": "string" },
         "label": { "type": "string" },
         "loc": { "type": "string" },
-        "kind": { "enum": ["op", "input", "param"] },
+        "kind": { "enum": ["op", "input", "param", "const"] },
         "shape_in": { "type": "array" },
         "shape_out": { "type": "array" },
         "inputs": { "type": "array", "items": { "type": "array" } },

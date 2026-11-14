@@ -38,6 +38,7 @@ def build_op_nodes(
     owner, mangled_owner = owned_paths(module)
     plan = plan or {}
     spec_inputs = set(plan.get("inputs") or ())
+    spec_consts = set(plan.get("consts") or ())
     spec_owner: dict[str, str] = dict(plan.get("owner") or ())
     observed = observed or {}
     nodes: list[dict] = []
@@ -103,7 +104,9 @@ def build_op_nodes(
         # torch.export 把权重抬成图输入（placeholder）；kind 以 input_specs 为准，
         # 父模块也用它给的 target（参数全名），不再拿会被压平的名字猜。
         if kind == "param" or node.name in param_names:
-            kind = "param"
+            # 常量（torch.ones(...)、self.const）不是训练权重：分开标，摘要才不会把
+            # 「常量 1 / 权重 0」写成「权重 1」，让人以为模型有可训练参数。
+            kind = "const" if node.name in spec_consts else "param"
             if node.name in spec_owner:
                 parent_key = spec_owner[node.name]
             else:
@@ -152,5 +155,4 @@ def build_op_nodes(
         all_shapes[node_id] = shapes
 
     return nodes, by_name, all_shapes
-
 

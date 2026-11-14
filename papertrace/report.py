@@ -23,7 +23,7 @@ def fmt_shape(shape) -> str:
 
 
 def _kind_counts(doc: dict) -> dict[str, int]:
-    kinds = {"op": 0, "param": 0, "input": 0}
+    kinds = {"op": 0, "param": 0, "const": 0, "input": 0}
     for node in doc["nodes"]:
         if node["level"] == "op":
             key = node.get("kind", "op")
@@ -35,9 +35,11 @@ def print_build_summary(doc: dict, out_path: Path) -> None:
     """build 写完 trace 后的两行摘要：规模 + 必须当场看见的异常计数。"""
     counts = (doc["meta"].get("runtime") or {}).get("counts") or {}
     kinds = _kind_counts(doc)
+    consts = f" / 常量 {kinds['const']}" if kinds["const"] else ""
     print(
         f"已写出 {out_path}（nodes={len(doc['nodes'])}：算子 {kinds['op']} / "
-        f"权重 {kinds['param']} / 输入 {kinds['input']}，edges={len(doc['edges'])}，真实追踪）"
+        f"权重 {kinds['param']}{consts} / 输入 {kinds['input']}，"
+        f"edges={len(doc['edges'])}，真实追踪）"
     )
     # 降级、融合、孤点、断链必须在摘要里就看得见，不能等用户去翻 JSON
     print(
@@ -85,9 +87,11 @@ def print_overview(doc: dict) -> None:
             len(doc["unresolved"]),
         )
     )
+    consts = f" const={kinds['const']}" if kinds["const"] else ""
     print(
-        "operators={} (param={} input={}) degraded={} shape_broken={} shape_unchecked={}".format(
-            kinds["op"], kinds["param"], kinds["input"], len(degraded), len(broken), len(unchecked)
+        "operators={} (param={}{} input={}) degraded={} shape_broken={} shape_unchecked={}".format(
+            kinds["op"], kinds["param"], consts, kinds["input"],
+            len(degraded), len(broken), len(unchecked),
         )
     )
     # 形状链断了必须看得见，不能只在 JSON 里躺着
