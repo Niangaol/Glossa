@@ -25,6 +25,38 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _structural_errors(doc: dict) -> list[str]:
+    """schema 管不到的整体约束：id 唯一、端点存在、父子存在、层级与来源一致。
+
+    JSON Schema 没有 uniqueItems 之外的跨对象校验能力；这些错误若放过，UI 会静默
+    用后一个节点覆盖前一个（id 撞车），或者画出一条指向空气的边。
+    """
+    errors: list[str] = []
+    nodes = doc.get("nodes") or []
+    edges = doc.get("edges") or []
+    ids: set[str] = set()
+    for node in nodes:
+        node_id = node.get("id")
+        if node_id in ids:
+            errors.append(f"nodes: 节点 id 重复：{node_id}")
+        ids.add(node_id)
+    for node in nodes:
+        parent = node.get("parent_id")
+        if parent is not None and parent not in ids:
+            errors.append(f"nodes: {node.get('id')} 的 parent_id 不存在：{parent}")
+        level, source = node.get("level"), node.get("source")
+        if level == "module" and source not in (None, "static"):
+            errors.append(f"nodes: {node.get('id')} 是模块节点，source 必须是 static，实际 {source}")
+        if level == "op" and source not in (None, "runtime", "static", "model"):
+            errors.append(f"nodes: {node.get('id')} 的 source 非法：{source}")
+    for edge in edges:
+        for end in ("src", "dst"):
+            endpoint = edge.get(end)
+            if endpoint not in ids:
+                errors.append(f"edges: {edge.get('id')} 的 {end} 端点不存在：{endpoint}")
+    return errors
+
+
 def validate_trace(doc: dict) -> None:
     """合法则返回 None，非法抛 TraceSchemaError（errors 里是全部原因）。"""
     validator = jsonschema.Draft202012Validator(load_schema())
@@ -32,6 +64,7 @@ def validate_trace(doc: dict) -> None:
     for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path)):
         where = "/".join(str(p) for p in err.absolute_path) or "(root)"
         errors.append(f"{where}: {err.message}")
+    errors.extend(_structural_errors(doc))
     if errors:
         raise TraceSchemaError(errors)
 

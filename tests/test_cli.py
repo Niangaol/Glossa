@@ -144,7 +144,7 @@ def test_dump_ops_prints_topological_operator_list():
     assert lines, "没有打印任何算子"
 
     # 只打算子层，不打模块层
-    assert all(ln.startswith("root/op") for ln in lines), lines[:3]
+    assert all(ln.split()[0].startswith("root/@") for ln in lines), lines[:3]
     # 形状用 (a, b) -> (a, b) 的形式
     assert all("->" in ln for ln in lines), lines[:3]
     joined = "\n".join(lines)

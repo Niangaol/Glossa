@@ -52,7 +52,14 @@
           "properties": {
             "ok": { "type": "boolean" },
             "reason": { "type": ["string", "null"] },
-            "device": { "type": "string" }
+            "device": { "type": "string" },
+            "torch_version": { "type": ["string", "null"] },
+            "dtype": { "type": ["string", "null"] },
+            "batch": { "type": ["integer", "null"] },
+            "seq_len": { "type": ["integer", "null"] },
+            "entry": { "type": ["string", "null"] },
+            "example_inputs": { "type": "array", "items": { "type": "array" } },
+            "counts": { "type": "object" }
           }
         }
       }
@@ -129,8 +136,10 @@
         "op": { "type": "string" },
         "label": { "type": "string" },
         "loc": { "type": "string" },
+        "kind": { "enum": ["op", "input", "param"] },
         "shape_in": { "type": "array" },
         "shape_out": { "type": "array" },
+        "outputs": { "type": "array", "items": { "type": "array" } },
         "dtype": { "type": ["string", "null"] },
         "inplace": { "type": "boolean" },
         "source": { "$ref": "#/$defs/source" },

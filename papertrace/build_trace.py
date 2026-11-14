@@ -12,7 +12,8 @@ import sys
 from pathlib import Path
 
 from papertrace.exceptions import BuildError
-from papertrace.parse_code.fx_trace import FUSED_OPS, _require_torch, trace_module
+from papertrace.parse_code.fx_graph import FUSED_OPS
+from papertrace.parse_code.fx_trace import _require_torch, trace_module
 from papertrace.schema_validate import minimal_trace
 
 #: 默认示例输入：batch=2、序列长度 8（够让 Attention 的 (B, H, T, T) 显形）。
@@ -134,6 +135,12 @@ def build_trace(
     doc["meta"]["repo"]["entry_module"] = entry
     doc["nodes"] = traced["nodes"]
     doc["edges"] = traced["edges"]
+    # 这次追踪是怎么跑的：不写进去，同一个 trace 就没法复现也没法解释
+    runtime = dict(traced.get("runtime") or {})
+    runtime["entry"] = entry
+    runtime["batch"] = batch
+    runtime["seq_len"] = seq_len if seq_len is not None else runtime.get("seq_len")
+    doc["meta"]["runtime"] = runtime
     return doc
 
 

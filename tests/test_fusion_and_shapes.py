@@ -12,7 +12,8 @@ import torch.nn as nn  # noqa: E402
 from torch.nn import functional as F  # noqa: E402
 
 from papertrace.build_trace import fused_ops_in  # noqa: E402
-from papertrace.parse_code.fx_trace import _resolve_arg_shape, trace_module  # noqa: E402
+from papertrace.parse_code.fx_edges import resolve_arg_shape  # noqa: E402
+from papertrace.parse_code.fx_trace import trace_module  # noqa: E402
 
 
 class _SdpaOnly(nn.Module):
@@ -88,17 +89,17 @@ def test_resolve_arg_shape_only_answers_when_it_can():
             self.args = args
 
     shapes = [[2, 2], [2, 3]]
-    assert _resolve_arg_shape(FakeArg([None, 0]), shapes) == [2, 2]
-    assert _resolve_arg_shape(FakeArg([None, 1]), shapes) == [2, 3]
-    assert _resolve_arg_shape(FakeArg([None, -1]), shapes) == [2, 3]
+    assert resolve_arg_shape(FakeArg([None, 0]), shapes) == [2, 2]
+    assert resolve_arg_shape(FakeArg([None, 1]), shapes) == [2, 3]
+    assert resolve_arg_shape(FakeArg([None, -1]), shapes) == [2, 3]
     # 索引越界 → 不知道，交给调用方按断链处理
-    assert _resolve_arg_shape(FakeArg([None, 5]), shapes) is None
+    assert resolve_arg_shape(FakeArg([None, 5]), shapes) is None
     # 单输出、非 getitem、索引不是常量 → 都不猜
-    assert _resolve_arg_shape(FakeArg([None, 0]), [[2, 2]]) is None
-    assert _resolve_arg_shape(FakeArg([None, 0]), shapes) == [2, 2]
+    assert resolve_arg_shape(FakeArg([None, 0]), [[2, 2]]) is None
+    assert resolve_arg_shape(FakeArg([None, 0]), shapes) == [2, 2]
 
     class NotGetitem(FakeArg):
         op = "add"
 
-    assert _resolve_arg_shape(NotGetitem([None, 1]), shapes) is None
-    assert _resolve_arg_shape(FakeArg([None, "i"]), shapes) is None
+    assert resolve_arg_shape(NotGetitem([None, 1]), shapes) is None
+    assert resolve_arg_shape(FakeArg([None, "i"]), shapes) is None

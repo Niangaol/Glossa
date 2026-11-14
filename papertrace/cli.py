@@ -36,7 +36,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_build = sub.add_parser("build", help="构建 trace.json（以及可选的单文件 HTML）")
-    p_build.add_argument("--repo", required=True, help="本地仓库路径或 git URL")
+    p_build.add_argument(
+        "--repo", required=True, help="本地仓库路径（git URL 尚未实现，会报错退出）"
+    )
     p_build.add_argument("--paper", default="none", help="arxiv:ID、本地 .tex/.pdf，或 none")
     p_build.add_argument("--out", default="output", help="输出目录")
     p_build.add_argument(
@@ -57,6 +59,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_dump.add_argument("--trace", default="output/trace.json", help="trace.json 路径")
     p_dump.add_argument(
         "--ops", action="store_true", help="按拓扑序打印算子节点（形状 → 形状）"
+    )
+    p_dump.add_argument(
+        "--edges", action="store_true", help="打印全部边（含形状与一致性），对账形状链用"
     )
 
     p_serve = sub.add_parser("serve", help="localhost 按需深钻")
@@ -116,10 +121,20 @@ def _cmd_build(args: argparse.Namespace) -> int:
     if args.skeleton:
         print(f"已写出 {out_path}（nodes=0 edges=0 anchors=0，骨架）")
     else:
+        counts = (doc["meta"].get("runtime") or {}).get("counts") or {}
         ops = sum(1 for n in doc["nodes"] if n["level"] == "op")
         print(
             f"已写出 {out_path}（nodes={len(doc['nodes'])} 其中算子 {ops}，"
             f"edges={len(doc['edges'])}，真实追踪）"
+        )
+        # 降级、融合、孤点、断链必须在摘要里就看得见，不能等用户去翻 JSON
+        print(
+            "  degraded={} fused={} orphan={} shape_broken={}".format(
+                counts.get("degraded", "?"),
+                counts.get("fused", "?"),
+                counts.get("orphan", "?"),
+                counts.get("shape_broken", "?"),
+            )
         )
     return 0
 
@@ -130,9 +145,16 @@ def _cmd_dump(args: argparse.Namespace) -> int:
         print(f"papertrace dump：找不到 {path}", file=sys.stderr)
         return 2
     doc = load_trace(path)
-    validate_trace(doc)
+    try:
+        validate_trace(doc)
+    except TraceSchemaError as exc:
+        print(f"papertrace dump：{path} 不是合法 trace：\n{exc}", file=sys.stderr)
+        return 2
     if args.ops:
         _print_ops(doc)
+        return 0
+    if args.edges:
+        _print_edges(doc)
         return 0
     broken = [e for e in doc["edges"] if not e["shape_consistent"]]
     degraded = [n for n in doc["nodes"] if n["level"] == "op" and n["degraded"]]
@@ -157,7 +179,28 @@ def _cmd_dump(args: argparse.Namespace) -> int:
 
 
 def _fmt_shape(shape) -> str:
-    return "(" + ", ".join(str(d) for d in shape) + ")" if shape else "(?)"
+    """() 是 0 维标量；(?) 是形状未知。两者不能混为一谈。"""
+    if shape is None:
+        return "(?)"
+    if not shape:
+        return "()"
+    return "(" + ", ".join(str(d) for d in shape) + ")"
+
+
+def _print_edges(doc: dict) -> None:
+    """形状链对账入口：每条边一行，不一致的用 ! 标出来。"""
+    by_id = {n["id"]: n for n in doc["nodes"]}
+    broken = 0
+    for edge in doc["edges"]:
+        src, dst = by_id.get(edge["src"]), by_id.get(edge["dst"])
+        flag = "!" if not edge["shape_consistent"] else " "
+        broken += 0 if edge["shape_consistent"] else 1
+        print(
+            f"{flag} {_fmt_shape(edge['shape']):<16} "
+            f"{edge['src']} ({src['op'] if src else '?'}) -> "
+            f"{edge['dst']} ({dst['op'] if dst else '?'}) {edge['id']}"
+        )
+    print(f"edges={len(doc['edges'])} shape_broken={broken}")
 
 
 def _print_ops(doc: dict) -> None:
@@ -172,9 +215,14 @@ def _print_ops(doc: dict) -> None:
         if node["degraded"]:
             reason = (node.get("degraded_reason") or "").strip()
             flag = "  [degraded: " + (reason[:58] + "…" if len(reason) > 58 else reason) + "]"
+        # outputs 为空 = 这个节点没有张量输出；[[]] = 0 维标量
+        known_out = bool(node.get("outputs")) or bool(node["shape_out"])
+        shown_out = _fmt_shape(node["shape_out"]) if known_out else "(?)"
+        # 形参/权重没有「输入形状」，画 - 别让人误读成 0 维标量
+        shown_in = _fmt_shape(node["shape_in"]) if node.get("kind") == "op" else "-"
         print(
             f"{node['id']:<16} {where:<34} "
-            f"{_fmt_shape(node['shape_in'])} -> {_fmt_shape(node['shape_out'])} "
+            f"{shown_in} -> {shown_out} "
             f"{node['op']}{flag}"
         )
 
