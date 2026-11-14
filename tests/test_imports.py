@@ -2,6 +2,8 @@ import importlib
 
 import pytest
 
+from papertrace.exceptions import LLMUnavailable
+
 SUBPACKAGES = [
     "papertrace.ingest",
     "papertrace.parse_code",
@@ -69,19 +71,26 @@ def test_untraceable_input_is_refused_explicitly():
         trace_module(object(), ())
 
 
-def test_align_stubs_raise_not_implemented():
-    """对齐三件套也必须真报错：judge 若写成 `return JudgeResult(True, "")`
-    就会制造假绿线，这是本切片最该防的失败模式。"""
+def test_align_never_fakes_results():
+    """对齐三件套都不许造结果：judge 还是桩必须报 NotImplementedError；
+    S6 之后 embed / retrieve 已实现，改为断言它们 offline 时诚实归零——
+    judge 若写成 `return JudgeResult(True, "")`、embed 若返回假向量，
+    都会制造假绿线，这是本切片最该防的失败模式。"""
     from papertrace.align.embed import embed_texts
     from papertrace.align.judge import judge
     from papertrace.align.retrieve import retrieve_bidirectional
 
     with pytest.raises(NotImplementedError):
         judge("x", "y")
-    with pytest.raises(NotImplementedError):
-        retrieve_bidirectional([], [])
-    with pytest.raises(NotImplementedError):
+    # R44：embed_texts 只转调，offline 就把 LLMUnavailable 原样抛出来
+    with pytest.raises(LLMUnavailable):
         embed_texts(["x"])
+    # R41/R42/R44：retrieve 是唯一捕获点 → 归零 + 空表 + reason，不兜底 0.5
+    empty = retrieve_bidirectional([], [])
+    assert empty["s_retr"] == 0.0
+    assert empty["forward"] == {} and empty["backward"] == {}
+    assert empty["conflicts"] == []
+    assert isinstance(empty["reason"], str) and empty["reason"].strip()
 
 
 def test_constants_freeze_weights():
