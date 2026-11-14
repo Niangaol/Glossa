@@ -5,14 +5,18 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**288 passed**，第三至第十一轮评审的必修项都已修完。
+**状态（2026-11-14）**：Task 7–11 全部落地，**328 passed**，第三至第十二轮评审的必修项都已修完。
 第十一轮把 kind 的最终权威交给 `torch.export` 自己（plan 逐项核对），并堵住了「两边互换」这个
 前四轮关卡全过却 kind 相反的洞；另外新增一条能力边界（`forward` 内 `no_grad` → exit 5）。
+第十二轮发现「与导出器核对」的 expected 也是从调用方传进来的对象重生的（同源），补了三道防线：
+类型守卫（拒 `SimpleNamespace` 替身）、torch 自己写死的**顺序不变量**（权重必须排在数据输入之前）、
+**恰好认领一次**（`Counter` 而不是 `set`）；并如实写下残余边界（就地篡改真产物不在威胁模型内）。
 （第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2；
 第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验；
 第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5；第九轮 I-1 orphan 双向语义 + I-2 未知/错位 kind fail-closed + M-1…M-3；
-第十轮（自查）反向认领 + 常量不许顶替参数；第十一轮 C1 导出器逐项核对 + I-1 `CUSTOM_OBJ`/`TOKEN` + I-2 orphan 输出边界 + I-3 弱断言 + M-1…M-5），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb`。
+第十轮（自查）反向认领 + 常量不许顶替参数；第十一轮 C1 导出器逐项核对 + I-1 `CUSTOM_OBJ`/`TOKEN` + I-2 orphan 输出边界 + I-3 弱断言 + M-1…M-5；
+第十二轮 I-1 同源 expected → 类型守卫 + 顺序不变量 + 恰好认领一次、I-3 补 CLI 级退出码用例、Minor zoo 集合相等/dict 输出/mutation CLI），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -442,6 +446,72 @@ shape_unchecked=0、`real_execution={ok:True}`——与第八/九/十轮逐项�
 名字集合、模块参数表都只能证明「存在」，证明不了「对应」。真正独立的第三方是导出器自己——
 它早就把答案写在 `input_specs` 里，我们却一直没拿它当权威，只当初始值。
 
+### 第十二轮评审（基线 0e9e608，288 passed）：权威本身也能被伪造
+
+评审快照 `output/review11/0e9e608`，**Critical 0 条**，结论「修完 I-1/I-2/I-3 可进 M1b」。
+
+**I-1（必修）`check_plan_source` 的 expected 也是同源的**：它从**调用方传进来的** `exported` 重生
+（`papertrace/parse_code/fx_signature.py:138`），所以传一个 `SimpleNamespace(graph=…, graph_signature=…, constants=…)`
+就能让 plan 与 expected 一起错、两道关全过。评审探针实测：`Shadowed`（`self.x` 是 Parameter、forward 形参也叫 x）
+伪造 `p_x→input`、`x→param(target=x)` → `placeholder_args` 返回 `[Tensor(2,4), Parameter(2,4)]` 不报错，
+`build_op_nodes` 输出 `root/@000 kind=input`、`root/@001 kind=param`；另一个探针把两个 PARAMETER 的 target
+都设成同一个参数 → 返回两个 `module.x`、图里两个 param 节点，而 `check_contract` 的 `claimed` 是 **set**，
+重复被压成一个，两道关都不响。评审用 15 个真实模型确认**没有真实重复 target**，所以这是直接 API 的信任边界问题，CLI 主路径不受影响。
+
+**我先证伪了「加个类型守卫就够」**（`output/probes/probe13.py`）：`graph_signature.input_specs` 是可变 list、
+`InputSpec` 是非 frozen dataclass（`pydeps/torch/export/graph_signature.py:90-95`，字段 kind/arg/target/persistent），
+在**真** `ExportedProgram` 上就地互换 kind 同样放行。所以落成三道防线：
+
+| 防线 | 地面真相 | 抓什么 |
+| --- | --- | --- |
+| ④ `require_real_export` 类型守卫 | `torch.export.ExportedProgram` 这个类型 | 鸭子类型替身（`SimpleNamespace`）；`placeholder_args` 与 `build_op_nodes(exported=)` 两个入口都加 |
+| ⑤ 顺序不变量 | **torch 自己写死的约定**：`Inputs = [*parameters_buffers_constant_tensors, *flattened_user_inputs]`（`pydeps/torch/export/graph_signature.py:178-181`） | 「两边互换」——名字全覆盖、顺序与图一致、认领齐、数量还对，只有这条会破 |
+| ⑥ 恰好认领一次 | 一个权重只该有一个 placeholder | 重复 target（`Counter` 而不是 `set`） |
+
+⑤ 不是我们发明的启发式：`output/probes/probe13b.py` 量了 **24 个模型**（simple/shadowed/two-params/buffer-only/
+non-persistent/const-attr/plain-list/parameter-list/parameter-dict/tied/nested/dict-in/list-in/kw-only/varargs/
+int-arg/bool-arg/none-arg/tuple-out/dict-out/no-input/scalar-attr/frozen/multi-user），`prefix_ok` 全 True、
+`dup` 全 False、`VIOLATIONS=[]`；`tests/test_twelfth_review.py` 里另有 18 个 zoo 模型的正向对照参数化用例。
+
+**没有给 `check_contract` 加 `constants` 参数**（评审建议之一）：const 的 target 是否在 `exported.constants` 里
+已由取值那一步逐个核过（每个 placeholder 都会被解析，拿不到值就 BuildError），再加一遍不增加验证力。
+同理**没有去「独立重算 expected」**：评审明确指出 `signature.parameters/buffers/user_inputs` 全是从 `input_specs`
+派生的 property（`pydeps/torch/export/graph_signature.py:280-389`），从同一份产物里拿不到第二个独立权威，
+重算只是把 `KIND_MAP` 复制一遍。真正能用的第二地面真相只有 **torch 写死的结构不变量**与**模块本身**。
+
+**诚实的残余边界**（写进 `require_real_export` 的 docstring 与 README）：就地篡改真产物的 `input_specs` 属于
+「篡改权威本身」，与 monkeypatch 掉全部 `input_plan` 引用同一类，不在本切片威胁模型内；⑤⑥ 只抓其中最常见的两种改法。
+
+**I-2 / I-3 评审读的是旧快照**：I-2（README 写「缓冲可以」与实现相反、kind 表缺 `CUSTOM_OBJ`）与
+I-3（TOKEN→2 / no_grad→5 的文档契约）在第十一轮文档提交 `e10d9d3` 里已经修好，评审快照 `0e9e608` 早于它。
+本轮补的是 I-3 缺的**CLI 级用例**：TOKEN（往真 export 追加 `InputSpec(kind=TOKEN, arg=TokenArgument)`）→ exit 2、
+`forward` 内 `no_grad` → exit 5 且 stderr 无 traceback、重复认领 → exit 2，三条都断言不写 trace。
+
+**Minor 一并修**：zoo 断言从「只查期望 kind」改成**集合相等**并把 `op` 计数也钉死
+（`output/probes/probe14.py` 实测 18 个模型；`scalar-attr` 的期望改成 `{input:1, op:1}`——它根本没有 param/const 节点，
+不是「有但数量为 0」，这条正是集合相等抓出来的）；补 `output_node_ids` 的**字典输出**用例（tuple 之外）；
+补 mutation 结果的 **CLI 级** orphan=0 用例；`no_grad` 的能力边界与「本切片不做死代码检测」都已在 README 写死。
+
+**测试**：新增 `tests/test_twelfth_review.py`（32 条，333 行）；`tests/test_model_zoo.py` 断言加牙（304 行）；
+`test_tenth_review` 的 `_const_plan_without_values` 不再用 `SimpleNamespace`，改清真产物的 `_constants`
+（`constants` 是只读 property，torch 2.15 没有公开 setter）；`test_eleventh_review` 的互换用例改名
+`test_swapped_kinds_fool_names_and_counts_but_break_the_ordering`（顺序不变量先命中，逐项核对仍是第二道），
+`CUSTOM_OBJ` 用例改用真导出 + 就地 `CONSTANT_TENSOR→CUSTOM_OBJ`（534 行）。
+
+变异探针（四组，均已还原）：类型守卫改 `if False and …` → **2 条红**（两个入口的替身用例）；
+顺序不变量 `if late:` → `if False and late:` → **4 条红**（真 export 互换 + eleventh 三条）；
+重复认领 `if twice:` → `if False and twice:` → **2 条红**（直接 API + CLI）；
+`output_node_ids` 只取第一项输出 → **3 条红**（dict 两条 + tuple 一条）。
+
+全量 **328 passed in 51.28s**。端到端 `output/twelfth-check`：build exit 0，nodes=128（算子 75 / 权重 18 /
+输入 1 / 模块 34）、edges=101、degraded=2、fused=0、orphan=0、shape_broken=0、shape_unchecked=0、
+`real_execution={ok:True}`——与第八至十一轮逐项一致，三道新防线没误伤 fixture。
+行数（python `splitlines` 口径）：`OVER200=[]`，最大 `fx_signature` 193 / `fx_nodes` 187 / `fx_edges` 184 /
+`build_trace` 181 / `fx_contract` 175 / `report` 165 / `fx_trace` 160 / `cli` 157。
+
+**这一轮的教训**：「与权威核对」这句话里，权威是谁要问到底。expected 从调用方传进来的对象重生，
+那它就不是第三方，只是同一份数据的第二个副本。能拿到的独立约束只有两种：别的实体（模块）、
+以及权威自己公开写死的结构不变量（顺序）。找不到第三种时，就把边界如实写出来，不要假装关上了。
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
@@ -514,3 +584,6 @@ shape_unchecked=0、`real_execution={ok:True}`——与第八/九/十轮逐项�
 | `7dc55f2` | 第十轮文档：记录自查、钉住提交哈希 |
 | `0e9e608` | 第十一轮必修：plan 与导出器逐项核对（`check_plan_source`）、`CUSTOM_OBJ→const`/`TOKEN` 拒绝、orphan 认图输出、const 不许顶替缓冲、`build_op_nodes` 的 `exported` 入口断言、`no_grad` 子模块图 exit 5、16 模型 zoo 回归、弱断言加牙 |
 | `e10d9d3` | 第十一轮文档：README 六处同步、计划记录、账本、行数重测 |
+| `df7a8eb` | 钉住第十一轮文档提交哈希（自引用哈希不能 amend，改用后续小提交） |
+| `d7d16f0` | 补全第十一轮提交链 |
+| `9ec97b3` | 第十二轮必修：`require_real_export` 类型守卫、顺序不变量、恰好认领一次、zoo 集合相等 + op 计数钉死、CLI 级 TOKEN/no_grad/重复认领/mutation 用例、dict 输出用例 |

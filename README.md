@@ -91,7 +91,7 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   输入标 param、常量消失），而且计数可能「看起来正常」。
   真的没有 placeholder（纯常量模型）时，空 plan 是合法的。
   **边界要说清**：`build_op_nodes` 自己只保证「覆盖齐全、不重叠、无幽灵名、kind 都认识」；
-  「这个 kind 标得**对不对**」由 `fx_contract` + `placeholder_args` 把三道关，地面真相各不相同：
+  「这个 kind 标得**对不对**」由 `fx_contract` + `placeholder_args` 把六道关，地面真相各不相同：
   ① spec 说它是权重 → **模块**里必须真有这个参数/缓冲；
   ② **模块**里每个参数/缓冲 → 必须被某个 `param`/`const` spec 认领；
   ③ 传入的 plan 必须与 **`torch.export` 自己的 `input_specs`** 逐项一致（name/kind/target/顺序）。
@@ -102,9 +102,33 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `const` 的值**只能来自 `exported.constants`**：不许顶替可训练参数，也不许顶替缓冲
   （缓冲是可变状态，`BUFFER` 映射成 `param`；给 const 开第二套语义等于允许手改 plan 蒙混出图）。
   `build_op_nodes` 是**内部 API**：外部调用请传 `exported=`，入口会把四张表与导出器重生的表核对；
-  不传就等于声明「这份 plan 已经核过契约」（只有 `fx_trace` 那条路该这么用）。
+  不传就等于声明「这份 plan 已经核过契约」——只有已经跑过 `placeholder_args` 的调用方
+  才该这么用（`fx_trace` 自己是传 `exported=` 的）。
   trace.json 里不存 input_specs，所以 `validate_trace` 只查 schema 与结构，**查不出 kind 标反**
   ——那一道关在 build 时把，地面真相是模块与导出器，不是 plan 自己（存一份同源摘要也查不出）。
+  **这两道「与导出器核对」的关，牙齿到底在哪**（实测写死，别当成万能）：正常 CLI 路径里
+  `plan` 与关里的 `expected` 是**同一个纯函数算两遍**（`input_plan(exported)`），平时根本不触发。
+  真正抓得住的是两类：① **管线自己漂移**——`fx_trace.classify`/`fx_trace.input_plan` 与
+  `fx_nodes`/`fx_signature` 各自的 import 绑定是独立的，某一级改坏了另一级就拒绝
+  （`tests/test_eleventh_review.py` 里 monkeypatch `fx_trace.classify` 的两条用例）；
+  ② **直接 API 传伪造 plan**——外部调 `build_op_nodes(..., exported=)` 时四张表对不上就拒绝。
+  抓不到的也有两类，说清楚免得给假安全感：把 `fx_signature`/`fx_trace`/`fx_nodes` **三处
+  `input_plan` 引用全换掉**就能绕过（monkeypatch 权威本身不在威胁模型内，实测放行）；
+  `KIND_MAP` **自己映射错了**这两道关也抓不到（plan 与 expected 一起错）——那一类靠钉死每个
+  `InputKind` 映射值的测试与 model zoo 的精确计数把。
+  **第十二轮补的三道防线**（评审指出 ③ 的 `expected` 也是从**调用方传进来的** `exported` 重生的：
+  传一个 `SimpleNamespace` 就能让 plan 与 expected 一起错、两道关全过，实测放行）：
+  ④ **类型守卫**：`placeholder_args` 与 `build_op_nodes(exported=)` 入口要求 `exported` 是
+  `torch.export.export()` 的真产物（`ExportedProgram`），鸭子类型的替身一律 exit 2；
+  ⑤ **顺序不变量**：torch 自己在 `ExportGraphSignature` 的 docstring 里写死
+  `Inputs = [*parameters_buffers_constant_tensors, *flattened_user_inputs]`，权重/缓冲/常量
+  必须全部排在数据输入之前——「两边互换」恰好破这条（名字、顺序、认领、数量全都对）。
+  这不是我们发明的启发式：24 个真实模型实测无一违反，18 个 zoo 模型有正向对照用例；
+  ⑥ **恰好认领一次**：同一个参数/常量被两个 placeholder 认领就拒绝（用 `Counter` 而不是 `set`，
+  `set` 会把重复压成一个、让图里凭空多出一模一样的权重节点）。
+  ⑤⑥ 在**真** `ExportedProgram` 上就地改 `graph_signature.input_specs` 也复现过，所以类型守卫单独不够。
+  残余边界照旧说清：就地篡改真产物的 spec 属于「篡改权威本身」，与 monkeypatch 掉全部 `input_plan`
+  同一类，不在本切片的威胁模型内；⑤⑥ 只抓其中最常见的两种改法。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
@@ -177,7 +201,7 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | --- | --- |
 | 0 | 成功 |
 | 1 | 内部错误：生成的 trace 不合 schema（属 bug，不是用法问题） |
-| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致） |
+| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
 | 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行、图里有非张量的 `get_attr`/`call_module`（如 `forward` 内的 `no_grad`），或 `example_inputs` 数量与数据输入个数对不上） |
