@@ -87,9 +87,14 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   输入标 param、常量消失），而且计数可能「看起来正常」。
   真的没有 placeholder（纯常量模型）时，空 plan 是合法的。
   **边界要说清**：`build_op_nodes` 只保证「覆盖齐全、不重叠、无幽灵名、kind 都认识」；
-  「这个 kind 标得**对不对**」由 `placeholder_args` 拿模块的真实参数/缓冲核对
-  （spec 说它是权重，模块里就必须真有这个参数，否则拒绝）。trace.json 里不存 input_specs，
-  所以 `validate_trace` 只查 schema 与结构，**查不出 kind 标反**——那一道关在 build 时把。
+  「这个 kind 标得**对不对**」由 `fx_contract.check_contract` + `placeholder_args` 拿**模块自己**
+  当地面真相，**两个方向都核**：
+  ① spec 说它是权重 → 模块里必须真有这个参数/缓冲；
+  ② 模块里每个参数/缓冲 → 必须被某个 `param`/`const` spec 认领。
+  只有 ① 是单向的：把真实权重标成 `input`、再给 `example_inputs` 多补一项，数量校验就骗过去了
+  （实测放行过），② 才堵得住。另外 `const` 不许顶替可训练参数（缓冲可以）。
+  trace.json 里不存 input_specs，所以 `validate_trace` 只查 schema 与结构，**查不出 kind 标反**
+  ——那一道关在 build 时把，而且地面真相是模块，不是 plan 自己（存一份同源摘要也查不出）。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
@@ -139,7 +144,8 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 
 - 零参类也能用（`--entry model:TinyNet`），但 `GPT(config)` 这种必须给工厂，我们不猜你的配置。
 - 示例输入优先用模型自带的 `example_inputs()`；没有就按 `config.vocab_size` + `config.block_size` 造 token id；都没有就报 `BuildError`，不会拿随机形状糊弄。
-- 缺 torch → 退出码 **4**；追不动 → 退出码 **5**；仓库/入口对不上、`input_specs` 与图对不上 → 退出码 **2**。三种情况都**不写** `trace.json`。
+- 缺 torch → 退出码 **4**；追不动 → 退出码 **5**；仓库/入口对不上、`input_specs` 与图**或模块**对不上 → 退出码 **2**。三种情况都**不写** `trace.json`。
+  分界线一句话：**spec 与图/模块对不上是契约错误（2）**，**torch 追不动或 `example_inputs` 数量不对是能力边界（5）**。
   「追不动」有两种：① `torch.export` 就失败（数据依赖分支）；② 导出图能画出来，但拿真实张量
   **再跑一遍会炸**（自定义算子只有 meta 实现、真 CPU 实现抛错）。第二种以前会照常产出
   `source=runtime` 的 trace，把推断形状冒充成真实形状；现在一律 exit 5——没有第二遍执行，
@@ -153,10 +159,10 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | --- | --- |
 | 0 | 成功 |
 | 1 | 内部错误：生成的 trace 不合 schema（属 bug，不是用法问题） |
-| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图对不上） |
+| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**对不上：缺项/多项/顺序/未知 kind/权重与输入标反/常量顶替参数） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
-| 5 | 模型可加载但追不动（export 失败，或导出图无法真实再执行） |
+| 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行，或 `example_inputs` 数量与数据输入个数对不上） |
 
 ## 文档
 

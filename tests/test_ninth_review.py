@@ -16,7 +16,7 @@ import torch  # noqa: E402
 from torch.export.graph_signature import InputKind  # noqa: E402
 
 from papertrace.build_trace import build_trace  # noqa: E402
-from papertrace.exceptions import BuildError, TraceUnsupported  # noqa: E402
+from papertrace.exceptions import BuildError  # noqa: E402
 from papertrace.parse_code.fx_edges import build_edges, finish_nodes  # noqa: E402
 from papertrace.parse_code.fx_nodes import build_op_nodes  # noqa: E402
 from papertrace.parse_code.fx_signature import (  # noqa: E402
@@ -199,6 +199,6 @@ def test_flipped_kind_is_caught_against_the_modules_real_parameters():
     for item in flipped:
         if item["kind"] == "input":
             item["kind"], item["target"] = "param", "x"  # 模块里没有叫 x 的参数
-    with pytest.raises(TraceUnsupported) as info:
+    with pytest.raises(BuildError) as info:
         placeholder_args(module, exported, flipped, ())
     assert "是权重" in str(info.value) and "找不到" in str(info.value), str(info.value)

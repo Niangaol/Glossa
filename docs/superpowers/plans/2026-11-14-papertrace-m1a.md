@@ -5,11 +5,11 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**227 passed**，第三至第九轮评审的必修项都已修完
+**状态（2026-11-14）**：Task 7–11 全部落地，**236 passed**，第三至第九轮评审的必修项都已修完，第十轮自查又堵了一个 kind 标反的洞
 （第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2；
 第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验；
 第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5；第九轮 I-1 orphan 双向语义 + I-2 未知/错位 kind fail-closed + M-1…M-3），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2`。
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `（本次）`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -250,7 +250,8 @@ observe 也跟着改了：`exported.module()` 的 placeholder 被换成 target �
 第八轮就是用它核的「≤200 行」，结果 fx_signature 实际已 208 行超标而没被发现。
 当前真值：`fx_signature` 183、`build_trace` 181、`fx_nodes` 175、`report` 165、`fx_edges` 161、
 `cli` 157、`fx_trace` 153、`fx_graph` 148、`schema_structure` 129、`schema_validate` 100、
-`fx_inputs` 98、`fx_runtime` 31。**没有一个文件超过 200 行。**
+`fx_inputs` 98、`fx_runtime` 31、`fx_contract` 54。**没有一个文件超过 200 行。**
+第十轮把契约校验从 fx_signature 拆到 `fx_contract.py` 后，fx_signature 从 202 降回 162。
 
 ### 第七轮评审（基线 b48f361，196 passed）：兜底、`*_like`、spec 契约
 
@@ -322,6 +323,57 @@ edges=101、degraded=2、shape_broken=0、shape_unchecked=0。
 全量 **227 passed**。端到端 fixture build 不变：nodes=128（算子 75 / 权重 18 / 输入 1 / 模块 34）、
 edges=101、degraded=2、fused=0、orphan=0、shape_broken=0、shape_unchecked=0。
 
+
+### 第十轮（自查，基线 b8d39d2）：kind 标反的反向核对
+
+给评审出的第 5 问是「请证伪我的『同源冗余』论：有没有 classify 出错但 placeholder_args 抓不到的路径」。
+没等回复，自己先用探针打了一遍——**找到了，而且不需要 CUSTOM_OBJ 那么绕**：
+
+```
+模型 A：self.w = nn.Parameter(ones(2,4))，forward(x)
+真实 plan：[('p_w','param','w'), ('x','input',None)]
+把 p_w 改成 ('p_w','input',None)，example_inputs 给 (w.detach(), zeros(2,4))
+→ len(user_names)==2==len(example_inputs)，数量校验通过
+→ 第九轮实现：**放行**，args=[(2,4),(2,4)]，权重顶着 kind=input 出图
+```
+
+根因：第九轮的核对是**单向**的——只查「spec 说权重 → 模块里真有」，没查反方向。
+另一个同族洞：`const` 分支兜底到 `named`（含 named_parameters），于是「把可训练参数标成常量」也放行。
+
+**修法（地面真相是模块，不是 plan）**：
+- 新增反向判据：模块里**每个** `named_parameters`/`named_buffers` 的 target 都必须被某个
+  `param`|`const` spec 认领；有未被认领的 → `BuildError`，消息点名是哪几个参数。
+- `const` 分支拆开：`exported.constants` → 缓冲 → **参数则拒绝**（「常量与权重不能混」）。
+- 退出码归一：spec 与图/模块对不上（含「说权重但模块找不到」「说常量但拿不到值」）一律
+  `BuildError` / **exit 2**；只有 torch 追不动与 `example_inputs` 数量不符才是 exit 5。
+  第九轮把前者留在 TraceUnsupported，与同族判据两个码，这次统一并把分界线写进 README。
+
+**先证明不会误杀**（探针 B，7 个模型逐个量「未被认领的参数/缓冲」）：单参数、**参数名与形参名同名**
+（torch 给 `p_x`/`x` 两个 placeholder，target 分别是 `x` 与 `None`）、**没用到的参数**、**没用到的缓冲**、
+常量张量、子模块参数、GPT fixture（10 参数 + 1 缓冲）——**全部为空**，反向判据成立。
+关键在于 USER_INPUT 的 `spec.target` 是 `None` 而不是形参名，所以同名遮蔽不会误伤。
+
+**结构**：三条契约判据（缺项/多项、顺序、反向认领）拆到新文件 `papertrace/parse_code/fx_contract.py`
+（54 行，`check_contract(placeholders, plan, params, buffers)`）。不拆的话 fx_signature 会到 **202 行**，
+又超 200 行约束——这次是先用 python splitlines 量出来才发现的。拆完 fx_signature 162 行。
+
+**测试**：`tests/test_tenth_review.py` 9 条（212 行）。其中第一条先断言
+`sum(kind=='input')==2`（证明数量校验真被骗过去了），再断言 `BuildError` 且消息含「认领」与 `w`；
+反向对照三条（缓冲标常量仍合法、同名遮蔽/未用参数缓冲/子模块都不误杀）；
+CLI 一条（monkeypatch `fx_trace.input_plan` 把权重标成 input → exit 2、stderr 含「认领」、不写 trace）。
+第九轮那条「spec 说权重但模块找不到」的断言随退出码归一改成 `BuildError`。
+
+变异探针（均已还原）：`if unclaimed:` → `if False:` → **3 条红**（含 CLI）；
+`if target in params:` → `if False:` → 常量顶替参数那条红；
+`check_contract(...)` → `pass` → **7 条红**（第七轮的缺项/多项/顺序/聚合/CLI 全在）。
+
+全量 **236 passed in 50.66s**。端到端 output/tenth-check：build exit 0，nodes=128（算子 75 / 权重 18 /
+输入 1 / 模块 34）、edges=101、degraded=2、fused=0、orphan=0、shape_broken=0、shape_unchecked=0（逐项不变）。
+
+**关于「要不要把 spec 摘要存进 meta.runtime」**：拒绝的理由仍然成立——摘要与节点 kind 同源，
+标反时两边一起反，validate_trace 照样查不出。但这一轮说明我第九轮的**核对本身漏了一个方向**：
+真正缺的不是冗余副本，而是**另一个地面真相（模块）**。补上之后，build 侧两个方向都闭合了。
+
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
@@ -389,3 +441,5 @@ edges=101、degraded=2、fused=0、orphan=0、shape_broken=0、shape_unchecked=0
 | `66f2efd` | 第八轮必修：契约错误统一 exit 2、守卫改判 placeholder 覆盖、spec 顺序断言与缺/多聚合、orphan 认常量源、docstring 与行数口径 |
 | `feb6fc8` | 第八轮文档：钉住提交哈希、记录端到端复核 |
 | `b8d39d2` | 第九轮必修：orphan 改判双向、未知/重叠/幽灵 kind 一律拒绝、runtime_meta 拆出 fx_runtime、行数口径改 python splitlines |
+| `d4c84a2` | 第九轮文档：钉住提交哈希与行数口径 |
+| `（本次）` | 第十轮自查：反向认领判据（模块地面真相）、常量不许顶替参数、spec↔模块契约统一 exit 2、拆出 fx_contract |

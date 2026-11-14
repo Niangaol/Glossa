@@ -10,6 +10,7 @@ PARAMETER / BUFFER / USER_INPUT / CONSTANT_TENSOR，`spec.target` 是参数的�
 """
 
 from papertrace.exceptions import BuildError, TraceUnsupported
+from papertrace.parse_code.fx_contract import check_contract
 
 # InputKind 的名字 → 我们 trace.json 里的 kind
 KIND_MAP = {
@@ -109,40 +110,13 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
     target 名（`sub_x`、`sub_x_1`），和 `exported.graph` 的名字对不上，参数节点连
     观察值都拿不到。这里用原图 + input_specs 指到的真实张量，键就是图里的名字。
     """
-    named: dict = {}
-    named.update(dict(module.named_parameters(remove_duplicate=False)))
-    named.update(dict(module.named_buffers(remove_duplicate=False)))
+    params = dict(module.named_parameters(remove_duplicate=False))
+    buffers = dict(module.named_buffers(remove_duplicate=False))
+    named: dict = {**params, **buffers}
     constants = dict(getattr(exported, "constants", None) or {})
     spec_by_name = {item["name"]: item for item in plan}
     placeholders = [n.name for n in exported.graph.nodes if n.op == "placeholder"]
-    # 契约级防御：每个 placeholder 都必须有 spec。缺一个就说明这份 input_specs 不是
-    # 给这张图的（老 torch / 手工拼的 exported），继续往下走会把某个参数当成普通输入
-    # 悄悄 pop 掉一个 example_inputs，形状全错还没有报错。
-    missing = [name for name in placeholders if name not in spec_by_name]
-    extra = [name for name in spec_by_name if name not in placeholders]
-    problems: list[str] = []
-    if missing:
-        problems.append("缺少 placeholder：" + "、".join(missing))
-    if extra:
-        problems.append("多出图里不存在的 placeholder：" + "、".join(extra))
-    if problems:
-        # spec 与图对不上属于**契约错误**（老 torch / 手工拼的 exported），不是「追不动」：
-        # 与 build_op_nodes 的守卫同一个退出码（BuildError → exit 2），别两条路两个码。
-        raise BuildError(
-            "graph_signature.input_specs 与图对不上（" + "；".join(problems) + "）；"
-            "无法判断谁是权重/输入，按约定拒绝出图"
-        )
-    # 顺序也要对：example_inputs 是按 placeholder 顺序被消费的，spec 顺序错位的话
-    # 形状相同的两个输入会被静默喂反（当前 torch 2.15 实测一致，这里只是把约定钉死）。
-    ordered = [item["name"] for item in plan]
-    if ordered != placeholders:
-        raise BuildError(
-            "input_specs 的顺序与图的 placeholder 顺序不一致："
-            + "、".join(ordered)
-            + " ≠ "
-            + "、".join(placeholders)
-            + "；按约定拒绝出图（不猜哪个对应哪个）"
-        )
+    check_contract(placeholders, plan, params, buffers)
     user_names = [item["name"] for item in plan if item.get("kind") == "input"]
     if len(user_names) != len(example_inputs):
         raise TraceUnsupported(
@@ -160,17 +134,22 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
             if target in named:
                 args.append(named[target])
                 continue
-            raise TraceUnsupported(
+            raise BuildError(
                 f"input_specs 说 {node.name} 是权重（target={target}），但模块里找不到它"
             )
         if kind == "const":
             if target in constants:
                 args.append(constants[target])
                 continue
-            if target in named:
-                args.append(named[target])
+            if target in buffers:
+                args.append(buffers[target])
                 continue
-            raise TraceUnsupported(
+            if target in params:
+                raise BuildError(
+                    f"input_specs 说 {node.name} 是常量（target={target}），"
+                    "但模块里它是可训练参数；常量与权重不能混，按约定拒绝出图"
+                )
+            raise BuildError(
                 f"input_specs 说 {node.name} 是常量（target={target}），但拿不到它的值"
             )
         if not queue:
