@@ -24,6 +24,7 @@
 monkeypatch **judge.py 自己引用的** `get_llm`，绝不改 client.py。
 """
 
+import hashlib
 import inspect
 import pathlib
 
@@ -119,6 +120,38 @@ def test_judge_prompt_is_frozen_text_plus_input_block():
     assert built.count("Evidence: <≤40 字的依据>") == 1
 
 
+#: 两个冻结 prompt 的整段正文 sha256（口径 hashlib.sha256(S.encode("utf-8")).hexdigest()）。
+#: 控制器在 HEAD=3bda705 上实测的当前正确值。**改正文就要更新这两个 hash，
+#: 并同时升 JUDGE_PROMPT_VERSION**——否则下面这条必红，不会让你悄无声息地漂移。
+_JUDGE_PROMPT_SHA256 = "2cfab369b5d7ac7d6e567e77173296e98c4383a1f3fcfc7a3fda49e6bc325c5b"
+_DRILL_PROMPT_SHA256 = "911f1bcc900fa2913f972c7d9efced92b5486f4008a40bbe41d2fb4fb7b9331e"
+
+
+def test_frozen_prompt_texts_are_pinned_by_hash():
+    """R48 + R66：两个冻结 prompt 的整段正文用 sha256 钉死。
+
+    `test_judge_prompt_is_frozen_text_plus_input_block` 的核心断言
+    `built.startswith(JUDGE_PROMPT)` **按构成为真**——judge_prompt 本身就是
+    `f"{JUDGE_PROMPT}\n…"`，与 JUDGE_PROMPT 的正文内容毫无关系。于是改冻结
+    正文的任何一句（哪怕把「只能回答 yes / no」改成「尽量回答」）都没有测试会红，
+    R48「一字不许改」只剩人工纪律。
+
+    这里把整段正文钉成单一事实来源：不用字面量副本（那会让 prompt 有两份、
+    以后改 prompt 要改两处），一行 sha256 断言即可。**两个常量都要钉**——
+    DRILL_PROMPT 同样是冻结的。
+
+    **改正文就要更新这两个 hash，并同时升 JUDGE_PROMPT_VERSION。**
+    """
+    assert (
+        hashlib.sha256(JUDGE_PROMPT.encode("utf-8")).hexdigest()
+        == _JUDGE_PROMPT_SHA256
+    ), "JUDGE_PROMPT 正文被改了：更新 _JUDGE_PROMPT_SHA256 并升 JUDGE_PROMPT_VERSION"
+    assert (
+        hashlib.sha256(DRILL_PROMPT.encode("utf-8")).hexdigest()
+        == _DRILL_PROMPT_SHA256
+    ), "DRILL_PROMPT 正文被改了：更新 _DRILL_PROMPT_SHA256"
+
+
 def test_first_and_drill_prompts_stay_separate_constants():
     """铁律：初次（L0–L2）与深钻（L3）必须是两个常量，禁止混用。
 
@@ -166,12 +199,23 @@ def test_verdict_value_takes_first_token(monkeypatch):
         "Verdict: no way",
         "Verdict:",
         "Verdict: 是",
+        # 值级 yes 子串反例（R65）：取值里含 yes，但首 token 不是 yes。
+        # 少了这三条，`_is_yes` 变异成 `"yes" in value.lower()` 能活过整套测试——
+        # 真实后端回 `Verdict: 我觉得 yes` 时，首 token 实现正确判 False（fail-closed），
+        # 子串实现会幻觉成 yes。这与 test_free_text_yes_is_not_accepted 守的
+        # **整文本级** 是两个独立攻击面，两边都要有人看守，不许互相替代。
+        "Verdict: not yes",
+        "Verdict: 我觉得 yes",
+        "Verdict: yesish",
     ],
 )
 def test_non_yes_no_answer_is_not_yes(monkeypatch, reply):
     """RF2：答非 yes-no 一律不是 yes——一旦兜底成 yes，整条对齐就是幻觉。
 
     `no way` 的首 token 是 no；空串 / 缺 Verdict 行 / 空值也都不是 yes。
+    末三条是**值级**反例：Verdict 行的取值里含 yes 子串，但首 token 不是
+    yes（not / 我觉得 / yesish）——它们把「取首 token」和「在值里搜子串」
+    这两个实现区分开。
     """
     _patch(monkeypatch, reply)
     result = judge(_TERM, _SNIPPET)
