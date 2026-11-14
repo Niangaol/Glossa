@@ -138,13 +138,16 @@ def collect_module_types(graph) -> dict[str, str]:
     return types
 
 
-def owned_paths(module) -> dict[str, str]:
-    """参数/缓冲区名 → 拥有它的模块路径。
+def owned_paths(module) -> tuple[dict[str, str], dict[str, str]]:
+    """返回 (参数全名 → 模块路径, export mangled 名 → 模块路径)。
 
-    同时登记 torch.export 的 mangled 名（`wte.weight` → `p_wte_weight`）：
-    export 把权重抬成图输入，光看节点名分不清它是权重还是用户输入。
+    两个映射必须分开：参数全名 `x` 与形参名 `x` 在真实模型里会撞
+    （`self.x = nn.Parameter(...)` + `forward(self, x)`），拿全名去认 placeholder
+    会把真输入当成权重。placeholder 只认 mangled 名（`p_x` / `b_x`），
+    全名只用于 get_attr 节点的归属。
     """
     owner: dict[str, str] = {}
+    mangled_owner: dict[str, str] = {}
     # 直接遍历模块树，不走 named_parameters：tied weight（lm_head.weight 与 wte.weight
     # 同一个 Parameter）会被 named_parameters 去重掉，只看它就漏了。
     for mod_name, mod in module.named_modules():
@@ -153,9 +156,9 @@ def owned_paths(module) -> dict[str, str]:
             full = f"{prefix}{attr}"
             owner[full] = mod_name
             mangled = full.replace(".", "_")
-            owner["p_" + mangled] = mod_name
-            owner["b_" + mangled] = mod_name
-    return owner
+            mangled_owner["p_" + mangled] = mod_name
+            mangled_owner["b_" + mangled] = mod_name
+    return owner, mangled_owner
 
 
 

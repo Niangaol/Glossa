@@ -18,31 +18,8 @@ from papertrace.parse_code.fx_graph import (
     stack_paths,
     val_dtype,
 )
-from papertrace.parse_code.fx_shapes import tree_leaf, tree_shapes
-
-def _data_shapes(raw, tree, is_param, out: list[list[int]]) -> None:
-    """按「原始参数树」与「观察到的形状树」递归配对，跳过**任意深度**的权重叶子。
-
-    torch.cat([self.w, x]) 的权重藏在列表里：只看顶层参数名会把它当成数据输入，
-    shape_in 就变成权重形状（README 承诺过绝不这样）。
-    """
-    if raw is None or tree is None:
-        return
-    if getattr(raw, "name", None) is not None and is_param(raw):
-        return
-    leaf = tree_leaf(tree)
-    if leaf is not None:
-        out.append(leaf)
-        return
-    if isinstance(tree, dict) and isinstance(tree.get("l"), list):
-        items = raw if isinstance(raw, (list, tuple)) else ()
-        for sub_raw, sub_tree in zip(items, tree["l"]):
-            _data_shapes(sub_raw, sub_tree, is_param, out)
-        return
-    if isinstance(tree, dict) and isinstance(tree.get("d"), dict):
-        mapping = raw if isinstance(raw, dict) else {}
-        for key, sub_tree in tree["d"].items():
-            _data_shapes(mapping.get(key), sub_tree, is_param, out)
+from papertrace.parse_code.fx_inputs import data_shapes, param_derived
+from papertrace.parse_code.fx_shapes import tree_shapes
 
 
 def _module_entry(module, *, entry_id, parent_id, op, label, loc) -> dict:
@@ -111,15 +88,18 @@ def build_op_nodes(
     形状只取真实执行观察到的值（`observed`）；观察失败时上层已 exit 5，不会走到这里。
     只有 interpreter 不经过的节点（get_attr/权重）才用 `node.meta["val"]`，那是它们的值本身。
     """
-    owner = owned_paths(module)
+    owner, mangled_owner = owned_paths(module)
     observed = observed or {}
     nodes: list[dict] = []
     by_name: dict[str, str] = {}
     all_shapes: dict[str, list[list[int]]] = {}
-    # 权重在 export 图里也是 placeholder，得先认出它们，才能从「入参」里挑出真正的数据输入
-    param_names = {
-        n.name for n in graph.nodes if node_kind(n) == "param" or n.name in owner
-    }
+    # 权重在 export 图里也是 placeholder，得先认出它们，才能从「入参」里挑出真正的数据输入。
+    # placeholder 只认 mangled 名（p_/b_）：参数全名可能和形参名相同，拿全名认会把真输入吞掉。
+    param_names: set[str] = {
+        n.name for n in graph.nodes if node_kind(n) == "param"
+    } | {n.name for n in graph.nodes if n.name in mangled_owner}
+    # 只由权重算出来的中间量（self.w[0]、self.w[:, :2]）同样是权重，不是数据输入
+    derived = param_derived(graph, param_names)
 
     for index, node in enumerate(graph.nodes):
         if node.op == "output":
@@ -136,13 +116,14 @@ def build_op_nodes(
             # 否则 linear 的 shape_in 会变成权重形状，param-only 算子更会把
             # 权重冒充成数据输入（README 早就这么写，代码必须一致）。
             def is_param(value) -> bool:
-                return getattr(value, "name", None) in param_names
+                name = getattr(value, "name", None)
+                return name in param_names or name in derived
 
             for position, arg in enumerate(seen.get("args") or []):
                 source = node.args[position] if position < len(node.args) else None
-                _data_shapes(source, arg, is_param, inputs)
+                data_shapes(source, arg, is_param, inputs)
             for key, arg in (seen.get("kwargs") or {}).items():
-                _data_shapes(node.kwargs.get(key), arg, is_param, inputs)
+                data_shapes(node.kwargs.get(key), arg, is_param, inputs)
             if inputs:
                 data_input = inputs[0]
         else:
@@ -150,17 +131,18 @@ def build_op_nodes(
             inputs = []
         kind = node_kind(node)
         op = op_name(node)
-        if op == "getitem" and shapes:
-            # getitem 的入参是容器，它真正拿到手的只有被取出的那一项
+        if op == "getitem" and shapes and node.name not in derived:
+            # getitem 的入参是容器，它真正拿到手的只有被取出的那一项；
+            # 取权重的那一项不算数据输入（否则 shape_in 变权重形状）
             inputs = [shapes[0]]
             data_input = shapes[0]
 
         paths = stack_paths(node)
         parent_key = paths[-1] if paths else ""
         # torch.export 把权重抬成图输入（placeholder），名字就是参数全名 wte.weight
-        if kind == "param" or (kind == "input" and node.name in owner):
+        if kind == "param" or (kind == "input" and node.name in param_names):
             kind = "param"
-            parent_key = owner.get(node.name, parent_key)
+            parent_key = mangled_owner.get(node.name) or owner.get(node.name) or parent_key
         parent_id = module_ids.get(parent_key, module_id)
 
         reasons: list[str] = []

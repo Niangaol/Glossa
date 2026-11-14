@@ -25,6 +25,40 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _check_key_types(
+    items: list[dict],
+    errors: list[str],
+    where: str,
+    *,
+    required: tuple[str, ...],
+    optional: tuple[str, ...] = (),
+) -> list[dict]:
+    """把类型不对的 id/端点项剔除并记错。
+
+    这些字段要做集合成员判断：值是 list/dict 时 `x in ids` 会抛
+    TypeError: unhashable type，漏成 exit 1 + traceback，而不是 README 承诺的 exit 2。
+    """
+    kept: list[dict] = []
+    for index, item in enumerate(items):
+        bad = False
+        for key in required:
+            if not isinstance(item.get(key), str):
+                errors.append(
+                    f"{where}[{index}]: {key} 必须是字符串，实际是 {type(item.get(key)).__name__}"
+                )
+                bad = True
+        for key in optional:
+            value = item.get(key)
+            if value is not None and not isinstance(value, str):
+                errors.append(
+                    f"{where}[{index}]: {key} 必须是字符串或 null，实际是 {type(value).__name__}"
+                )
+                bad = True
+        if not bad:
+            kept.append(item)
+    return kept
+
+
 def _structural_errors(doc: dict) -> list[str]:
     """schema 管不到的整体约束：id 唯一、端点存在、父子存在、层级与来源一致。
 
@@ -49,6 +83,10 @@ def _structural_errors(doc: dict) -> list[str]:
             errors.append(f"nodes[{index}]: 必须是对象，实际是 {type(node).__name__}")
     nodes = [node for node in nodes if isinstance(node, dict)]
     edges = [edge for edge in edges if isinstance(edge, dict)]
+    # id / parent_id / 边端点要拿去做集合运算：先确认是字符串，否则 TypeError 会漏成
+    # exit 1 + traceback（README 承诺非法 trace 一律 exit 2）。
+    nodes = _check_key_types(nodes, errors, "nodes", required=("id",), optional=("parent_id",))
+    edges = _check_key_types(edges, errors, "edges", required=("id", "src", "dst"))
     ids: set[str] = set()
     for node in nodes:
         node_id = node.get("id")

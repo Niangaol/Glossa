@@ -5,9 +5,9 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**174 passed**，第三轮与第四轮评审的必修项都已修完
-（第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48`。
+**状态（2026-11-14）**：Task 7–11 全部落地，**184 passed**，第三、四、五轮评审的必修项都已修完
+（第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -193,6 +193,24 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 `stack([w])` 的 `inputs==[]`、四种畸形 JSON 都 exit 2 且无 traceback、`slice` 打 `-` 不打 `(?)`、
 `eval()` 抛错变 `TraceUnsupported`）。
 
+### 第五轮评审（基线 6a87f7d，174 passed）指出了什么
+
+三条都是「上一轮只修了表面一层」：
+
+| 编号 | 问题 | 修法 |
+| --- | --- | --- |
+| C1 | `owned_paths` 同时登记了参数全名（`self.x` → `x`），和形参 `x` 撞车：真输入被改判成 param，`cat` 的 `inputs=[]`，摘要写「输入 0」，build 仍 exit 0 | `owned_paths` 改为返回 `(全名表, mangled 表)`；`param_names` 只从 mangled 名（`p_`/`b_`）里收，全名只用来查 `get_attr` 的父模块 |
+| I1 | `id`/`parent_id`/边 `id`/`src`/`dst` 是 list/dict 时 `x in ids` 抛 `TypeError: unhashable type`，exit 1 + traceback | 新增 `_check_key_types()`：非字符串项剔出后续校验并记「必须是字符串」，最后照常抛 `TraceSchemaError`（exit 2） |
+| I2 | 权重**派生量**（`self.w[0]`、`self.w[:, :2]`）是算子节点不是 param 叶子，仍被当数据输入 | 新增 `fx_inputs.param_derived()`：只由权重算出的节点（含 getitem/slice/transpose）全部并入「权重集合」，`inputs` 与 getitem 特判都用它 |
+
+守门测试：`tests/test_fifth_review.py`（10 条：同名参数下 `inputs==[[1,4]]` 与摘要「输入 1」、
+`WIdx`/`WSlice` 的 `shape_in` 是数据形状、`x[0]`（导出成 `select`）仍算输入、四种坏字段类型都 exit 2
+且无 traceback、进程内抛 `TraceSchemaError`）。
+
+变异探针（每条都确认能红，改完全部还原）：`param_names` 塞回裸全名 → C1 两条红（摘要变「输入 0」）；
+`derived = set()` → I2 两条红（`select` 混进 `inputs`）；删掉 `_check_key_types` 调用 → I1 五条红
+（`TypeError: unhashable type: 'list'`）。
+
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
@@ -230,6 +248,8 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 | 边可以接模块节点 | 边两端必须都是算子，且禁自环 | 模块不是算子，接上只会制造「看起来有形状链」的错觉 |
 | `cli.py` 堆下所有打印 | 拆出 `papertrace/report.py` | 275 行违反 ≤200 行；参数/退出码与排版混在一起难审 |
 | 只有顶层参数查 param | 递归到任意容器深度 | `cat([w, x])` 里的权重在 list 里，只看顶层就把权重当输入 |
+| 权重只按「是不是 param 叶子」认 | 另加 `param_derived`：只由权重算出的中间量同样算权重 | `self.w[0]` 是 `select` 算子节点，不是 param 叶子，只看叶子就把它当数据输入 |
+| placeholder 认参数全名 | 只认 mangled 名（`p_`/`b_`） | 全名 `x` 会和形参 `x` 撞车，真输入被吞成权重且会静默 exit 0 |
 | `(?)` 表示「没有输入」 | `-` 表示确实没有数据入参，`(?)` 只给缺字段的老格式 | 两者语义不同，混在一起就看不出是「没有」还是「没看到」 |
 
 ### 提交锚点
@@ -249,3 +269,5 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 | `f58b123` | 第三轮必修：observe 失败即 exit 5、异常翻成 2/5、inputs 只含数据、边两端必须算子且禁自环 |
 | `fc1ca48` | `report.py` 拆出、第三轮文档与账本 |
 | `2de86a2` | 第四轮必修：容器里的权重不当输入、畸形 trace 根 exit 2、`-`/`(?)` 三态、`eval()` 异常翻译 |
+| `6a87f7d` | 第四轮文档与账本（README/计划/执行账本同步） |
+| （本轮） | 第五轮必修：mangled 名认权重、权重派生量不算输入、id/端点类型守卫 |

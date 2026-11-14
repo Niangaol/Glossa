@@ -72,11 +72,16 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `build` 直接报 `BuildError` 要求改名，而不是生成一份 id 打架的 trace。
 - **`kind`**：`op` | `input` | `param`。`input` 是图入口，`param` 是权重/缓冲（torch.export
   把权重抬成图输入，名字带 `p_`/`b_` 前缀），`parent_id` 指向它真正所属的模块。
+  认权重**只认 mangled 名**（`p_`/`b_` 形式）：参数全名（`self.x` → `x`）可能和形参同名，
+  拿全名去认会把真输入吞成权重（实测 `self.x` + `forward(x)` 曾被算成「输入 0」）。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
   整个跳过），只用权重的算子 `inputs` 为空、`shape_in` 也为空（`--ops` 打 `-`，绝不回退成
   权重形状）。权重本身的形状看 param 节点和它的入边。
+- **权重派生量不算数据输入**：`self.w[0]`、`self.w[:, :2]`、权重的转置/切片这类**只由权重算出来**
+  的中间张量，和权重本身同等对待——它们不进 `inputs`，`shape_in` 仍是模型数据入参的形状。
+  反过来 `x[0]` 这种从数据张量上取的切片仍是输入，不会被误伤。
 - **边**：按参数位置一条条连（`args[1][0]` 这种 label），`torch.cat([a, b])` 不会丢边。
   每条边同时记 `shape`（消费者这一项的真实输入）、`producer_shape`（生产者真实输出）和
   `checked`。`shape_consistent` 只在 `checked` 时才有意义；两边对不上就是 False，
@@ -85,7 +90,8 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   示例输入、entry，`requested`（命令行请求的 batch/seq_len，和实际值分开记，免得自相矛盾），
   `real_execution`（第二遍真实执行是否成功；**失败时根本不写 trace**，见退出码 5），以及 `counts`
   （operators/degraded/fused/orphan/shape_broken/shape_unchecked）。没有它就没法判断这份 trace 能不能复现。
-- **结构校验**：`validate_trace` 除了 JSON Schema 还查重复 id、悬空边、`parent_id` 不存在、
+- **结构校验**：`validate_trace` 除了 JSON Schema 还查 `id`/`parent_id`/边的 `id`/`src`/`dst`
+  必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、
   **不接受自环**（`src == dst`）。这些错误一律 `TraceSchemaError`，不静默放过。
 
