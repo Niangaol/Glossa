@@ -157,5 +157,5 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
         check_value_shape(node, value, spec_by_name[node.name].get("target"))
     # 同形状互换形状核对看不见，但跨模块时 parent_id 会写反（第十四轮 I-1）。
     # 名字在图上、target 在 spec 里，再核一次这两个独立字段的对应关系。
-    check_name_target(holders, plan, named, constants)
+    check_name_target(holders, plan)
     return args

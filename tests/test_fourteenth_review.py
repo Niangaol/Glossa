@@ -4,9 +4,11 @@ I-1 评审探针（output/review13/probe14e_cli_parent.py）实测：Sub.w 与�
     (2,4)，在真 ExportedProgram 上互换两者的 target，七道关全过、CLI exit 0，trace 里
     root.p_a 的 parent 变成 root/sub、root.p_sub_w 变成 root，而 shape_broken 仍是 0。
     第十三轮那句「同形状互换在 trace 里无可见差异」**是错的**：跨模块时 parent_id 可见。
-    修法：placeholder 的名字在图上（torch 按 前缀 + target.replace(".", "_") 生成），
+    修法：placeholder 的名字在图上（torch 的 placeholder_naming_pass 生成），
     target 在 input_specs 里——再核一次这两个独立字段的对应关系（fx_names）。
-    只在反推**唯一**时比较；a.b 与 a_b 压平撞名时跳过不猜，本文件把这条边界也钉死。
+    第十五轮把实现从「反推索引」改成「正向核对」：反推有损，会误杀 self_/连字符/
+    大写的合法模型，也会漏检 self_a/self_b。压平撞名时两个 target 映射到同一个 base，
+    核对自然通过——那是唯一剩下的洞，本文件把它钉成可观测的证据。
 
 M-1：原来那条「不可观测」用例只断言 args 取到了对方张量，证明不了 trace 无差异。
     这里改成 trace 级证据：同模块互换其实**也被新关拒绝**（名字反推与模块无关），
@@ -28,7 +30,7 @@ from papertrace.parse_code.fx_contract import (  # noqa: E402
     check_plan_source,
     check_plan_table,
 )
-from papertrace.parse_code.fx_names import check_name_target  # noqa: E402
+from papertrace.parse_code.fx_names import check_name_target, strip_name  # noqa: E402
 from papertrace.parse_code.fx_shapes import check_value_shape  # noqa: E402
 from papertrace.parse_code.fx_signature import (  # noqa: E402
     classify,
@@ -347,22 +349,29 @@ def test_parameter_list_target_swap_is_refused():
     assert "p_ws_0" in text and "ws.1" in text, text
 
 
-# ------------------------------------------------- 歧义边界：反推不唯一就不猜
+# ------------------------------------------------- 歧义边界：压平撞名时名字区分不了
 
 def test_ambiguous_flattening_is_not_refused():
+    """a_b 与 a.b 正向映射到同一个 base：合法模型必须通过，而且取到的张量是对的。"""
     module, exported = _exported(Ambiguous(), ONE)
     plan = input_plan(exported)
     args = placeholder_args(module, exported, plan, ONE)
     assert len(args) == 3, args
+    assert args[0] is module.a_b and args[1] is module.a.b, args
 
 
 def test_ambiguous_flattening_swap_is_not_guessed():
-    """a_b 与 a.b 压平同名：互换 target 后名字反推不唯一，**跳过**（README 写明）。"""
+    """压平撞名是**唯一**剩下的洞：互换后名字核对通过，取到的张量真的换了。
+
+    评审 I-2 说原来只断言 len(args)==3 太弱。这里直接证明洞是可观测的：
+    args[0] 变成了 a.b（本该是 a_b）。不假装封死。
+    """
     module, exported = _exported(Ambiguous(), ONE)
     _swap(exported)
     plan = input_plan(exported)
     args = placeholder_args(module, exported, plan, ONE)
     assert len(args) == 3, args
+    assert args[0] is module.a.b and args[1] is module.a_b, args
 
 
 # ------------------------------------------------- 正向对照：合法模型一个都不许误杀
@@ -377,14 +386,12 @@ def test_legitimate_models_pass_the_name_gate(cls, example):
     module, exported = _exported(cls(), example)
     plan = input_plan(exported)
     holders = [n for n in exported.graph.nodes if n.op == "placeholder"]
-    named = {**dict(module.named_parameters(remove_duplicate=False)),
-             **dict(module.named_buffers(remove_duplicate=False))}
-    check_name_target(holders, plan, named, dict(exported.constants or {}))
+    check_name_target(holders, plan)
     args = placeholder_args(module, exported, plan, example)
     assert len(args) == len(holders), (cls.__name__, args)
 
 
-# ------------------------------------------------- check_name_target 的单元边界
+# ------------------------------------------------- strip_name / 名字核对的单元边界
 
 class _N:
     def __init__(self, name):
@@ -395,29 +402,64 @@ def _plan(*items):
     return [{"name": n, "kind": k, "target": t} for n, k, t in items]
 
 
-def test_name_gate_refuses_a_unique_mismatch():
+@pytest.mark.parametrize("target,expected", [
+    ("sub.w", "sub_w"),
+    ("self_attn.weight", "attn_weight"),
+    ("sub.self_attn.weight", "sub_self_attn_weight"),
+    ("L__self___foo.bar", "foo_bar"),
+    ("a-b.weight", "a_b_weight"),
+    ("W", "w"),
+    ("ws.0", "ws_0"),
+    ("self_", ""),
+    ("self_x", "x"),
+], ids=["dotted", "leading-self", "nested-self", "L-self", "hyphen", "upper",
+        "numeric", "empty-after-strip", "self-x"])
+def test_strip_name_follows_torch(target, expected):
+    """期望值来自 pydeps/torch/_export/utils.py:1113-1119 与 :1168 的规则，
+    并在 tests/test_fifteenth_review.py 里与 torch **真实生成的名字**交叉核对。"""
+    assert strip_name(target) == expected
+
+
+def test_name_gate_refuses_a_mismatch():
     with pytest.raises(BuildError) as info:
-        check_name_target([_N("p_a")], _plan(("p_a", "param", "sub.w")), {"a": 1, "sub.w": 2}, {})
+        check_name_target([_N("p_a")], _plan(("p_a", "param", "sub.w")))
     text = str(info.value)
     assert "p_a" in text and "sub.w" in text and "a" in text, text
 
 
-def test_name_gate_accepts_the_matching_target():
-    check_name_target([_N("p_sub_w")], _plan(("p_sub_w", "param", "sub.w")), {"sub.w": 1}, {})
+@pytest.mark.parametrize("name,kind,target", [
+    ("p_sub_w", "param", "sub.w"),
+    ("p_a_b", "param", "a.b"),
+    ("p_a_b", "param", "a_b"),
+    ("p_a_b_1", "param", "a_b"),
+    ("p_ws_0", "param", "ws.0"),
+    ("p_attn_weight", "param", "self_attn.weight"),
+    ("p_attn_weight_1", "param", "attn.weight"),
+    ("p_w", "param", "W"),
+    ("p_a_b_weight", "param", "a-b.weight"),
+    ("b_tmp", "param", "tmp"),
+    ("c_const", "const", "const"),
+    ("obj_foo", "const", "foo"),
+    ("obj_sub_foo", "const", "sub.foo"),
+    ("p_", "param", "self_"),
+    ("x", "input", None),
+    ("p_ghost", "param", None),
+], ids=["dotted", "ambiguous-dot", "ambiguous-underscore", "collision-suffix",
+        "numeric-tail", "leading-self", "collision-after-self", "upper", "hyphen",
+        "non-persistent-buffer", "const", "custom-obj-rewritten", "custom-obj-raw",
+        "empty-base", "user-input", "no-target"])
+def test_name_gate_accepts_consistent_pairs(name, kind, target):
+    check_name_target([_N(name)], _plan((name, kind, target)))
 
 
-@pytest.mark.parametrize("name,target,named", [
-    ("p_a_b", "a.b", {"a_b": 1, "a.b": 2}),
-    ("p_a_b_1", "a_b", {"a_b": 1, "a.b": 2}),
-    ("p_ws_0", "ws.0", {"ws.0": 1}),
-    ("x", None, {"a": 1}),
-    ("p_ghost", "ghost", {"a": 1}),
-], ids=["ambiguous", "ambiguous-dedup", "numeric-tail", "user-input", "unknown-target"])
-def test_name_gate_does_not_guess(name, target, named):
-    kind = "input" if name == "x" else "param"
-    check_name_target([_N(name)], _plan((name, kind, target)), named, {})
-
-
-def test_name_gate_treats_a_non_persistent_buffer_as_one_target():
-    """非持久缓冲同时出现在 named_buffers 与 exported.constants：同一个 target，不算歧义。"""
-    check_name_target([_N("b_tmp")], _plan(("b_tmp", "param", "tmp")), {"tmp": 1}, {"tmp": 2})
+@pytest.mark.parametrize("name,target", [
+    ("p_a", "b"),
+    ("p_a_weight", "self_b.weight"),
+    ("p_ws_0", "ws.1"),
+    ("p_attn_weight", "attn.bias"),
+    ("obj_foo", "bar"),
+], ids=["simple", "self-prefix-modules", "numeric-tail", "same-module", "custom-obj"])
+def test_name_gate_refuses_inconsistent_pairs(name, target):
+    with pytest.raises(BuildError) as info:
+        check_name_target([_N(name)], _plan((name, "param", target)))
+    assert name in str(info.value)
