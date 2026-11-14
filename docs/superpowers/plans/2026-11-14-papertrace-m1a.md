@@ -5,11 +5,11 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**214 passed**，第三至第八轮评审的必修项都已修完
+**状态（2026-11-14）**：Task 7–11 全部落地，**227 passed**，第三至第九轮评审的必修项都已修完
 （第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2；
 第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验；
-第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd`。
+第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5；第九轮 I-1 orphan 双向语义 + I-2 未知/错位 kind fail-closed + M-1…M-3），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `（本次）`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -243,10 +243,14 @@ observe 也跟着改了：`exported.module()` 的 placeholder 被换成 target �
 去掉 kind 标注 → `--ops` 用例红。
 
 拆分（都因为 ≤200 行）：`fx_modules.py`（模块树）、`fx_signature.py`（input_specs 与真实张量）、
-`schema_structure.py`（结构校验）。行数口径 = `Get-Content <file>` 的行数（含空行与注释）：
-`fx_nodes` 151、`fx_graph` 137、`fx_signature` 175、`fx_edges` 158、`fx_trace` 136、
-`fx_inputs` 86、`schema_validate` 96。评审用「非空非注释」口径数出的数字会更小（如 fx_graph 119），
-两者都对，只是口径不同；≤200 行的约束按含空行口径核。
+`schema_structure.py`（结构校验）、`fx_runtime.py`（这次追踪怎么跑的，第九轮从 fx_signature 拆出）。
+
+**行数口径（踩过坑，钉死）**：用 `len(pathlib.Path(f).read_text(encoding="utf-8").splitlines())`。
+`Get-Content` 在这台机器上会**少算**（fx_nodes 实测 159 vs 真值 175、fx_signature 190 vs 208），
+第八轮就是用它核的「≤200 行」，结果 fx_signature 实际已 208 行超标而没被发现。
+当前真值：`fx_signature` 183、`build_trace` 181、`fx_nodes` 175、`report` 165、`fx_edges` 161、
+`cli` 157、`fx_trace` 153、`fx_graph` 148、`schema_structure` 129、`schema_validate` 100、
+`fx_inputs` 98、`fx_runtime` 31。**没有一个文件超过 200 行。**
 
 ### 第七轮评审（基线 b48f361，196 passed）：兜底、`*_like`、spec 契约
 
@@ -292,6 +296,31 @@ spec 缺项/多出图里没有的名字/example_inputs 少一项都 `TraceUnsupp
 
 全量 **214 passed**。端到端 fixture build：nodes=128（算子 75 / 权重 18 / 输入 1 / 模块 34）、
 edges=101、degraded=2、shape_broken=0、shape_unchecked=0。
+
+
+### 第九轮评审（基线 66f2efd，214 passed）：orphan 语义与 kind 的 fail-closed
+
+第八轮的退出码统一与覆盖判据都通过了，但评审指出「拒绝」与「计数」各自还差一层：
+
+| 编号 | 问题 | 修法 |
+| --- | --- | --- |
+| I-1 | `orphan` 只判「没有入边」，README 却定义成「既无入边也无出边」。探针实测：`torch.rand(1,4)` 被 `cat` 用着仍报 orphan=1（`torch.ones` 因在豁免名单里才幸免）；直接构造 `b→a` 时数的是 b（有出边）而不是 a，与 README 正好相反 | 建 `outgoing = {e["src"] for e in edges}`，orphan = **无入边且无出边**。常量豁免名单 `CONSTANT_SOURCES` 整个删掉——被用着的常量源有出边，自然不算孤点；谁都不用的 `torch.ones` 现在会被数出来（死代码）。README 同步 |
+| I-2 | 覆盖判据只查名字：`_spec_kind` 把不认识的 InputKind 默认成 `input`，`classify` 的 else 分支同样兜底；一个「名字全覆盖但 kind 标反」的 plan 能出图，`validate_trace` 也查不出 | ① `_spec_kind` 未知 kind → `BuildError`（torch 2.15 的 6 个 InputKind 全在 KIND_MAP 里，实测不会误伤）；② `classify` 只接受 param/const/input；③ `build_op_nodes` 守卫再加两条：同一名字不能既是权重又是输入（overlap）、spec 不能有图里不存在的幽灵名（ghost）。**kind 的正确性**由 `placeholder_args` 拿模块真实参数核对（spec 说权重 → 模块里必须真有），新增用例证明标反会被拒 |
+| M-1 | orphan 用例只测常量源；like 边只断言存在，没断言 checked/consistent | 新增 `tests/test_ninth_review.py`（13 条）：rand 源端到端 orphan==0、双向都断才算孤点、死常量算孤点、like 两条边的 checked/shape_consistent |
+| M-2 | plan 行数是 `Get-Content` 口径，**少算**：fx_signature 实际 208 行已超 200 而计划写 175 | 口径改成 python `splitlines()`（见上），并据此发现真实超标 |
+| M-3 | `fx_signature` 职责偏混（input_specs + 分类 + 真实张量 + runtime meta），189 行接近上限 | `runtime_meta` 拆到新的 `fx_runtime.py`（31 行），fx_signature 降到 183 行；fx_trace 顺带删掉三个未使用的形状 helper import |
+
+**主动不做的一件事**：评审建议把 input_specs 的 name/kind 摘要存进 `meta.runtime`，好让
+`validate_trace` 也能查 kind。没做，理由是它**增加冗余而不增加验证力**——那份摘要与节点 kind
+出自同一个 plan，classify 真出错时两边一起错，照样查不出；而真正的地面真相（模块里有哪些参数）
+只在 build 时存在，已经由 `placeholder_args` 把住。trace.json 里不存 spec，README 明说
+`validate_trace` 查不出 kind 标反，不假装它能。
+
+变异探针（均已还原）：orphan 退回只看入边 → 4 条红；`_spec_kind` 恢复默认 input → 未知 kind 用例红；
+`classify` 去掉 kind 校验 → `DID NOT RAISE BuildError`；去掉 overlap 守卫 → `DID NOT RAISE BuildError`。
+
+全量 **227 passed**。端到端 fixture build 不变：nodes=128（算子 75 / 权重 18 / 输入 1 / 模块 34）、
+edges=101、degraded=2、fused=0、orphan=0、shape_broken=0、shape_unchecked=0。
 
 ## Review Focus
 
@@ -358,3 +387,5 @@ edges=101、degraded=2、shape_broken=0、shape_unchecked=0。
 | `f9e3546` | 第七轮必修：没有 `input_specs` 就 fail-closed、`*_like` 不算数据输入、spec 完备性与数量校验 |
 | `94c2b28` | 第七轮文档与账本（README/计划/执行账本同步） |
 | `66f2efd` | 第八轮必修：契约错误统一 exit 2、守卫改判 placeholder 覆盖、spec 顺序断言与缺/多聚合、orphan 认常量源、docstring 与行数口径 |
+| `feb6fc8` | 第八轮文档：钉住提交哈希、记录端到端复核 |
+| `（本次）` | 第九轮必修：orphan 改判双向、未知/重叠/幽灵 kind 一律拒绝、runtime_meta 拆出 fx_runtime、行数口径改 python splitlines |

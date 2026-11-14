@@ -10,7 +10,6 @@ PARAMETER / BUFFER / USER_INPUT / CONSTANT_TENSOR，`spec.target` 是参数的�
 """
 
 from papertrace.exceptions import BuildError, TraceUnsupported
-from papertrace.parse_code.fx_graph import all_val_shapes, val_dtype, val_shape
 
 # InputKind 的名字 → 我们 trace.json 里的 kind
 KIND_MAP = {
@@ -30,9 +29,22 @@ def _spec_name(spec) -> str | None:
 
 
 def _spec_kind(spec) -> str:
+    """不认识的 InputKind 一律拒绝，**不默认成 input**。
+
+    默认成 input 会把一个权重/缓冲悄悄标成数据输入：名字覆盖齐全、schema 也过，
+    整份 trace 的 kind 却是反的（第九轮 I-2）。torch 2.15 的 InputKind 只有
+    PARAMETER/BUFFER/CONSTANT_TENSOR/USER_INPUT/TOKEN/CUSTOM_OBJ，全在 KIND_MAP 里；
+    将来 torch 加了新种类，宁可 exit 2 让人来补映射，也不要静默猜。
+    """
     kind = getattr(spec, "kind", None)
-    text = getattr(kind, "name", None) or str(kind)
-    return KIND_MAP.get(str(text).upper(), "input")
+    text = str(getattr(kind, "name", None) or kind).upper()
+    if text not in KIND_MAP:
+        raise BuildError(
+            f"input_specs 里有不认识的 InputKind：{text!r}；"
+            "已知的是 " + "/".join(sorted(KIND_MAP))
+            + "。不猜它是权重还是输入（猜错会把整类标反），请升级 papertrace 的 KIND_MAP"
+        )
+    return KIND_MAP[text]
 
 
 def input_plan(exported) -> list[dict]:
@@ -74,6 +86,12 @@ def classify(plan: list[dict]) -> dict:
     owner: dict[str, str] = {}
     for item in plan:
         kind, name = item["kind"], item["name"]
+        if kind not in ("param", "const", "input"):
+            # 手工拼的 plan 也要 fail-closed：else 分支会把未知 kind 当数据输入。
+            raise BuildError(
+                f"input_specs 里 {name} 的 kind={kind!r} 不认识（只接受 param/const/input）；"
+                "不猜它是权重还是输入，按约定拒绝出图"
+            )
         if kind == "param":
             params.add(name)
             owner[name] = module_of_target(item.get("target"))
@@ -163,27 +181,3 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
     if queue:
         raise TraceUnsupported(f"example_inputs 多出 {len(queue)} 项，torch.export 没用到")
     return args
-
-
-def runtime_meta(module, torch_mod, example_inputs) -> dict:
-    """把「这次追踪到底怎么跑的」记进 trace，不然结果无法复现也无法解释。"""
-    shapes = []
-    for item in example_inputs:
-        if isinstance(item, (list, tuple)):
-            shapes.extend(all_val_shapes(item))
-        else:
-            shape = val_shape(item)
-            if shape is not None:
-                shapes.append(shape)
-    dtype = val_dtype(example_inputs[0]) if example_inputs else None
-    return {
-        "ok": True,
-        "reason": None,
-        "device": "cpu",
-        "torch_version": str(getattr(torch_mod, "__version__", "")),
-        "dtype": dtype,
-        "batch": shapes[0][0] if shapes and shapes[0] else None,
-        "seq_len": shapes[0][1] if shapes and len(shapes[0]) > 1 else None,
-        "entry": f"{type(module).__module__}.{type(module).__name__}",
-        "example_inputs": shapes,
-    }

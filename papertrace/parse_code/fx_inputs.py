@@ -37,8 +37,6 @@ CONSTANT_OPS = frozenset({"ones", "zeros", "full", "empty", "arange", "linspace"
 CONSTANT_LIKE_OPS = frozenset(
     {"ones_like", "zeros_like", "full_like", "empty_like", "new_ones", "new_zeros", "new_full", "new_empty"}
 )
-#: 常量源（无数据入边是它们的本职，不该被算成 orphan）
-CONSTANT_SOURCES = CONSTANT_OPS | CONSTANT_LIKE_OPS
 
 
 def constant_names(graph, op_of) -> set[str]:

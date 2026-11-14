@@ -23,20 +23,13 @@ from papertrace.parse_code.fx_graph import (
     FUSION_WARNING,
     RUNTIME,
     STATIC,
-    all_val_shapes,
     collect_module_types,
-    val_dtype,
-    val_shape,
 )
 from papertrace.parse_code.fx_modules import module_nodes
 from papertrace.parse_code.fx_nodes import build_op_nodes
 from papertrace.parse_code.fx_observe import observe
-from papertrace.parse_code.fx_signature import (
-    classify,
-    input_plan,
-    placeholder_args,
-    runtime_meta,
-)
+from papertrace.parse_code.fx_runtime import runtime_meta
+from papertrace.parse_code.fx_signature import classify, input_plan, placeholder_args
 
 __all__ = [
     "FUSED_OPS",

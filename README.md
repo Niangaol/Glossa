@@ -79,12 +79,17 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `inputs` 为空，两者都不会冒充数据输入。
   **拿不到 `input_specs` 就 fail-closed**：判据是「**每个 placeholder 都被 spec 覆盖**」，
   不是「plan 是不是空字典」——`classify([])` 是个非空 dict，只看真假会被它绕过去。
-  有未覆盖的 placeholder、spec 多出图里没有的名字、或 spec 顺序与 placeholder 顺序不一致，
+  有未覆盖的 placeholder、spec 多出图里没有的名字、同一个名字既被标成权重又被标成输入、
+  spec 顺序与 placeholder 顺序不一致、或出现**不认识的 `InputKind`**（不默认成 input），
   一律 `BuildError`（**exit 2**，CLI 与直接调 `build_op_nodes` 同一个码），不再退回 mangled 名猜：
   `p_+参数全名` 会把 `sub.x` 与根上的 `sub_x` 压成同一个 `p_sub_x`，也会把形参 `p_x` 和
   参数 `x` 的压平名混为一谈，猜错的代价是整份 trace 的 kind 反过来（权重标 input、
   输入标 param、常量消失），而且计数可能「看起来正常」。
   真的没有 placeholder（纯常量模型）时，空 plan 是合法的。
+  **边界要说清**：`build_op_nodes` 只保证「覆盖齐全、不重叠、无幽灵名、kind 都认识」；
+  「这个 kind 标得**对不对**」由 `placeholder_args` 拿模块的真实参数/缓冲核对
+  （spec 说它是权重，模块里就必须真有这个参数，否则拒绝）。trace.json 里不存 input_specs，
+  所以 `validate_trace` 只查 schema 与结构，**查不出 kind 标反**——那一道关在 build 时把。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
@@ -109,9 +114,10 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   示例输入、entry，`requested`（命令行请求的 batch/seq_len，和实际值分开记，免得自相矛盾），
   `real_execution`（第二遍真实执行是否成功；**失败时根本不写 trace**，见退出码 5），以及 `counts`
   （operators/degraded/fused/orphan/shape_broken/shape_unchecked）。没有它就没法判断这份 trace 能不能复现。
-  **orphan = 既没有入边也没有出边的算子**。常量源（`arange`/`ones`/`zeros`/`full` 以及
-  `*_like`/`new_*`）天生没有数据入边，只要它被下游用了就不算孤点；反过来，一个既没被谁用、
-  也没有入边的算子才是真孤点——它通常意味着图里有一段死代码或我们漏了一条边。
+  **orphan = 既没有入边也没有出边的算子**（两个方向都要断）。只看入边会把「被下游用着的
+  数据源」误报成孤点——`torch.rand(2,4)` 没有入边但有出边，它是源不是孤点；常量源同理，
+  被用着就有出边，所以**不需要给常量开豁免名单**。反过来，一个谁都不用的 `torch.ones`
+  会被数出来（死代码）。「有入边但没人用」的死算子按这个定义不算 orphan，它属于另一类问题。
 - **结构校验**：`validate_trace` 除了 JSON Schema 还查 `id`/`parent_id`/边的 `id`/`src`/`dst`
   必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、

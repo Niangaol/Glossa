@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 from papertrace.parse_code.fx_graph import fused_items, is_getitem, op_name
-from papertrace.parse_code.fx_inputs import CONSTANT_SOURCES
 from papertrace.parse_code.fx_shapes import navigate, tree_leaf
 
 
@@ -134,8 +133,10 @@ def build_edges(
 def finish_nodes(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
     """统计供 dump/摘要用的计数。shape_in 在节点构造时就来自真实入参，这里不再覆写。"""
     incoming: dict[str, list[dict]] = {}
+    outgoing: set[str] = set()
     for edge in edges:
         incoming.setdefault(edge["dst"], []).append(edge)
+        outgoing.add(edge["src"])
 
     for node in nodes:
         if node["level"] != "op" or node.get("kind") != "op":
@@ -149,9 +150,11 @@ def finish_nodes(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
         "operators": len(ops),
         "degraded": sum(1 for n in ops if n["degraded"]),
         "fused": sum(1 for n in ops if fused_items(n["op"]) is not None),
-        # 常量源天生没有数据入边（torch.ones / ones_like），不算孤点
+        # 孤点 = 既无入边也无出边（README 的定义）。只看入边会把「被下游用着的
+        # 随机源/常量源」误报成孤点，而真正的死算子（有入边、没人用）反而漏掉。
+        # 被用着的常量源有出边，自然不算孤点，不需要再给常量开豁免名单。
         "orphan": sum(
-            1 for n in ops if n["id"] not in incoming and n["op"] not in CONSTANT_SOURCES
+            1 for n in ops if n["id"] not in incoming and n["id"] not in outgoing
         ),
         "shape_broken": sum(1 for e in edges if e["checked"] and not e["shape_consistent"]),
         "shape_unchecked": sum(1 for e in edges if not e["checked"]),

@@ -56,15 +56,23 @@ def build_op_nodes(
     # 守卫看的是「每个 placeholder 都被 spec 覆盖」，不是 plan 真假：classify([]) 是
     # 非空 dict，只判 not plan 会被它绕过去（第八轮 I-2）。
     covered = param_names | spec_inputs
-    uncovered = [
-        n.name
-        for n in graph.nodes
-        if getattr(n, "op", None) == "placeholder" and n.name not in covered
+    placeholders = [
+        n.name for n in graph.nodes if getattr(n, "op", None) == "placeholder"
     ]
+    uncovered = [name for name in placeholders if name not in covered]
+    overlap = sorted(param_names & spec_inputs)
+    ghost = sorted(covered - set(placeholders))
+    problems: list[str] = []
     if uncovered:
+        problems.append("没有 input_specs 覆盖：" + "、".join(uncovered))
+    if overlap:
+        problems.append("同时被标成权重和数据输入：" + "、".join(overlap))
+    if ghost:
+        problems.append("spec 里有图里不存在的 placeholder：" + "、".join(ghost))
+    if problems:
         raise BuildError(
-            "图里有 placeholder 没有 input_specs 覆盖：" + "、".join(uncovered)
-            + "；无法区分权重/输入/常量，按约定拒绝出图（不再按 mangled 名猜，"
+            "input_specs 与图对不上（" + "；".join(problems) + "）；"
+            "无法区分权重/输入/常量，按约定拒绝出图（不再按 mangled 名猜，"
             "猜错会把参数和输入整类标反）"
         )
     # 只由权重/常量算出来的中间量（self.w[0]、torch.ones(...)、ones_like(x)）同样不是数据输入
