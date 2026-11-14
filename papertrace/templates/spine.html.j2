@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>PaperTrace · {{ repo_name }}</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef1f6;color:#1d2430;
+font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+header{background:#1d2430;color:#fff;padding:18px 24px}
+header h1{margin:0 0 6px;font-size:19px}
+header p{margin:0;color:#b9c2d0;font-size:12.5px}
+main{max-width:1180px;margin:0 auto;padding:20px}
+section{background:#fff;border:1px solid #d8dee9;border-radius:8px;
+padding:16px 18px;margin:16px 0}
+section>h2{margin:0 0 4px;font-size:16px}
+section>.sub{margin:0 0 14px;color:#5b6675;font-size:12.5px}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{border:1px solid #d8dee9;padding:5px 8px;text-align:left;vertical-align:top}
+th{background:#f4f6fa}
+tr:nth-child(even) td{background:#fafbfd}
+.mono{font-family:Consolas,"Cascadia Mono",monospace}
+.pill{display:inline-block;padding:0 6px;border-radius:9px;font-size:11px}
+.pill.green{background:#dafbe1;color:#1a7f37}
+.pill.yellow{background:#fff8c5;color:#9a6700}
+.pill.none{background:#eff1f3;color:#57606a}
+.opsgrid{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start}
+.opbox{background:#fafbfd;border:1px solid #d8dee9;border-radius:6px;padding:8px 10px}
+.opbox h3{margin:0 0 6px;font-size:12.5px;font-family:Consolas,"Cascadia Mono",monospace}
+.opbox svg{display:block}
+.nodelabel{font-size:10px;font-family:Consolas,"Cascadia Mono",monospace;fill:#1d2430}
+.shapelabel{font-size:10px;fill:#5b6675;font-family:Consolas,"Cascadia Mono",monospace}
+.lnklabel{font-size:10px;font-family:Consolas,"Cascadia Mono",monospace}
+.lnk{fill:none;stroke-width:1.6}
+.emptybox{background:#f6f8fa;border:1px dashed #afb8c1;border-radius:6px;
+padding:12px 14px;color:#57606a}
+footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
+</style>
+</head>
+<body>
+<header>
+<h1>PaperTrace · {{ repo_name }}</h1>
+<p>单文件离线报告 · 只画 trace.json 里已写下的东西 · 零外部引用 · schema v{{ doc.schema_version }} · 生成于 {{ doc.created_at }}</p>
+</header>
+<main>
+
+<section id="meta">
+<h2>① 契约与来源</h2>
+<p class="sub">仓库、提交、模型入口、论文与运行时全部照抄 trace.json；没记下来的字段写「未记录」，不猜。</p>
+<table>
+<tr><th>字段</th><th>值</th></tr>
+<tr><td>仓库 / 提交</td><td class="mono">{{ doc.meta.repo.url or "未记录" }} @ {{ doc.meta.repo.commit or "未记录" }}</td></tr>
+<tr><td>模型入口</td><td class="mono">{{ doc.meta.model.name or "未记录" }}{% if doc.meta.model.embed_model %} · embed {{ doc.meta.model.embed_model }}{% endif %}</td></tr>
+<tr><td>论文</td><td>{% if doc.meta.paper and doc.meta.paper.title %}{{ doc.meta.paper.title }}<span class="mono"> · {{ doc.meta.paper.source }}</span>{% else %}本次 build 没有附论文（--paper 未给）{% endif %}</td></tr>
+<tr><td>运行时</td><td class="mono">{% if doc.meta.runtime and doc.meta.runtime.real_execution %}torch {{ doc.meta.runtime.torch_version or "未记录" }} · device {{ doc.meta.runtime.device or "未记录" }} · real_execution {{ "ok" if doc.meta.runtime.real_execution.ok else "未通过" }} · batch {{ doc.meta.runtime.batch }} seq_len {{ doc.meta.runtime.seq_len }}{% else %}骨架模式，没有真实执行{% endif %}</td></tr>
+<tr><td>算子图规模</td><td>节点 {{ doc.nodes | length }} · 边 {{ doc.edges | length }} · anchors {{ doc.anchors | length }} · 未对齐 {{ doc.unresolved | length }} · mismatches {{ doc.mismatches | length }}</td></tr>
+</table>
+</section>
+
+<section id="ops">
+<h2>② 代码算子图</h2>
+<p class="sub">按 parent_id 分组；形状格式化成 Python tuple repr，逗号后一个空格。空列表记作 -（确实没有数据入参），(?) 只留给缺 inputs 字段的老格式。</p>
+{% if groups %}
+<div class="opsgrid">
+{% for g in groups %}
+  <div class="opbox">
+  <h3>{{ g.parent }}</h3>
+  <svg width="{{ g.width }}" height="{{ g.height }}" viewBox="0 0 {{ g.width }} {{ g.height }}" xmlns="http://www.w3.org/2000/svg" role="img">
+  {% for n in g.nodes %}
+    <rect x="4" y="{{ n.y }}" width="{{ n.box_w }}" height="26" rx="3" fill="#ffffff" stroke="#8c95a3"/>
+    <text class="nodelabel" x="10" y="{{ n.y + 17 }}">{{ n.label }}</text>
+    <text class="shapelabel" x="{{ n.box_w + 12 }}" y="{{ n.y + 17 }}">{{ n.shape_in }} → {{ n.shape_out }}</text>
+    {% if n.link %}
+    <path class="lnk {{ n.link.cls }}" stroke="{{ n.link.stroke }}"{% if n.link.dash %} stroke-dasharray="5 3"{% endif %} d="M {{ n.link.x }} {{ n.y + 13 }} C {{ n.link.x + 12 }} {{ n.y + 13 }}, {{ n.link.x + 18 }} {{ n.y + 13 }}, {{ n.link.x + 30 }} {{ n.y + 13 }}"/>
+    <text class="lnklabel" fill="{{ n.link.stroke }}" x="{{ n.link.x + 34 }}" y="{{ n.y + 17 }}">{{ n.link.label }}</text>
+    {% endif %}
+  {% endfor %}
+  </svg>
+  </div>
+{% endfor %}
+</div>
+{% else %}
+<p class="emptybox">骨架模式没有算子图（--skeleton 不加载模型，抽不到算子）。</p>
+{% endif %}
+</section>
+
+<section id="terms">
+<h2>③ 论文公式项清单</h2>
+<p class="sub">公式项 = 已出线的 anchor 与仍未对齐的 *-t&lt;N&gt; 项取并集；tier=none 表示没出线（未连线），不是「对上了」。</p>
+{% if terms %}
+<table>
+<tr><th>term_id</th><th>tier</th><th>confidence</th><th>aten_ops</th><th>evidence</th></tr>
+{% for t in terms %}
+<tr><td class="mono">{{ t.term_id }}</td><td><span class="pill {{ t.tier }}">{% if t.tier == "none" %}none（未连线）{% else %}{{ t.tier }}{% endif %}</span></td><td class="mono">{{ t.confidence if t.confidence is not none else "-" }}</td><td class="mono">{{ t.aten_ops }}</td><td>{{ t.evidence }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<p class="emptybox">没有公式项：本次 build 没有附论文，或论文里没有可拆出的公式。</p>
+{% endif %}
+</section>
+
+<section id="unresolved">
+<h2>④ 未对齐清单</h2>
+<p class="sub">对不上账的项全部如实列在这里，一条都不隐藏——宁可说「对不上」，也绝不编造对齐。</p>
+{% if doc.unresolved %}
+<table>
+<tr><th>kind</th><th>ref</th><th>reason</th></tr>
+{% for u in doc.unresolved %}
+<tr><td>{{ u.kind }}</td><td class="mono">{{ u.ref }}</td><td>{{ u.reason }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<p class="emptybox">没有未对齐项。</p>
+{% endif %}
+</section>
+
+<section id="symbols">
+<h2>⑤ 符号表</h2>
+<p class="sub">代码侧符号、论文侧符号与它们的映射；骨架模式下代码侧为空，映射会显示 code_only。</p>
+<table>
+<tr><th>side</th><th>symbol</th><th>value</th><th>status / 含义</th><th>defined_at / first_seen</th><th>maps to</th></tr>
+{% for s in symbol_rows %}
+<tr><td>{{ s.side }}</td><td class="mono">{{ s.name }}</td><td class="mono">{{ s.value if s.value is not none else "-" }}</td><td>{{ s.meaning }}</td><td class="mono">{{ s.where }}</td><td class="mono">{{ s.maps_to }}</td></tr>
+{% endfor %}
+</table>
+</section>
+
+</main>
+<footer>PaperTrace S10 · 单文件离线 HTML · 无外部资源引用 · 由 papertrace/render_html.py 渲染</footer>
+</body>
+</html>

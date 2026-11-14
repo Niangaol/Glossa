@@ -20,6 +20,7 @@ from pathlib import Path
 
 from papertrace.build_trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
+from papertrace.render_html import write_html
 from papertrace.report import (
     print_build_summary,
     print_edges,
@@ -137,6 +138,18 @@ def _cmd_build(args: argparse.Namespace) -> int:
         print(f"已写出 {out_path}（nodes=0 edges=0 anchors=0，骨架）")
     else:
         print_build_summary(doc, out_path)
+    # S10：单文件离线 HTML 是派生产物，skeleton 与真实 build 两条路都写（R83）。
+    # index.html 每次 build 都覆盖，不受 --force 约束（R74）；HTML 写失败绝不
+    # 影响 trace.json 已写出的事实，只报 exit 2。
+    try:
+        html_path = write_html(doc, Path(args.out))
+    except BuildError as exc:
+        print(
+            f"papertrace build：trace.json 已写出，HTML 渲染失败：{exc}",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"已写出 {html_path}（单文件离线 HTML，零外链）")
     return 0
 
 
