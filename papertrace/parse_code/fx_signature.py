@@ -6,6 +6,9 @@ param，`shape_in` 跟着错，而 summary 的计数还可能「看起来正常�
 `graph_signature.input_specs` 是导出器自己给的权威信息：`spec.kind` 区分
 PARAMETER / BUFFER / USER_INPUT / CONSTANT_TENSOR，`spec.target` 是参数的点分路径。
 
+kind 映射表在 fx_kinds，名字↔target 核对在 fx_names，形状核对在 fx_shapes：
+本模块只负责「读 spec」与「按 spec 取真实张量」两件事（第十四轮 M-3 的拆分）。
+
 本模块不 import torch：只读 spec 的属性，方便在没装 torch 的机器上被 import。
 """
 
@@ -15,58 +18,15 @@ from papertrace.parse_code.fx_contract import (
     check_plan_source,
     require_real_export,
 )
+from papertrace.parse_code.fx_kinds import spec_kind
+from papertrace.parse_code.fx_names import check_name_target
 from papertrace.parse_code.fx_shapes import check_value_shape
-
-# InputKind 的名字 → 我们 trace.json 里的 kind。
-# CUSTOM_OBJ 是 exported.constants 里的 ScriptObject 常量（torch/_export/converter.py
-# 只把 ScriptObject 建成这一类），**不是数据输入**：映射成 input 会让合法模型多出一个
-# 「数据输入」，随后 example_inputs 数量对不上而 exit 5（第十一轮 I-1）。
-KIND_MAP = {
-    "PARAMETER": "param",
-    "BUFFER": "param",
-    "CONSTANT_TENSOR": "const",
-    "CUSTOM_OBJ": "const",
-    "USER_INPUT": "input",
-}
-
-#: 认识但**明确不支持**的 InputKind：宁可 exit 2 让人来看，也不按张量猜着喂。
-REFUSED_KINDS = {
-    "TOKEN": (
-        "TOKEN 是 TokenArgument（副作用/控制流的令牌），不是张量数据输入，"
-        "也不该按张量塞进 example_inputs"
-    ),
-}
 
 
 def _spec_name(spec) -> str | None:
     arg = getattr(spec, "arg", None)
     name = getattr(arg, "name", None)
     return name if isinstance(name, str) else None
-
-
-def _spec_kind(spec) -> str:
-    """不认识的 InputKind 一律拒绝，**不默认成 input**。
-
-    默认成 input 会把一个权重/缓冲悄悄标成数据输入：名字覆盖齐全、schema 也过，
-    整份 trace 的 kind 却是反的（第九轮 I-2）。torch 2.15 的 InputKind 有
-    PARAMETER/BUFFER/CONSTANT_TENSOR/USER_INPUT/CUSTOM_OBJ（映射见 KIND_MAP）
-    与 TOKEN（明确拒绝，见 REFUSED_KINDS）；将来 torch 加了新种类，宁可 exit 2
-    让人来补映射，也不要静默猜。
-    """
-    kind = getattr(spec, "kind", None)
-    text = str(getattr(kind, "name", None) or kind).upper()
-    if text in REFUSED_KINDS:
-        raise BuildError(
-            f"input_specs 里有 {text}：{REFUSED_KINDS[text]}；"
-            "本切片不支持，按约定拒绝出图（不把它当数据输入猜）"
-        )
-    if text not in KIND_MAP:
-        raise BuildError(
-            f"input_specs 里有不认识的 InputKind：{text!r}；"
-            "已知的是 " + "/".join(sorted(KIND_MAP))
-            + "。不猜它是权重还是输入（猜错会把整类标反），请升级 papertrace 的 KIND_MAP"
-        )
-    return KIND_MAP[text]
 
 
 def input_plan(exported) -> list[dict]:
@@ -86,7 +46,7 @@ def input_plan(exported) -> list[dict]:
         plan.append(
             {
                 "name": name,
-                "kind": _spec_kind(spec),
+                "kind": spec_kind(spec),
                 "target": str(target) if target is not None else None,
             }
         )
@@ -195,4 +155,7 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
     holders = [n for n in exported.graph.nodes if n.op == "placeholder"]
     for node, value in zip(holders, args):
         check_value_shape(node, value, spec_by_name[node.name].get("target"))
+    # 同形状互换形状核对看不见，但跨模块时 parent_id 会写反（第十四轮 I-1）。
+    # 名字在图上、target 在 spec 里，再核一次这两个独立字段的对应关系。
+    check_name_target(holders, plan, named, constants)
     return args

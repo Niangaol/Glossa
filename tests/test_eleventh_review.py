@@ -23,9 +23,8 @@ from papertrace.exceptions import BuildError  # noqa: E402
 from papertrace.parse_code import fx_trace  # noqa: E402
 from papertrace.parse_code.fx_contract import check_contract, check_plan_source  # noqa: E402
 from papertrace.parse_code.fx_edges import finish_nodes, output_node_ids  # noqa: E402
+from papertrace.parse_code.fx_kinds import KIND_MAP, REFUSED_KINDS  # noqa: E402
 from papertrace.parse_code.fx_signature import (  # noqa: E402
-    KIND_MAP,
-    REFUSED_KINDS,
     classify,
     input_plan,
     placeholder_args,

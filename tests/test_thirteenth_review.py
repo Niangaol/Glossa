@@ -5,8 +5,8 @@ I-1 评审探针（output/review12/probe13x.py）实测：在**真** ExportedPro
     p_a 记成 b 的形状、p_b 记成 a 的形状，而 shape_broken 仍是 0。
     修法：placeholder_args 解析出真实张量后，与 node.meta["val"] 的形状核对——那是导出器
     在图上做 fake 传播的结果，与 input_specs 的 target 映射是**两个独立字段**。
-    诚实边界：同形状互换不可观测（也不会产生可见错误），本文件把它钉成显式用例，
-    不让读者以为「七关已经封死」。
+    第十四轮补：同形状互换**也**被拒（fx_names 的名字↔target 核对），因为跨模块时
+    parent_id 会写反；本文件原来那条「不可观测」用例已按事实改写。
 """
 
 from types import SimpleNamespace
@@ -147,12 +147,17 @@ def test_unswapped_constants_still_resolve_from_exported_constants():
     assert args[2] is ONE[0]
 
 
-def test_same_shape_target_swap_is_not_observable():
-    """诚实边界：同形状互换抓不到，也不该抓——trace 里没有任何可见差异。"""
+def test_same_shape_target_swap_is_refused_by_the_name_gate():
+    """第十三轮这里写的是「同形状互换不可观测」——**第十四轮证明那是错的**：
+    跨模块时 parent_id 会写反（可见的错误数据）。名字↔target 核对（fx_names）
+    连同模块的同形状互换一起拒绝。真正剩下的边界只有「压平撞名」，
+    见 tests/test_fourteenth_review.py::test_ambiguous_swap_really_does_change_parent_id。
+    """
     module, exported = _exported(TwoSame(), ONE)
     _swap_targets(exported)
-    args = placeholder_args(module, exported, input_plan(exported), ONE)
-    assert args[0] is module.b and args[1] is module.a, args
+    with pytest.raises(BuildError) as info:
+        placeholder_args(module, exported, input_plan(exported), ONE)
+    assert "名字" in str(info.value), str(info.value)
 
 
 def test_non_tensor_arguments_are_not_shape_checked():
