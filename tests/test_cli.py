@@ -98,7 +98,14 @@ def test_build_exits_4_when_torch_missing(monkeypatch):
     assert not (out_dir / "trace.json").exists()
 
 
-def test_build_with_paper_refuses():
+def test_build_with_paper_records_ingest_failure_not_refusal():
+    """S9 起 --paper 不再被硬拒：ingest 失败落 unresolved，build 照常 exit 0。
+
+    旧契约（M1a 初版）是 returncode 2 + stderr「论文 ingest 尚未实现」——那道硬
+    拒绝把「论文侧没接上」伪装成「整个 build 失败」，连算子图都不给用户。S9 之后
+    换成诚实契约：算子图照写，论文侧的失败原因进 doc["unresolved"]，不冒
+    traceback，也绝不因为没有论文就悄悄写一份「看起来成功」的 trace。
+    """
     out_dir = scratch_dir("build-with-paper")
     r = run_cli(
         "build",
@@ -107,8 +114,17 @@ def test_build_with_paper_refuses():
         "--out", str(out_dir),
         "--skeleton",
     )
-    assert r.returncode == 2
-    assert "论文 ingest 尚未实现" in r.stderr
+    assert r.returncode == 0, r.stderr
+    assert "Traceback" not in r.stderr
+    doc = load_trace(out_dir / "trace.json")
+    validate_trace(doc)
+    entries = [u for u in doc["unresolved"] if u["kind"] == "paper_unit"]
+    assert entries, doc["unresolved"]
+    assert any(u["ref"] == "arxiv:1706.03762" for u in entries)
+    assert all(u["reason"].strip() for u in entries)
+    # 论文侧失败不该冒充成功：ingest_mode 必须是 none，而不是编一个 tex
+    assert doc["meta"]["paper"]["ingest_mode"] == "none"
+    assert doc["anchors"] == []
 
 
 def test_dump_prints_counts():

@@ -2,6 +2,14 @@
 
 只负责两件事：把参数变成调用，把结果变成退出码。可读输出的排版都在
 papertrace/report.py（单文件 ≤200 行的约束）。
+
+S9 的取舍（R79，与 papertrace/spine.py 记同一段）：`--paper` 要接论文脊柱就得
+有**模块实例**（符号表要 mod.config 与定义点定位，结构信号要 config 的四个超参名），
+而 `build_trace()` 只返回 trace dict、且 build_trace.py 一行不许改。所以这里在
+build_trace 成功后用 `load_entry(args.repo, args.entry)` **再取一次**模块实例
+（实测 0.003s，相对 build_trace 的 2.760s 可忽略）——nodes/edges 仍来自第一次
+追踪，绝不为了拿模块而重新追踪，GC8 逐项不变；load_entry 抛异常按 BuildError
+收成一行错误，不冒 traceback。
 """
 
 from __future__ import annotations
@@ -10,7 +18,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from papertrace.build_trace import BuildError, build_trace, repo_commit, skeleton_trace
+from papertrace.build_trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
 from papertrace.report import (
     print_build_summary,
@@ -20,6 +28,7 @@ from papertrace.report import (
     print_overview,
 )
 from papertrace.schema_validate import dump_trace, load_trace, validate_trace
+from papertrace.spine import attach_paper
 
 UNIMPLEMENTED = 2
 #: 缺运行时要件（典型：没装 torch）。不许降级成空 trace。
@@ -76,9 +85,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _cmd_build(args: argparse.Namespace) -> int:
-    if args.paper not in ("none", "", None):
-        print("papertrace build：论文 ingest 尚未实现。", file=sys.stderr)
-        return UNIMPLEMENTED
     if args.skeleton:
         doc = skeleton_trace(repo_url=str(args.repo), commit=repo_commit(args.repo))
     else:
@@ -100,6 +106,21 @@ def _cmd_build(args: argparse.Namespace) -> int:
             print(f"papertrace build：{exc}", file=sys.stderr)
             return UNIMPLEMENTED
         print_fusion_warning(doc)
+    # S9：--paper 不是 none 就把论文脊柱接进来；接不上也照写 trace，
+    # 失败原因落 doc["unresolved"]，绝不冒 traceback、绝不静默成功
+    if args.paper not in ("none", "", None):
+        model = None
+        if not args.skeleton:
+            try:
+                model = load_entry(args.repo, args.entry)
+            except BuildError as exc:
+                print(f"papertrace build：{exc}", file=sys.stderr)
+                return UNIMPLEMENTED
+        attach_paper(doc, args.paper, model)
+        print(
+            f"  论文脊柱：anchors={len(doc['anchors'])} "
+            f"unresolved={len(doc['unresolved'])}（{args.paper}）"
+        )
     try:
         validate_trace(doc)
     except TraceSchemaError as exc:

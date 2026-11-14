@@ -19,10 +19,14 @@
   的 top1 不是同一个 term_id 时，记录 {"term_id": ..., "code_id": ...,
   "backward_top1": ...}。冲突只记录，不参与 s_retr，绝不被平均掉（规格 Task 11：
   冲突不得把 confidence 抬过 0.75）。
-- reason: str | None。offline 或没有可检索内容时写清原因；正常跑完是 None。
+- reason: str | None。没有可检索内容、或后端拿不到 embedding 时写清原因；正常
+  跑完是 None。R76：这个原因必须如实点名**实际配置的后端**与**真实失败原因**。
 
 R44：`LLMUnavailable` 只在这里捕获一次 → s_retr=0.0、forward/backward 空 dict、
-reason 写明 offline 不提供 embedding。不兜底成 0.5，不返回假向量（RF2）。
+reason 说清是哪个后端、为什么没拿到 embedding。不兜底成 0.5，不返回假向量（RF2）。
+R76：不许再硬编码「offline 后端不提供 embedding」——用户配了 openai 而
+/embeddings 返回 404 时，那句话与实际配置矛盾：分数和 tier 都是对的，错的只有
+解释，而一个撒谎的原因比没有原因更糟（与 R64 要求 _offline_hint 如实化同族）。
 """
 
 from __future__ import annotations
@@ -31,13 +35,25 @@ import math
 
 from papertrace.align.embed import embed_texts
 from papertrace.exceptions import LLMUnavailable
+from papertrace.llm.client import configured_backend
 
-#: R44：offline 时的原因。要点明「为什么没有分数」，不许留空让上游以为是偶发故障。
-_OFFLINE_REASON = (
-    "offline 后端不提供 embedding：双向检索无结果，s_retr=0.0（不兜底成假分数）"
-)
+#: 配置值本身不合法时（configured_backend 抛 ValueError）也不能冒充 offline。
+UNKNOWN_BACKEND = "unknown"
 #: 没有可检索的内容时也要给原因：空结果和「算过了但没有命中」不是一回事。
 _EMPTY_REASON = "代码单元或论文项为空：没有可检索的内容，s_retr=0.0"
+
+
+def _unavailable_reason(exc: BaseException) -> str:
+    """R76：如实点名实际配置的后端 + 真实失败原因，不许留空让上游以为是偶发故障。"""
+    try:
+        backend = configured_backend()
+    except ValueError:
+        backend = UNKNOWN_BACKEND
+    detail = str(exc).strip() or type(exc).__name__
+    return (
+        f"{backend} 后端拿不到 embedding：{detail}"
+        "（双向检索无结果，s_retr=0.0，不兜底成假分数）"
+    )
 
 
 def cosine(a: list[float], b: list[float]) -> float:
@@ -65,8 +81,9 @@ def retrieve_bidirectional(code_units: list, paper_terms: list, k: int = 5) -> d
         # R44：embed_texts 不捕获，所以这里是 offline 归零的唯一位置
         code_vectors = embed_texts([unit["text"] for unit in code_units])
         term_vectors = embed_texts([term["text"] for term in paper_terms])
-    except LLMUnavailable:
-        return _zero(_OFFLINE_REASON)
+    except LLMUnavailable as exc:
+        # R76：reason 跟着实际配置的后端走，不再谎称 offline
+        return _zero(_unavailable_reason(exc))
 
     # R54：先验数量，再配对。少返回（或多返回）一条向量就抛，绝不让任何单元被
     # 静默踢出计分——那会得到一个在没人验证过的子集上算出来的 s_retr。

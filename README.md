@@ -10,7 +10,11 @@
 仓库 + 入口模型 → torch.export 真实执行 → 抓每个 aten 算子 → trace.json（节点带真实形状、模块层级、shape 一致性）
 ```
 
-还没做的：论文 ingest、公式-算子对齐、mismatch 判定、前端。这些仍然是桩，**空就是空**，不会塞示例数据。
+论文 ingest 与「公式项 ↔ 算子」对账的**脊柱**已经接进 `build --paper`（S9）：
+`meta.paper`、`symbols`、`anchors`、`unresolved` 四个槽都会如实填，拿不到依据就只写
+`unresolved`——默认 `offline` 后端下一项 anchor 都不出（没有 judge 判定、没有 embedding
+检索），四个公式项全部落 `unresolved` 并写清为什么。还没做的：mismatch 判定、前端。
+这些仍然是桩，**空就是空**，不会塞示例数据。
 
 本地模型（Ollama / 7B / nomic-embed-text）**故意没装**，不是缺步骤。默认后端是 `offline`，任何要模型的地方会直接报 `LLMUnavailable`，不允许编造结果。
 
@@ -29,6 +33,7 @@ python -m papertrace --help
 
 ```bat
 python -m papertrace build --repo tests/fixtures/nanogpt --entry model:build_model --out output/m1a
+python -m papertrace build --repo tests/fixtures/nanogpt --paper tests/fixtures/papers/vaswani2017/attention.tex --out output/spine
 python -m papertrace dump --trace output/m1a/trace.json
 python -m papertrace dump --trace output/m1a/trace.json --ops
 python -m papertrace dump --trace output/m1a/trace.json --edges
@@ -256,6 +261,15 @@ set PAPERTRACE_LLM=deepseek-chat
   拿 `T` 去对论文里的序列长度会对错账。`Dh = D // H` 是**派生量**（夹具 `GPTConfig` 没有
   `head_dim` 字段），与论文侧 `d_k` 的精确对账由 M4 负责；整除不成立时也只发向下取整的值，
   `codeSymbol` 没有「约等」字段，不会假装两侧相等。
+- **`anchors` / `code_expr_range`（S9 起）**：一条 anchor = 一个论文公式项对一个算子节点。
+  `code_expr_range` 记的是 **trace 节点 id 区间**（单个 `root/@037`，多个 `root/@037..root/@045`，
+  按结构信号 `pairs` 的 node_id 首尾），**不是** `file:line`：M1a 的算子节点 `loc` 全是
+  `model.GPT` 这一类模块路径，没有逐算子源码行号，编一个出来就是对账造假。逐算子源码定位属
+  **M1b**，届时换成真实 `file:line`（字段类型不变，仍是 string）。
+  `tier` 只有 `green`/`yellow`/`none` 三档，`none` **绝不写成 anchor**，只进 `unresolved`；
+  `source` 只可能是 `model`（判断题给了 yes）或 `static`（只有结构/检索依据）——anchor 不是
+  实测出来的，所以永远不是 `runtime`。`signals` 里的 `s_retr`/`s_judge`/`s_struct` 与
+  `confidence` 是**同一份数**（schema 会强制三者自洽），不是各算一遍。
 - **结构校验**：`validate_trace` 除了 JSON Schema 还查 `id`/`parent_id`/边的 `id`/`src`/`dst`
   必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、
@@ -301,7 +315,7 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | --- | --- |
 | 0 | 成功 |
 | 1 | 内部错误：生成的 trace 不合 schema（属 bug，不是用法问题） |
-| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`/`CUSTOM_OBJ`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次/`target` 取到的张量形状与导出图里这个节点不符/placeholder 的名字与 `target` 对不上/认不出 placeholder 前缀/非输入 spec 没给 `target`） |
+| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`/`CUSTOM_OBJ`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次/`target` 取到的张量形状与导出图里这个节点不符/placeholder 的名字与 `target` 对不上/认不出 placeholder 前缀/非输入 spec 没给 `target`） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
 | 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行、图里有非张量的 `get_attr`/`call_module`（如 `forward` 内的 `no_grad`、`torch.cond`/`torch.while_loop` 的分支图），或 `example_inputs` 数量与数据输入个数对不上（含 pytree 输入未摊平）） |
