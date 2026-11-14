@@ -12,6 +12,10 @@ r"""把一条论文公式按乘结构切成有序 Term。只认 fixture 级文�
 
 「项」指结构单元（乘因子、缩放、归一化、激活），不是代数加项：a + b 这种纯加减
 没有已知结构，两个叶子符号都不硬凑成项，整条交给编排层。
+
+R27（fix round 1）：不嵌套、不乱贴标签。自底向上——\frac 只在分子分母都没产出项时
+才为自己产一项（\frac{a}{b} 是 1 个 scale 项），\sqrt 的 latex 永远盖住参数段；孤立
+符号不是运算（y = a → []），和别的因子并列才是乘积（夹具的 V 跟在 \right) 后）。
 """
 
 from __future__ import annotations
@@ -19,21 +23,14 @@ from __future__ import annotations
 import string
 from typing import NamedTuple
 
-from papertrace.parse_paper.latex_safe import (
-    KNOWN_FUNCTIONS,
-    group_span,
-    latex_to_sympy_safe,
-    match_delim,
-    skip_ws,
-)
+from papertrace.parse_paper.latex_safe import KNOWN_FUNCTIONS, group_span, latex_to_sympy_safe, match_delim, skip_ws
 
 #: kind 的合法取值；term.kind 只从这里取（R17 的三个字段之一）。
 KINDS = ("matmul", "scale", "norm", "act", "transpose", "concat")
 _OPEN, _CLOSE = "{[(", "}])"
 _PAIR = {"{": "}", "(": ")", "[": "]"}
 _DELIMS = {"(": ")", "[": "]"}
-#: 裸调用（不带 \mathrm）也认：softmax(x)->norm，sqrt(x)->scale。
-_CALL_KINDS = {"sqrt": "scale", **KNOWN_FUNCTIONS}
+_CALL_KINDS = {"sqrt": "scale", **KNOWN_FUNCTIONS}  # 裸调用 softmax(x)->norm，sqrt(x)->scale
 _WORD = string.ascii_letters + string.digits + "_"
 
 
@@ -65,10 +62,8 @@ def _right_hand_side(latex: str) -> str:
         ch = latex[i]
         if ch == "\\":
             i += 2
-        elif ch in _OPEN:
-            depth, i = depth + 1, i + 1
-        elif ch in _CLOSE:
-            depth, i = depth - 1, i + 1
+        elif ch in _OPEN or ch in _CLOSE:
+            depth, i = depth + (1 if ch in _OPEN else -1), i + 1
         elif ch == "=" and not depth:
             return latex[i + 1:]
         else:
@@ -87,36 +82,38 @@ def _scan(s: str, start: int, end: int, exposed: bool, out: list[Term]) -> None:
             i += 1
         elif ch in _PAIR:
             close = match_delim(s, i, end, ch, _PAIR[ch])
-            _scan(s, i + 1, close, True, out)  # 括号组对拆项透明
+            _scan(s, i + 1, close, exposed, out)  # 括号组对拆项透明
             i = close + 1
         elif ch == "\\":
             i = _scan_macro(s, i, end, exposed, out)
         elif ch in _WORD:
-            i = _scan_run(s, i, end, exposed, out)
+            i = _scan_run(s, i, start, end, exposed, out)
         else:
             i += 1  # 运算符、逗号、孤立的 ^ _ 都不产项
 
 
-def _scan_run(s: str, i: int, end: int, exposed: bool, out: list[Term]) -> int:
-    """标识符串（含附着的 ^{...}/_{...}/^x/_x）：产 matmul 项，或整个吃掉一次调用。"""
-    j = _run(s, i, end)
+def _scan_run(s: str, i: int, start: int, end: int, exposed: bool, out: list[Term]) -> int:
+    """标识符串：裸调用吃掉参数，否则并列因子才产 matmul 项。"""
+    j, names = _run(s, i, end)
     k = skip_ws(s, j, end)
-    if k < end and s[k] == "(":
+    if k < end and s[k] == "(":  # 裸调用 softmax(x)：函数名自己是项，参数区并列
         close = match_delim(s, k, end, "(", ")")
-        _scan(s, k + 1, close, True, out)
+        _scan(s, k + 1, close, exposed, out)
         if exposed:
-            out.append(Term(len(out), s[i:close + 1], _CALL_KINDS.get(s[i:j], "matmul")))
+            out.append(Term(len(out), s[i:j], _CALL_KINDS.get(s[i:j], "matmul")))
         return close + 1
-    if exposed:
+    if exposed and (names > 1 or _is_factor(s, start, i, j, end)):
         out.append(Term(len(out), s[i:j], "matmul"))
     return j
 
 
-def _run(s: str, i: int, end: int) -> int:
-    """标识符串的结尾下标：连续单词字符 + 附着的上下标。"""
-    j = i
+def _run(s: str, i: int, end: int) -> tuple[int, int]:
+    """标识符串的结尾下标与并列标识符个数：QK→2，d_k / K^{T}→1。"""
+    j, names = i, 0
     while j < end:
         if s[j] in _WORD:
+            if s[j].isalpha() and (j == i or s[j - 1] not in "_^{"):
+                names += 1
             j += 1
         elif s[j] in "^_":  # ^{...} / _{...} / ^x / _x
             j += 1
@@ -124,22 +121,23 @@ def _run(s: str, i: int, end: int) -> int:
                 j = match_delim(s, j, end, "{", "}") + 1
         else:
             break
-    return j
+    return j, names
 
 
 def _scan_macro(s: str, i: int, end: int, exposed: bool, out: list[Term]) -> int:
-    """处理 \宏；返回消耗到的位置。frac 自身不产项（R15），sqrt 产 scale 项。"""
-    j = i + 1
-    k = j
+    """处理 \宏；返回消耗到的位置。frac 自底向上，sqrt 产 scale 项。"""
+    k = i + 1
     while k < end and s[k].isalpha():
         k += 1
-    name = s[j:k] or (s[j:j + 1] if j < end else "")
-    j = k if k > j else j + 1
+    name, j = s[i + 1:k] or s[i + 1:i + 2], k if k > i + 1 else i + 2
     if name == "frac":
         a0, a1 = group_span(s, skip_ws(s, j, end), end)
         b0, b1 = group_span(s, skip_ws(s, a1 + 1, end), end)
-        _scan(s, a0, a1, True, out)  # 分子分母各自照常拆
-        _scan(s, b0, b1, True, out)
+        mark = len(out)
+        _scan(s, a0, a1, exposed, out)  # 分子分母各自照常拆（自底向上：先子后父）
+        _scan(s, b0, b1, exposed, out)
+        if exposed and len(out) == mark:  # 后代没项 → 这个除法自己是唯一的一项
+            out.append(Term(len(out), s[i:b1 + 1], "scale"))
         return b1 + 1
     if name == "sqrt":
         a, b = group_span(s, skip_ws(s, j, end), end)
@@ -157,13 +155,13 @@ def _scan_macro(s: str, i: int, end: int, exposed: bool, out: list[Term]) -> int
     if inner not in KNOWN_FUNCTIONS:
         _scan(s, a, b, exposed, out)  # 未知宏的组照扫：门一撤就会产出项（变异探针靠这个）
         return b + 1
-    k = _scan_args(s, b + 1, end, out)
+    k = _scan_args(s, b + 1, end, exposed, out)
     if exposed:
         out.append(Term(len(out), s[i:b + 1], KNOWN_FUNCTIONS[inner]))
     return k
 
 
-def _scan_args(s: str, i: int, end: int, out: list[Term]) -> int:
+def _scan_args(s: str, i: int, end: int, exposed: bool, out: list[Term]) -> int:
     """吃掉函数调用的参数（(...) 或带定界符的版本），参数内部照常拆项。"""
     k = skip_ws(s, i, end)
     if k < end and s[k] == "(":
@@ -175,23 +173,27 @@ def _scan_args(s: str, i: int, end: int, out: list[Term]) -> int:
         close = match_delim(s, k, end, s[k], _DELIMS[s[k]])
     else:
         return i
-    _scan(s, k + 1, close, True, out)
+    _scan(s, k + 1, close, exposed, out)
     return close + 1
 
 
+def _is_factor(s: str, start: int, i: int, j: int, end: int) -> bool:
+    """孤立单符号不是运算：同一个逗号分段里还有别的因子时，才是乘积。"""
+    lo = max((p + 1 for p in range(start, i) if s[p] in ",;"), default=start)
+    hi = min((p for p in range(j, end) if s[p] in ",;"), default=end)
+    return bool(s[lo:i].strip()) or bool(s[j:hi].strip())
+
+
 def _has_sum(s: str, start: int, end: int) -> bool:
-    """这段里有没有顶层 + / -（括号和花括号里的不算）。"""
+    """这段里有没有顶层 + / -（括号花括号里的不算，宏名整体跳过）。"""
     depth, i = 0, start
     while i < end:
         ch = s[i]
         if ch == "\\":
             i += 2
-        elif ch in _OPEN:
-            depth, i = depth + 1, i + 1
-        elif ch in _CLOSE:
-            depth, i = depth - 1, i + 1
         elif ch in "+-" and not depth:
             return True
         else:
+            depth += (ch in _OPEN) - (ch in _CLOSE)
             i += 1
     return False

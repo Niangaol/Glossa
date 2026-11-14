@@ -13,8 +13,13 @@
   local_dict，且要断言符号本身还在 free_symbols 里，不是只断言不抛。
 - Term 只有 index / latex / kind 三个字段（R17）：term_id 由编排层拼
   f"{unit_id}-t{term.index}"，split_formula 永远看不到 unit_id。
+- R27（fix round 1）：拆项不嵌套、不乱贴标签。自底向上——\\frac 只有分子分母都
+  没产出项时才为自己产一项（\\frac{a}{b} → 1 个 scale 项）；位置决定标签——孤立单
+  字母不是运算（y = a → []），但和别的因子并列就是乘积（夹具末尾的 V 与 \\right)
+  并列 → matmul）。任何两项的区间不重叠，index 严格递增。
 """
 
+import itertools
 import pathlib
 
 import pytest
@@ -196,3 +201,83 @@ def test_out_of_grammar_formula_yields_no_terms():
 def test_formula_without_any_term_yields_empty_list():
     """a+b 里没有已知结构：两个叶子符号都不是项，不硬凑。"""
     assert split_formula("y = a + b") == []
+
+# --- R27（fix round 1）：除法操作数不贴 matmul、项与项不嵌套 -------------------
+INVARIANT_CASES = [
+    "fixture",
+    "\\frac{a}{b}",
+    "\\sqrt{\\frac{a}{b}}",
+    "\\sqrt{d_k}",
+    "\\sqrt{QK}",
+    "y = a + b",
+    "y = a",
+    "y = d_k",
+    "QK",
+    "a b",
+    "\\frac{QK^{T}}{\\sqrt{d_k}}",
+    "\\mathrm{softmax}(QK)V",
+    "\\frac{a}{b}V",
+    "\\sqrt{d_k}V",
+    "QK\\sqrt{d_k}",
+    "\\frac{\\frac{a}{b}}{c}",
+]
+
+
+def _span(text: str, latex: str) -> tuple[int, int]:
+    """latex 在 text 里的唯一区间；不唯一说明测试自己定位不可靠，先失败。"""
+    start = text.find(latex)
+    assert start >= 0, f"not a substring: {latex!r}"
+    assert text.find(latex, start + 1) < 0, f"not unique: {latex!r}"
+    return start, start + len(latex)
+
+
+def test_division_of_plain_symbols_is_one_scale_term():
+    """R27 ②：\\frac{a}{b} 是缩放本身一项，分子分母不贴 matmul。"""
+    assert split_formula("y = \\frac{a}{b}") == [Term(0, "\\frac{a}{b}", "scale")]
+    assert split_formula("\\frac{a}{b}") == split_formula("y = \\frac{a}{b}")
+
+
+def test_sqrt_of_division_is_one_scale_term():
+    """R27 ③：\\sqrt{\\frac{a}{b}} 恰好一项，latex 覆盖整段。"""
+    assert split_formula("\\sqrt{\\frac{a}{b}}") == [
+        Term(0, "\\sqrt{\\frac{a}{b}}", "scale")
+    ]
+
+
+def test_isolated_symbol_is_not_a_term():
+    """R27 ④：孤立变量不是运算；和别的因子并列时才是（见夹具第 4 项 V）。"""
+    assert split_formula("y = a") == []
+    assert split_formula("y = d_k") == []
+
+
+@pytest.mark.parametrize("case", INVARIANT_CASES)
+def test_terms_never_overlap_and_indices_increase(case):
+    """R27 ⑤：任何两项区间不重叠 + index 严格递增 + latex 仍是原串真子串。
+
+    index 是扫描序（后序：子项先于父项），所以夹具里 \\mathrm{softmax} 虽然在
+    源串最前面却排在 index 2——这是 ① 钉死的契约，不能改成就近排序。
+    """
+    formula = _fixture_formula() if case == "fixture" else case
+    rhs = formula.split("=", 1)[1] if "=" in formula else formula
+    terms = split_formula(formula)
+    for term in terms:
+        assert term.latex in formula  # R15：真子串
+    assert [t.index for t in terms] == list(range(len(terms)))
+    spans = [_span(rhs, t.latex) for t in terms]
+    for (a0, a1), (b0, b1) in itertools.combinations(spans, 2):
+        assert a1 <= b0 or b1 <= a0, f"overlap: {(a0, a1)} vs {(b0, b1)}"
+
+
+def test_exposed_flag_changes_scan_behavior():
+    """R27 ⑥：exposed 不是死参数——False 时同一段公式一个项都不产。"""
+    from papertrace.parse_paper.split_terms import _scan  # 白盒：直接证明参数活着
+
+    on: list[Term] = []
+    off: list[Term] = []
+    _scan("QK", 0, 2, True, on)
+    _scan("QK", 0, 2, False, off)
+    assert [t.latex for t in on] == ["QK"]
+    assert off == []
+    # 黑盒同一件事：根号内容不暴露，所以 \\sqrt{QK} 只有 1 项
+    assert split_formula("y = \\sqrt{QK}") == [Term(0, "\\sqrt{QK}", "scale")]
+
