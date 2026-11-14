@@ -1,0 +1,15 @@
+% Vaswani et al. 2017, "Attention Is All You Need", §3.2.1 Scaled Dot-Product Attention
+% 只摘 Attention 公式本身，够拆出四项即可：QK^T / 1/sqrt(d_k) / softmax / (·)V
+% arXiv:1706.03762
+% papertrace-id: S3.2-eq-attn
+
+\begin{equation}
+\mathrm{Attention}(Q, K, V) = \mathrm{softmax}\left(\frac{QK^{T}}{\sqrt{d_k}}\right)V
+\label{eq:attention}
+\end{equation}
+
+% 四项拆解（供 split_terms 的期望值参考，不是代码）：
+%   t0: QK^{T}                      —— 一次 matmul，形状 [B,H,T,Dk] x [B,H,Dk,T] -> [B,H,T,T]
+%   t1: \frac{1}{\sqrt{d_k}}         —— 标量缩放，逐元素乘
+%   t2: \mathrm{softmax}(\cdot)      —— 沿最后一维归一化
+%   t3: (\cdot)V                    —— 再一次 matmul，[B,H,T,T] x [B,H,T,Dk] -> [B,H,T,Dk]
