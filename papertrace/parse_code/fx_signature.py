@@ -9,7 +9,7 @@ PARAMETER / BUFFER / USER_INPUT / CONSTANT_TENSOR，`spec.target` 是参数的�
 本模块不 import torch：只读 spec 的属性，方便在没装 torch 的机器上被 import。
 """
 
-from papertrace.exceptions import TraceUnsupported
+from papertrace.exceptions import BuildError, TraceUnsupported
 from papertrace.parse_code.fx_graph import all_val_shapes, val_dtype, val_shape
 
 # InputKind 的名字 → 我们 trace.json 里的 kind
@@ -101,18 +101,29 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
     # 给这张图的（老 torch / 手工拼的 exported），继续往下走会把某个参数当成普通输入
     # 悄悄 pop 掉一个 example_inputs，形状全错还没有报错。
     missing = [name for name in placeholders if name not in spec_by_name]
-    if missing:
-        raise TraceUnsupported(
-            "graph_signature.input_specs 与图对不上，缺少 placeholder："
-            + "、".join(missing)
-            + "；无法判断谁是权重/输入，按约定拒绝出图"
-        )
     extra = [name for name in spec_by_name if name not in placeholders]
+    problems: list[str] = []
+    if missing:
+        problems.append("缺少 placeholder：" + "、".join(missing))
     if extra:
-        raise TraceUnsupported(
-            "graph_signature.input_specs 里有图里不存在的 placeholder："
-            + "、".join(extra)
-            + "；这份 spec 不是给这张图的，拒绝出图"
+        problems.append("多出图里不存在的 placeholder：" + "、".join(extra))
+    if problems:
+        # spec 与图对不上属于**契约错误**（老 torch / 手工拼的 exported），不是「追不动」：
+        # 与 build_op_nodes 的守卫同一个退出码（BuildError → exit 2），别两条路两个码。
+        raise BuildError(
+            "graph_signature.input_specs 与图对不上（" + "；".join(problems) + "）；"
+            "无法判断谁是权重/输入，按约定拒绝出图"
+        )
+    # 顺序也要对：example_inputs 是按 placeholder 顺序被消费的，spec 顺序错位的话
+    # 形状相同的两个输入会被静默喂反（当前 torch 2.15 实测一致，这里只是把约定钉死）。
+    ordered = [item["name"] for item in plan]
+    if ordered != placeholders:
+        raise BuildError(
+            "input_specs 的顺序与图的 placeholder 顺序不一致："
+            + "、".join(ordered)
+            + " ≠ "
+            + "、".join(placeholders)
+            + "；按约定拒绝出图（不猜哪个对应哪个）"
         )
     user_names = [item["name"] for item in plan if item.get("kind") == "input"]
     if len(user_names) != len(example_inputs):

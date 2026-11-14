@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from papertrace.parse_code.fx_graph import fused_items, is_getitem, op_name
+from papertrace.parse_code.fx_inputs import CONSTANT_SOURCES
 from papertrace.parse_code.fx_shapes import navigate, tree_leaf
 
 
@@ -148,7 +149,10 @@ def finish_nodes(nodes: list[dict], edges: list[dict]) -> dict[str, int]:
         "operators": len(ops),
         "degraded": sum(1 for n in ops if n["degraded"]),
         "fused": sum(1 for n in ops if fused_items(n["op"]) is not None),
-        "orphan": sum(1 for n in ops if n["id"] not in incoming and n["op"] != "arange"),
+        # 常量源天生没有数据入边（torch.ones / ones_like），不算孤点
+        "orphan": sum(
+            1 for n in ops if n["id"] not in incoming and n["op"] not in CONSTANT_SOURCES
+        ),
         "shape_broken": sum(1 for e in edges if e["checked"] and not e["shape_consistent"]),
         "shape_unchecked": sum(1 for e in edges if not e["checked"]),
     }

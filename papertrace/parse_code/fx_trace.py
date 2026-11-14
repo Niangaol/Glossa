@@ -16,7 +16,7 @@ import os
 import tempfile
 from typing import Any
 
-from papertrace.exceptions import RuntimeUnavailable, TraceUnsupported
+from papertrace.exceptions import BuildError, RuntimeUnavailable, TraceUnsupported
 from papertrace.parse_code.fx_edges import build_edges, finish_nodes
 from papertrace.parse_code.fx_graph import (
     FUSED_OPS,
@@ -129,7 +129,9 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
         observed, observe_error = observe(
             runnable, placeholder_args(module, exported, plan, example_inputs)
         )
-    except TraceUnsupported:
+    except (TraceUnsupported, BuildError):
+        # 契约错误（spec 对不上）与「追不动」都要原样上抛：包成 observe 失败会把
+        # exit 2 变成 exit 5，两条路两个码（第八轮 I-1）。
         raise
     except Exception as exc:  # noqa: BLE001 - 统一翻译成可读原因
         observed, observe_error = {}, _short_error(exc)

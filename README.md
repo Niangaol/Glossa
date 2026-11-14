@@ -77,11 +77,14 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `self.const`（CONSTANT_TENSOR）单独标 `kind=const`，摘要写「常量 N」而不是塞进「权重 N」；
   纯字面量 `torch.ones(2,4)` 在导出图里就是一个 `ones` 算子（`kind=op`），它的
   `inputs` 为空，两者都不会冒充数据输入。
-  **拿不到 `input_specs` 就 fail-closed**：图里只要还有 placeholder，`build` 直接
-  `BuildError`（exit 2），不再退回 mangled 名猜——`p_+参数全名` 会把 `sub.x` 与根上的
-  `sub_x` 压成同一个 `p_sub_x`，也会把形参 `p_x` 和参数 `x` 的压平名混为一谈，
-  猜错的代价是整份 trace 的 kind 反过来（权重标 input、输入标 param、常量消失），
-  而且计数可能「看起来正常」。真的没有 placeholder（纯常量模型）时，空 plan 是合法的。
+  **拿不到 `input_specs` 就 fail-closed**：判据是「**每个 placeholder 都被 spec 覆盖**」，
+  不是「plan 是不是空字典」——`classify([])` 是个非空 dict，只看真假会被它绕过去。
+  有未覆盖的 placeholder、spec 多出图里没有的名字、或 spec 顺序与 placeholder 顺序不一致，
+  一律 `BuildError`（**exit 2**，CLI 与直接调 `build_op_nodes` 同一个码），不再退回 mangled 名猜：
+  `p_+参数全名` 会把 `sub.x` 与根上的 `sub_x` 压成同一个 `p_sub_x`，也会把形参 `p_x` 和
+  参数 `x` 的压平名混为一谈，猜错的代价是整份 trace 的 kind 反过来（权重标 input、
+  输入标 param、常量消失），而且计数可能「看起来正常」。
+  真的没有 placeholder（纯常量模型）时，空 plan 是合法的。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
@@ -106,6 +109,9 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   示例输入、entry，`requested`（命令行请求的 batch/seq_len，和实际值分开记，免得自相矛盾），
   `real_execution`（第二遍真实执行是否成功；**失败时根本不写 trace**，见退出码 5），以及 `counts`
   （operators/degraded/fused/orphan/shape_broken/shape_unchecked）。没有它就没法判断这份 trace 能不能复现。
+  **orphan = 既没有入边也没有出边的算子**。常量源（`arange`/`ones`/`zeros`/`full` 以及
+  `*_like`/`new_*`）天生没有数据入边，只要它被下游用了就不算孤点；反过来，一个既没被谁用、
+  也没有入边的算子才是真孤点——它通常意味着图里有一段死代码或我们漏了一条边。
 - **结构校验**：`validate_trace` 除了 JSON Schema 还查 `id`/`parent_id`/边的 `id`/`src`/`dst`
   必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、
@@ -127,7 +133,7 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 
 - 零参类也能用（`--entry model:TinyNet`），但 `GPT(config)` 这种必须给工厂，我们不猜你的配置。
 - 示例输入优先用模型自带的 `example_inputs()`；没有就按 `config.vocab_size` + `config.block_size` 造 token id；都没有就报 `BuildError`，不会拿随机形状糊弄。
-- 缺 torch → 退出码 **4**；追不动 → 退出码 **5**；仓库/入口对不上 → 退出码 **2**。三种情况都**不写** `trace.json`。
+- 缺 torch → 退出码 **4**；追不动 → 退出码 **5**；仓库/入口对不上、`input_specs` 与图对不上 → 退出码 **2**。三种情况都**不写** `trace.json`。
   「追不动」有两种：① `torch.export` 就失败（数据依赖分支）；② 导出图能画出来，但拿真实张量
   **再跑一遍会炸**（自定义算子只有 meta 实现、真 CPU 实现抛错）。第二种以前会照常产出
   `source=runtime` 的 trace，把推断形状冒充成真实形状；现在一律 exit 5——没有第二遍执行，
@@ -141,7 +147,7 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | --- | --- |
 | 0 | 成功 |
 | 1 | 内部错误：生成的 trace 不合 schema（属 bug，不是用法问题） |
-| 2 | 用法/入口错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法） |
+| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图对不上） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
 | 5 | 模型可加载但追不动（export 失败，或导出图无法真实再执行） |

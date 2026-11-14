@@ -53,10 +53,19 @@ def build_op_nodes(
     # 权重/缓冲/常量在 export 图里也是 placeholder，得先认出它们，才能从「入参」里
     # 挑出真正的数据输入。input_specs 是权威（sub.x 与根上的 sub_x 不会互相覆盖）；
     # 老 torch 没有它时 fail-closed：猜错的代价是整份 trace 的 kind 全反，比不出图更糟。
-    if not plan and any(getattr(n, "op", None) == "placeholder" for n in graph.nodes):
+    # 守卫看的是「每个 placeholder 都被 spec 覆盖」，不是 plan 真假：classify([]) 是
+    # 非空 dict，只判 not plan 会被它绕过去（第八轮 I-2）。
+    covered = param_names | spec_inputs
+    uncovered = [
+        n.name
+        for n in graph.nodes
+        if getattr(n, "op", None) == "placeholder" and n.name not in covered
+    ]
+    if uncovered:
         raise BuildError(
-            "这个 torch 版本没有 graph_signature.input_specs，无法区分权重/输入/常量；"
-            "按约定拒绝出图（不再按 mangled 名猜，猜错会把参数和输入整类标反）"
+            "图里有 placeholder 没有 input_specs 覆盖：" + "、".join(uncovered)
+            + "；无法区分权重/输入/常量，按约定拒绝出图（不再按 mangled 名猜，"
+            "猜错会把参数和输入整类标反）"
         )
     # 只由权重/常量算出来的中间量（self.w[0]、torch.ones(...)、ones_like(x)）同样不是数据输入
     derived = param_derived(graph, param_names | constant_names(graph, op_name))

@@ -5,10 +5,11 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**205 passed**，第三至第七轮评审的必修项都已修完
+**状态（2026-11-14）**：Task 7–11 全部落地，**214 passed**，第三至第八轮评审的必修项都已修完
 （第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2；
-第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `（本次）`。
+第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验；
+第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `（本次）`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -242,8 +243,10 @@ observe 也跟着改了：`exported.module()` 的 placeholder 被换成 target �
 去掉 kind 标注 → `--ops` 用例红。
 
 拆分（都因为 ≤200 行）：`fx_modules.py`（模块树）、`fx_signature.py`（input_specs 与真实张量）、
-`schema_structure.py`（结构校验），`fx_nodes` 144 行、`fx_graph` 136 行、`fx_signature` 166 行、
-`schema_validate` 96 行。
+`schema_structure.py`（结构校验）。行数口径 = `Get-Content <file>` 的行数（含空行与注释）：
+`fx_nodes` 151、`fx_graph` 137、`fx_signature` 175、`fx_edges` 158、`fx_trace` 136、
+`fx_inputs` 86、`schema_validate` 96。评审用「非空非注释」口径数出的数字会更小（如 fx_graph 119），
+两者都对，只是口径不同；≤200 行的约束按含空行口径核。
 
 ### 第七轮评审（基线 b48f361，196 passed）：兜底、`*_like`、spec 契约
 
@@ -254,7 +257,7 @@ const 修复本身通过了（build 摘要「算子 1 / 权重 0 / 常量 1 / �
 | --- | --- | --- |
 | C1 | 没有 `input_specs` 的兜底分支仍按名字猜 param：`Shadow`（`self.x` + `forward(p_x)`）fallback 把 `p_x_1` 标 input、`p_x` 标 param（正好反了）；`ConstModel` 的 const 变 input；observe 也因 `exported.module()` 名错位拿不到参数值 | 删掉 mangled 兜底与 `owned_paths`/`mangled_collisions`：图里只要有 placeholder 而 plan 为空，直接 `BuildError`（exit 2，「无法区分权重/输入/常量，拒绝出图」）。真的没有 placeholder（纯常量模型）时空 plan 合法。observe 只剩一条路径：原图 GraphModule + `placeholder_args` |
 | I1 | `ones_like/zeros_like` 被当数据输入：`cat([ones_like(x), y])` 的 `cat shape_in` 是 `x` 的 (2,4) 而不是 `y` 的 (2,6) | `CONSTANT_LIKE_OPS`（`*_like`/`new_*`）并入常量种子：输出不进 `inputs`，也不把 `x` 算成它的数据入参；`rand_like` 明确不在名单里 |
-| I2 | `placeholder_args` 不校验 spec 完整性：缺 spec 的 placeholder 会被当普通输入 `pop`，example_inputs 顺序/数量不对会静默喂错 | 三道校验：spec 必须覆盖全部 placeholder（缺/多都 `TraceUnsupported`，exit 5）；USER_INPUT 个数必须等于 `len(example_inputs)`（错误信息要求「按 forward 形参顺序给」）；正常路径再断言参数拿到的就是模块里那个 Parameter |
+| I2 | `placeholder_args` 不校验 spec 完整性：缺 spec 的 placeholder 会被当普通输入 `pop`，example_inputs 顺序/数量不对会静默喂错 | 三道校验：spec 必须覆盖全部 placeholder；USER_INPUT 个数必须等于 `len(example_inputs)`（错误信息要求「按 forward 形参顺序给」）；正常路径再断言参数拿到的就是模块里那个 Parameter。（本轮缺/多抛 `TraceUnsupported`/exit 5，第八轮 I-1 统一改成 `BuildError`/exit 2） |
 
 守卫测试：`tests/test_seventh_review.py`（9 条：有 placeholder 无 spec → `BuildError`；纯常量模型空 plan 仍出图；
 spec 缺项/多出图里没有的名字/example_inputs 少一项都 `TraceUnsupported`；正常路径按 forward 顺序拿到真实张量；
@@ -263,6 +266,32 @@ spec 缺项/多出图里没有的名字/example_inputs 少一项都 `TraceUnsupp
 变异探针（均已还原）：关掉 fail-closed 守卫 → 2 条 `DID NOT RAISE BuildError`；
 去掉 `CONSTANT_LIKE_OPS` 的 inputs 清空 → 2 条 `inputs==[[2,4]]`；
 去掉 spec 完备性检查 → 「缺少 placeholder」用例红。
+
+
+### 第八轮评审（基线 f9e3546，205 passed）：退出码契约与守卫判据
+
+第七轮的 fail-closed 与 `*_like` 都通过了，但评审指出「拒绝的方式」本身有两处不一致：
+
+| 编号 | 问题 | 修法 |
+| --- | --- | --- |
+| I-1 | README 承诺「有 placeholder 无 spec → `BuildError` / exit 2」，CLI 实际走 `placeholder_args` 的 `TraceUnsupported` → exit 5。评审 monkeypatch `fx_trace.input_plan = lambda exported: []` 复现：stderr 是「缺少 placeholder：p_x_1、p_x」，RET 5，sentinel trace 未被覆盖。测试只测了手工 `plan={}`，没测 CLI | **契约错误统一 exit 2**：spec 缺项/多项/顺序不符都抛 `BuildError`；`example_inputs` 数量不符仍是 `TraceUnsupported`（exit 5，那是「追不动」不是「契约不对」）。`fx_trace` 的 `except (TraceUnsupported, BuildError): raise` —— 否则 `BuildError` 会被包成 observe 失败又变回 5。新增 CLI 用例断言 exit 2 + stderr 含「缺少 placeholder」+ 不写 trace |
+| I-2 | 守卫写成 `if not plan and ...`，而 `classify([])` 返回的是**非空 dict**（`{"params": set(), "consts": set(), "inputs": [], "owner": {}}`）。直接调 `build_op_nodes(..., plan=classify([]))` 能把参数和输入都标 input、`add` 的 inputs 为空，`validate_trace` 还不报错。CLI 路径因先走 `placeholder_args` 被拒所以安全，但测试给了假安全感 | 守卫改判**覆盖**：`covered = param_names \| spec_inputs`，凡有 placeholder 不在 covered 里就 `BuildError`，与 plan 的真假无关。两条新用例分别喂 `classify([])` 与「只覆盖一半」的 plan |
+| M-1 | `fx_graph.py` docstring 仍写「形状只取自 `node.meta['val']`」 | 改成「形状优先取 `fx_observe` 观察值，只有 get_attr/权重回落 `meta['val']`」 |
+| M-2 | orphan 只排除 `arange`，`cat([torch.ones(2,4), x])` 报 orphan=1 | `fx_inputs.CONSTANT_SOURCES = CONSTANT_OPS \| CONSTANT_LIKE_OPS`，orphan 判据用它；README 补「常量源天生没有数据入边，被下游用了就不算孤点」 |
+| M-3 | 没有 spec 顺序断言；缺项与多项分两次报，用户要跑两遍 | 顺序断言 `[item["name"] for item in plan] == placeholders`；缺/多聚合成一条 problems 一次报全 |
+| M-4 | 测试缺 `x→ones_like` 边断言、`full_like`/`new_*`/`rand_like` 对照、`classify([])` 与 CLI 用例 | `tests/test_seventh_review.py` 扩到 18 条：三种 `*_like` 参数化（含 x→like 边存在断言）、`rand_like`/`randn_like` 反向对照（cat inputs==[[2,4],[2,6]]）、orphan==0、顺序错位、缺+多聚合、两条守卫、一条 CLI |
+| M-5 | plan 提交链缺 `f9e3546`；行数口径与评审不一致 | 提交链补齐 `f9e3546`/`94c2b28`；行数写明口径（`Get-Content` 含空行 vs 评审的非空非注释） |
+
+评审对五个自问的答复（记录取舍，不再改）：① fail-closed 可接受；② `ones_like` 的**边没有消失**
+（x→ones_like、ones_like→cat、y→cat 三条都 checked/consistent=True），M1a 语义接受，
+**不要**把 x 塞回 like 的 inputs；③ 校验顺序不误导，但缺/多该聚合；④ 纯常量空 plan 在 CLI 无后门、
+直接 API 有（即 I-2）；⑤ README 的数量承诺准确，只有 exit 2 那句不准。
+
+变异探针（均已还原）：守卫加回 `and not plan` → `classify([])` 与 partial 两条 `DID NOT RAISE BuildError`；
+关掉顺序断言 → reordered 用例红；orphan 退回只排 `arange` → orphan 用例红。
+
+全量 **214 passed**。端到端 fixture build：nodes=128（算子 75 / 权重 18 / 输入 1 / 模块 34）、
+edges=101、degraded=2、shape_broken=0、shape_unchecked=0。
 
 ## Review Focus
 
@@ -327,3 +356,5 @@ spec 缺项/多出图里没有的名字/example_inputs 少一项都 `TraceUnsupp
 | `5fd9b7c` | 第六轮必修：input_specs 定 kind/层级、常量不算输入、参数-only 子模块的 parent；三个模块拆分 |
 | `b48f361` | 常量独立成 `kind=const`（节点/schema/摘要/`--ops` 端到端） |
 | `f9e3546` | 第七轮必修：没有 `input_specs` 就 fail-closed、`*_like` 不算数据输入、spec 完备性与数量校验 |
+| `94c2b28` | 第七轮文档与账本（README/计划/执行账本同步） |
+| `（本次）` | 第八轮必修：契约错误统一 exit 2、守卫改判 placeholder 覆盖、spec 顺序断言与缺/多聚合、orphan 认常量源、docstring 与行数口径 |
