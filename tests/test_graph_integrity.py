@@ -148,19 +148,95 @@ def test_duplicate_ids_and_dangling_edges_are_rejected():
     assert any("parent_id" in e for e in excinfo.value.errors), excinfo.value.errors
 
 
+def test_parent_cycle_and_non_module_parent_are_rejected():
+    """父子链成环会让 UI 无限递归；parent 指到算子会让层级树自相矛盾。"""
+    doc = minimal_trace()
+    a = {
+        "id": "root/a", "parent_id": "root/b", "level": "module", "op": "A",
+        "label": "a", "loc": "m.py:1", "shape_in": [], "shape_out": [],
+        "dtype": None, "inplace": False, "source": "static",
+        "degraded": False, "repeat": 1, "stale": False,
+    }
+    b = dict(a, id="root/b", parent_id="root/a", op="B", label="b")
+    doc["nodes"] = [a, b]
+    with pytest.raises(TraceSchemaError) as excinfo:
+        validate_trace(doc)
+    assert any("成环" in e for e in excinfo.value.errors), excinfo.value.errors
+
+    op = {
+        "id": "root/@000", "parent_id": "root/@001", "level": "op", "op": "matmul",
+        "label": "x", "loc": "m.py:1", "shape_in": [], "shape_out": [2, 2],
+        "dtype": None, "inplace": False, "source": "runtime",
+        "degraded": False, "repeat": 1, "stale": False,
+    }
+    root = {
+        "id": "root", "parent_id": None, "level": "module", "op": "Root",
+        "label": "", "loc": "m.py:1", "shape_in": [], "shape_out": [],
+        "dtype": None, "inplace": False, "source": "static",
+        "degraded": False, "repeat": 1, "stale": False,
+    }
+    sibling = dict(op, id="root/@001", parent_id="root")
+    doc["nodes"] = [root, op, sibling]
+    with pytest.raises(TraceSchemaError) as excinfo:
+        validate_trace(doc)
+    assert any("必须指向模块节点" in e for e in excinfo.value.errors), excinfo.value.errors
+
+    # 算子没有 parent 同样拒绝
+    doc["nodes"] = [root, dict(op, parent_id=None)]
+    with pytest.raises(TraceSchemaError) as excinfo:
+        validate_trace(doc)
+    assert any("必须挂在某个模块下" in e for e in excinfo.value.errors), excinfo.value.errors
+
+
+def test_duplicate_edge_ids_are_rejected():
+    doc = minimal_trace()
+    root = {
+        "id": "root", "parent_id": None, "level": "module", "op": "Root",
+        "label": "", "loc": "m.py:1", "shape_in": [], "shape_out": [],
+        "dtype": None, "inplace": False, "source": "static",
+        "degraded": False, "repeat": 1, "stale": False,
+    }
+    a = {
+        "id": "root/@000", "parent_id": "root", "level": "op", "op": "matmul",
+        "label": "a", "loc": "m.py:1", "shape_in": [], "shape_out": [2, 2],
+        "dtype": None, "inplace": False, "source": "runtime",
+        "degraded": False, "repeat": 1, "stale": False,
+    }
+    b = dict(a, id="root/@001", op="add")
+    edge = {
+        "id": "e:root/@000->root/@001:args[0]", "src": "root/@000", "dst": "root/@001",
+        "label": "args[0]", "shape": [2, 2], "dtype": None, "inplace": False,
+        "shape_consistent": True,
+    }
+    doc["nodes"] = [root, a, b]
+    doc["edges"] = [edge, dict(edge)]
+    with pytest.raises(TraceSchemaError) as excinfo:
+        validate_trace(doc)
+    assert any("边 id 重复" in e for e in excinfo.value.errors), excinfo.value.errors
+
+
 def test_inconsistent_edge_is_visible_in_dump():
     """断链要能被打出来，不能只在 JSON 里躺着。"""
     from tests.test_cli import run_cli
 
     doc = minimal_trace()
+    root = {
+        "id": "root", "parent_id": None, "level": "module", "op": "Sequential",
+        "label": "", "loc": "m.py:1", "shape_in": [], "shape_out": [],
+        "dtype": None, "inplace": False, "source": "static",
+        "degraded": False, "repeat": 1, "stale": False,
+    }
     doc["nodes"] = [
+        root,
         {
-            "id": "root/@000", "level": "op", "op": "matmul", "label": "a", "loc": "m.py:1",
+            "id": "root/@000", "parent_id": "root", "level": "op", "op": "matmul",
+            "label": "a", "loc": "m.py:1",
             "shape_in": [], "shape_out": [2, 2], "dtype": None, "inplace": False,
             "source": "runtime", "degraded": False, "repeat": 1, "stale": False,
         },
         {
-            "id": "root/@001", "level": "op", "op": "add", "label": "b", "loc": "m.py:1",
+            "id": "root/@001", "parent_id": "root", "level": "op", "op": "add",
+            "label": "b", "loc": "m.py:1",
             "shape_in": [2, 2], "shape_out": [2, 2], "dtype": None, "inplace": False,
             "source": "runtime", "degraded": False, "repeat": 1, "stale": False,
         },

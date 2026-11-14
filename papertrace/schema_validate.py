@@ -49,11 +49,35 @@ def _structural_errors(doc: dict) -> list[str]:
             errors.append(f"nodes: {node.get('id')} 是模块节点，source 必须是 static，实际 {source}")
         if level == "op" and source not in (None, "runtime", "static", "model"):
             errors.append(f"nodes: {node.get('id')} 的 source 非法：{source}")
+    by_id = {node.get("id"): node for node in nodes}
+    for node in nodes:
+        # 父子链必须能走到根：成环会让 UI 的展开/面包屑无限递归
+        seen: set[str] = set()
+        cur = node
+        while cur is not None and cur.get("parent_id") is not None:
+            if cur.get("id") in seen:
+                errors.append(f"nodes: {node.get('id')} 的父子链成环")
+                break
+            seen.add(cur.get("id"))
+            cur = by_id.get(cur.get("parent_id"))
+        if node.get("level") == "op" and node.get("parent_id") is None:
+            errors.append(f"nodes: {node.get('id')} 是算子节点，必须挂在某个模块下")
+        parent = by_id.get(node.get("parent_id"))
+        if parent is not None and parent.get("level") != "module":
+            errors.append(
+                f"nodes: {node.get('id')} 的 parent_id 必须指向模块节点，实际指向 "
+                f"{parent.get('id')}（level={parent.get('level')}）"
+            )
+    edge_ids: set[str] = set()
     for edge in edges:
+        edge_id = edge.get("id")
+        if edge_id in edge_ids:
+            errors.append(f"edges: 边 id 重复：{edge_id}")
+        edge_ids.add(edge_id)
         for end in ("src", "dst"):
             endpoint = edge.get(end)
             if endpoint not in ids:
-                errors.append(f"edges: {edge.get('id')} 的 {end} 端点不存在：{endpoint}")
+                errors.append(f"edges: {edge_id} 的 {end} 端点不存在：{endpoint}")
     return errors
 
 
