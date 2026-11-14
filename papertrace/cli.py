@@ -1,13 +1,19 @@
 """PaperTrace 命令行入口。
 
-本切片只保证 --help 与子命令存在；build / dump 在 Task 3 接上，
-serve / eval 明确报「尚未实现」。
+本切片只接通两条路径：`build --skeleton`（写合法的空 trace.json）与 `dump`
+（打印规模计数）。其余命令明确报「尚未实现」并以 2 退出——**不允许**用一个
+看起来成功的空结果代替真正的实现。
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
+
+from papertrace.build_trace import repo_commit, skeleton_trace
+from papertrace.exceptions import TraceSchemaError
+from papertrace.schema_validate import dump_trace, load_trace, validate_trace
 
 UNIMPLEMENTED = 2
 
@@ -39,11 +45,55 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _cmd_build(args: argparse.Namespace) -> int:
+    if args.paper not in ("none", "", None):
+        print("papertrace build：论文 ingest 尚未实现。", file=sys.stderr)
+        return UNIMPLEMENTED
+    if not args.skeleton:
+        print(
+            "papertrace build：算子追踪尚未实现，请加 --skeleton 只写空骨架。",
+            file=sys.stderr,
+        )
+        return UNIMPLEMENTED
+
+    doc = skeleton_trace(repo_url=str(args.repo), commit=repo_commit(args.repo))
+    try:
+        validate_trace(doc)
+    except TraceSchemaError as exc:
+        print(f"papertrace build：生成的 trace 不合法：\n{exc}", file=sys.stderr)
+        return 1
+
+    out_path = Path(args.out) / "trace.json"
+    dump_trace(doc, out_path)
+    print(f"已写出 {out_path}（nodes=0 edges=0 anchors=0，骨架）")
+    return 0
+
+
+def _cmd_dump(args: argparse.Namespace) -> int:
+    path = Path(args.trace)
+    if not path.is_file():
+        print(f"papertrace dump：找不到 {path}", file=sys.stderr)
+        return 2
+    doc = load_trace(path)
+    validate_trace(doc)
+    print(
+        "nodes={} edges={} anchors={} mismatches={} unresolved={}".format(
+            len(doc["nodes"]),
+            len(doc["edges"]),
+            len(doc["anchors"]),
+            len(doc["mismatches"]),
+            len(doc["unresolved"]),
+        )
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command in ("serve", "eval"):
-        print(f"papertrace {args.command}：本切片未实现。", file=sys.stderr)
-        return UNIMPLEMENTED
+    if args.command == "build":
+        return _cmd_build(args)
+    if args.command == "dump":
+        return _cmd_dump(args)
     print(f"papertrace {args.command}：本切片未实现。", file=sys.stderr)
     return UNIMPLEMENTED
 
