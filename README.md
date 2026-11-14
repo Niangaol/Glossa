@@ -28,17 +28,42 @@ python -m papertrace --help
 真实追踪一个 nanoGPT（本仓库自带夹具）：
 
 ```bat
-python -m papertrace build --repo tests/fixtures/nanogpt --paper none --out output/m1a
+python -m papertrace build --repo tests/fixtures/nanogpt --entry model:build_model --out output/m1a
 python -m papertrace dump --trace output/m1a/trace.json
 python -m papertrace dump --trace output/m1a/trace.json --ops
+python -m papertrace dump --trace output/m1a/trace.json --edges
 ```
 
-`--ops` 一行一个算子，形如：
+`--ops` 一行一个算子，形如（形状是真实跑出来的，不是推的）：
 
 ```text
-root/op037  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) matmul
-root/op043  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) softmax
+root/@037  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) matmul
+root/@043  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) softmax
 ```
+
+`--edges` 一行一条边，断链行首打 `!`，末行给 `edges=N shape_broken=M`：
+
+```text
+  (2, 8)           root/@018 (placeholder) -> root/@020 (embedding) e:root/@018->root/@020:args[1]
+! (2, 6)           root/@031 (split) -> root/@034 (add) e:root/@031->root/@034:args[1][0]
+```
+
+### trace.json 的字段约定
+
+- **节点 id**：模块节点是路径（`root`、`root/transformer.h.0.attn`），算子/输入/权重节点一律
+  `root/@037`——`@` 不会出现在模块路径里，所以两种 id 不可能撞车。
+- **`kind`**：`op` | `input` | `param`。`input` 是图入口，`param` 是权重/缓冲（torch.export
+  把权重抬成图输入，名字带 `p_`/`b_` 前缀），`parent_id` 指向它真正所属的模块。
+- **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
+  `[[]]` = 0 维标量）。`shape_in` 只从 `op`/`input` 入边取，权重边不会冒充输入。
+- **边**：按参数位置一条条连（`args[1][0]` 这种 label），`torch.cat([a, b])` 不会丢边。
+  `shape_consistent` 只在能独立核实的地方判 True：多输出索引解析、inplace 保持形状；
+  形状缺失或对不上就是 False，`dump --edges` 会打 `!`。
+- **`meta.runtime`**：这次追踪怎么来的——设备、torch 版本、dtype、batch/seq_len、示例输入、
+  entry，以及 `counts`（operators/degraded/fused/orphan/shape_broken）。没有它就没法判断
+  这份 trace 能不能复现。
+- **结构校验**：`validate_trace` 除了 JSON Schema 还查重复 id、悬空边、`parent_id` 不存在、
+  module 节点必须 `source=static`。这些错误一律 `TraceSchemaError`，不静默放过。
 
 ### 入口契约：模块:工厂函数
 
@@ -63,7 +88,8 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | 码 | 含义 |
 | --- | --- |
 | 0 | 成功 |
-| 2 | 用法/入口错误（仓库不存在、entry 对不上、论文 ingest 未实现） |
+| 1 | 内部错误：生成的 trace 不合 schema（属 bug，不是用法问题） |
+| 2 | 用法/入口错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
 | 5 | 模型可加载但追不动 |

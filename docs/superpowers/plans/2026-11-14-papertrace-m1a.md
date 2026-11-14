@@ -112,8 +112,20 @@ dtype / inplace / source="runtime" / degraded / degraded_reason / repeat=1 / sta
 - [x] `python -m papertrace build --repo tests/fixtures/nanogpt --paper none --out output/m1a`
       → 93 个算子节点 + 模块层级，matmul `(2,4,8,8)`、softmax 同形、split 标 degraded。
 - [x] `python -m papertrace dump --trace output/m1a/trace.json --ops` 人工核对。
-- [ ] 独立评审（m1a-reviewer）结果归档 + 按 Critical/Important 修。
-- [x] 更新 `docs/ENVIRONMENT.md` 与 `README.md`（torch 装法、入口契约、退出码表）。
+- [x] 独立评审（m1a-reviewer）第一轮结果归档：C1/C2/C3 + I1–I9 + M1–M8，结论「需要修」。
+- [x] 必修项全部落地（提交 `d722f13`），第二轮复审进行中。
+- [x] 更新 `docs/ENVIRONMENT.md` 与 `README.md`（torch 装法、入口契约、退出码表、trace 字段约定）。
+
+### 这一轮评审指出了什么（值得记住的）
+
+第一轮 127 passed 里有一批测试是**恒真断言**：`shape_consistent` 的判定写成
+`bool(edge_shape) and not (inplace and ...)`，只要边上有形状就是 True——这个仓库
+101 条边 101 条 True，测试却「全绿」。同理 `cat([a,b])` 整条边丢光、embedding 的
+`shape_in` 记成权重 `(64,32)`、`x.sum()` 的 0 维输出被当成「未知」、算子 id 与模块 id
+可能撞车，这些都没被测试抓到。
+
+教训：**测试要能失败**。现在每条关键行为都配了反例——`split([2,6])` 后 `b+1` 必须断链、
+`cat` 必须两条边、`sum()` 必须 `outputs==[[]]`、重复 id/悬空边必须抛错。
 
 ## Review Focus
 
@@ -135,3 +147,19 @@ dtype / inplace / source="runtime" / degraded / degraded_reason / repeat=1 / sta
 | `--entry` 默认 `model:GPT` | `model:build_model`（工厂） | `GPT(config)` 要参数，猜配置等于悄悄改变被测模型 |
 | 边形状取生产者 `shape_out` | 多输出按 `getitem` 索引逐项解析 | 否则 `split([2,3])` 把 `(2,3)` 记成 `(2,2)`，形状链自断 |
 | 只测「四个算子都在」 | 另加 `FUSED_OPS` 检测与警告 | 真实仓库默认开 SDPA，不报警就是静默漏检 |
+| 单个 `fx_trace.py` | 拆成 `fx_graph/fx_nodes/fx_edges/fx_trace` | 357 行且混了四件事：形状原语、节点、边、导出 |
+| 算子 id `root/op000` | `root/@000` | 模块可以叫 `op000`，普通路径会撞 id |
+| 边形状取生产者 `shape_out` | 按消费者参数位置解析 | 否则 `cat` 丢边、`split` 第二项记错、权重冒充输入 |
+| `shape_out: []` 表示 0 维 | `None`=未知、`[]`=0 维，另加 `outputs` | 原来「标量」和「不知道」没法区分 |
+| trace 里不记运行条件 | `meta.runtime` 记设备/版本/dtype/输入/counts | 不记就没法判断这份 trace 能不能复现 |
+| 只做 JSON Schema 校验 | 另加结构校验（重复 id / 悬空边 / parent / source） | schema 管不了图的自洽性 |
+
+### 提交锚点
+
+| commit | 内容 |
+| --- | --- |
+| `bc472d6` | build 接真追踪 + `dump --ops` + 工厂入口 |
+| `9fbb56b` | 融合算子标 degraded + 多输出按 `getitem` 解析 |
+| `3210dcd` | 文档与账本 |
+| `82a159c` | dump 打印 degraded 明细与 shape_broken |
+| `d722f13` | 评审必修项：诚实形状、逐边核实、结构校验、三文件拆分 |
