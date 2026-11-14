@@ -179,7 +179,8 @@ def test_strip_name_reproduces_torchs_actual_placeholder_names(cls):
         head, sep, tail = base.rpartition("_")
         assert base == want or (sep and tail.isdigit() and head == want), (item, want)
         checked += 1
-    assert checked >= 2, checked
+    non_input = sum(1 for i in input_plan(exported) if i["kind"] != "input")
+    assert checked == non_input and checked > 0, (checked, non_input)
 
 
 def _swap_weights(exported):

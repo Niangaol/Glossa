@@ -439,15 +439,11 @@ def test_name_gate_refuses_a_mismatch():
     ("p_a_b_weight", "param", "a-b.weight"),
     ("b_tmp", "param", "tmp"),
     ("c_const", "const", "const"),
-    ("obj_foo", "const", "foo"),
-    ("obj_sub_foo", "const", "sub.foo"),
     ("p_", "param", "self_"),
     ("x", "input", None),
-    ("p_ghost", "param", None),
 ], ids=["dotted", "ambiguous-dot", "ambiguous-underscore", "collision-suffix",
         "numeric-tail", "leading-self", "collision-after-self", "upper", "hyphen",
-        "non-persistent-buffer", "const", "custom-obj-rewritten", "custom-obj-raw",
-        "empty-base", "user-input", "no-target"])
+        "non-persistent-buffer", "const", "empty-base", "user-input"])
 def test_name_gate_accepts_consistent_pairs(name, kind, target):
     check_name_target([_N(name)], _plan((name, kind, target)))
 
@@ -458,8 +454,14 @@ def test_name_gate_accepts_consistent_pairs(name, kind, target):
     ("p_ws_0", "ws.1"),
     ("p_attn_weight", "attn.bias"),
     ("obj_foo", "bar"),
-], ids=["simple", "self-prefix-modules", "numeric-tail", "same-module", "custom-obj"])
+    ("obj_foo", "foo"),
+    ("weird", "a"),
+    ("p_ghost", None),
+], ids=["simple", "self-prefix-modules", "numeric-tail", "same-module",
+        "custom-obj-mismatch", "custom-obj-unknown-prefix", "unknown-prefix",
+        "no-target"])
 def test_name_gate_refuses_inconsistent_pairs(name, target):
+    """第十六轮 I-1/I-2：认不出前缀（含 obj_）与没有 target 都拒绝，不静默跳过。"""
     with pytest.raises(BuildError) as info:
         check_name_target([_N(name)], _plan((name, "param", target)))
     assert name in str(info.value)

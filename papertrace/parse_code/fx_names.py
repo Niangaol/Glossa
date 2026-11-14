@@ -20,11 +20,24 @@ torch 生成名字时先剥开头的 `L__self___`/`self_`、把非字母数字�
 正向按 torch 的规则把 spec 的 target 映射成期望的 base，再与图上观察到的 base 比，
 **按构造不会误杀**（参数真名叫 `self_` 时 base 是空串，反推会误杀，正向不会）。
 
+第十六轮把两处 fail-open 改成 fail-closed：
+- **认不出前缀就拒绝**（I-1）。原来 `prefix is None` 直接 continue，等于 torch 一旦
+  改命名规则、或直接 API 传个怪名字，第八关就**静默失效**。当前 torch 2.15 的前缀表
+  （utils.py:58-65）是 USER_INPUT=''、PARAMETER='p_'、BUFFER='b_'、
+  CONSTANT_TENSOR='c_'、CUSTOM_OBJ='obj_'、TOKEN='token'，所以 CLI 主路径不触发；
+  但「认不出」应当是显式失败，不是悄悄放过。
+- **obj_ 不再参与**（I-2）。CUSTOM_OBJ 已在 fx_kinds.REFUSED_KINDS 里被拒（没有真实
+  导出背书），所以这里只留 p_/b_/c_；万一直接 API 传进 obj_ 名字，会撞上「认不出前缀」
+  而被拒，不会走一条没验证过的分支。
+
 诚实的边界：压平撞名（`a.b` 与 `a_b`、`self_attn.weight` 与 `attn.weight`）时两个
-target 正向映射到同一个 base，名字区分不了它们，核对自然通过——那是**唯一**剩下的
-洞。tests/test_fourteenth_review.py 的 test_ambiguous_swap_really_does_change_parent_id
+target 正向映射到同一个 base，名字区分不了它们，核对自然通过——那是剩下的洞。
+tests/test_fourteenth_review.py 的 test_ambiguous_swap_really_does_change_parent_id
 构建整份 trace 证明 parent_id 确实会写反，不假装封死。名字核对与模块无关，所以
 **同模块**的同形状互换也被拒（第十三轮把它写成「不可观测」是错的，已按事实改写）。
+另一处已知边界：`_matches` 允许任意 `_数字` 后缀，所以**单独调这一关**时
+`p_a_1` 配 target='a' 会被接受；端到端由 check_contract 的「恰好认领一次/未认领」
+拒绝（tests/test_sixteenth_review.py 钉死了这两层）。这一关不是完整的权威。
 
 本模块不 import torch。
 """
@@ -34,9 +47,9 @@ import re
 from papertrace.exceptions import BuildError
 
 #: torch.export 给权重/缓冲/常量 placeholder 的前缀（utils.py:58-65；
-#: 数据输入用 forward 形参名，无前缀）。TOKEN 的 `token` 前缀用不到：
-#: REFUSED_KINDS 在更早一步就拒绝了它。
-PREFIXES = ("p_", "b_", "c_", "obj_")
+#: 数据输入用 forward 形参名，无前缀）。TOKEN 的 `token` 与 CUSTOM_OBJ 的 `obj_`
+#: 用不到：REFUSED_KINDS 在更早一步就拒绝了它们。
+PREFIXES = ("p_", "b_", "c_")
 
 _NON_ALNUM = re.compile(r"[^a-zA-Z0-9]")
 _LSELF = "L__self___"
@@ -73,8 +86,9 @@ def check_name_target(placeholders, plan: list[dict]) -> None:
     """每个权重/缓冲/常量 placeholder：名字必须与 spec 的 target 正向对应。
 
     数据输入不参与（名字是 forward 形参名，target 本来就是 None）。
-    CUSTOM_OBJ 的 target 在命名 pass 之后被改写成 `name[4:]`（utils.py:1211-1215），
-    所以它既可能等于 base 本身、也可能仍是原始属性路径，两种都接受。
+    认不出前缀、或 spec 没给 target，都**拒绝**而不是跳过（第十六轮 I-1）。
+    「placeholder 在 plan 里根本没有条目」不在这里判：那是覆盖率问题，
+    由 fx_contract.check_contract 的 uncovered 判据负责。
     """
     by_name = {item["name"]: item for item in plan}
     problems: list[str] = []
@@ -82,25 +96,30 @@ def check_name_target(placeholders, plan: list[dict]) -> None:
         item = by_name.get(node.name)
         if item is None or item.get("kind") == "input":
             continue
+        kind = item.get("kind")
         target = item.get("target")
-        if target is None:
-            continue
         prefix = next((p for p in PREFIXES if node.name.startswith(p)), None)
         if prefix is None:
+            problems.append(
+                f"{node.name} 标成 {kind} 却认不出前缀（已知 "
+                + "/".join(PREFIXES) + "），base 无从确定"
+            )
+            continue
+        if target is None:
+            problems.append(f"{node.name} 标成 {kind} 但 spec 没给 target，无法核对名字")
             continue
         base = node.name[len(prefix):]
-        expected = [strip_name(target)]
-        if prefix == "obj_":
-            expected.insert(0, str(target))
-        if not any(_matches(base, want) for want in expected):
+        expected = strip_name(target)
+        if not _matches(base, expected):
             problems.append(
-                f"{node.name} 的名字按 torch 的命名规则对应 {expected[0]!r}，"
-                f"但 spec 说它是 {target!r}"
+                f"{node.name} 去掉前缀 {prefix!r} 后的 base 是 {base!r}，"
+                f"而 target={target!r} 按 torch 的命名规则应当是 {expected!r}"
             )
     if problems:
         raise BuildError(
             "placeholder 的名字与 input_specs 的 target 对不上（"
             + "；".join(problems)
             + "）；名字在图上、target 在 spec 里，是两个独立字段，对不上说明 target 被改过"
-            "（同形状跨模块互换会把权重挂到错误的父模块），按约定拒绝出图"
+            "（同形状跨模块互换会把权重挂到错误的父模块），或出现了本切片不认识的前缀；"
+            "按约定拒绝出图，不静默跳过"
         )

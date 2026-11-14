@@ -9,14 +9,12 @@
 from papertrace.exceptions import BuildError
 
 # InputKind 的名字 → 我们 trace.json 里的 kind。
-# CUSTOM_OBJ 是 exported.constants 里的 ScriptObject 常量（torch/_export/converter.py
-# 只把 ScriptObject 建成这一类），**不是数据输入**：映射成 input 会让合法模型多出一个
-# 「数据输入」，随后 example_inputs 数量对不上而 exit 5（第十一轮 I-1）。
+# 只有**验证过**的种类才进这张表：PARAMETER/BUFFER/CONSTANT_TENSOR/USER_INPUT 都有
+# 真实导出用例（tests/test_model_zoo.py 的 18 个模型 + 各轮回归）。
 KIND_MAP = {
     "PARAMETER": "param",
     "BUFFER": "param",
     "CONSTANT_TENSOR": "const",
-    "CUSTOM_OBJ": "const",
     "USER_INPUT": "input",
 }
 
@@ -26,6 +24,15 @@ REFUSED_KINDS = {
         "TOKEN 是 TokenArgument（副作用/控制流的令牌），不是张量数据输入，"
         "也不该按张量塞进 example_inputs"
     ),
+    # 第十六轮 I-2：CUSTOM_OBJ 是 exported.constants 里的 ScriptObject
+    # （torch/_export/converter.py:627-642 只把 ScriptObject 建成这一类）。第十一轮
+    # 曾把它映射成 const，但**从来没有真实导出背书**：torch 2.15 会把
+    # self.obj.add(x) 常量折叠成 x+3，造不出 CUSTOM_OBJ 的 spec。没有验证过的分支
+    # 不该写成「已支持」，所以 M1a 先拒绝，M1b 补真实 ScriptObject 导出用例再放开。
+    "CUSTOM_OBJ": (
+        "CUSTOM_OBJ 是 exported.constants 里的 ScriptObject（自定义对象常量），"
+        "不是张量；M1a 没有真实导出用例验证它的取值与命名，M1b 再支持"
+    ),
 }
 
 
@@ -34,9 +41,9 @@ def spec_kind(spec) -> str:
 
     默认成 input 会把一个权重/缓冲悄悄标成数据输入：名字覆盖齐全、schema 也过，
     整份 trace 的 kind 却是反的（第九轮 I-2）。torch 2.15 的 InputKind 有
-    PARAMETER/BUFFER/CONSTANT_TENSOR/USER_INPUT/CUSTOM_OBJ（映射见 KIND_MAP）
-    与 TOKEN（明确拒绝，见 REFUSED_KINDS）；将来 torch 加了新种类，宁可 exit 2
-    让人来补映射，也不要静默猜。
+    PARAMETER/BUFFER/CONSTANT_TENSOR/USER_INPUT（映射见 KIND_MAP）与
+    TOKEN/CUSTOM_OBJ（明确拒绝，见 REFUSED_KINDS）；将来 torch 加了新种类，宁可
+    exit 2 让人来补映射，也不要静默猜。
     """
     kind = getattr(spec, "kind", None)
     text = str(getattr(kind, "name", None) or kind).upper()

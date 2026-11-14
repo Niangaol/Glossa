@@ -180,16 +180,19 @@ def test_param_target_missing_from_the_module_is_still_refused():
 # ---------------------------------------------------------------- I-1 kind 映射
 
 def test_kind_map_values_are_pinned():
-    """只查键不查值的话，CUSTOM_OBJ/TOKEN 映射错了测试照样全绿（评审 M-2）。"""
+    """只查键不查值的话，CUSTOM_OBJ/TOKEN 映射错了测试照样全绿（评审 M-2）。
+
+    第十六轮 I-2：CUSTOM_OBJ 从 KIND_MAP 移到 REFUSED_KINDS——没有真实导出背书的
+    分支不该写成「已支持」。
+    """
     assert KIND_MAP == {
         "PARAMETER": "param",
         "BUFFER": "param",
         "CONSTANT_TENSOR": "const",
-        "CUSTOM_OBJ": "const",
         "USER_INPUT": "input",
     }, KIND_MAP
-    assert "TOKEN" not in KIND_MAP
-    assert set(REFUSED_KINDS) == {"TOKEN"}
+    assert "TOKEN" not in KIND_MAP and "CUSTOM_OBJ" not in KIND_MAP
+    assert set(REFUSED_KINDS) == {"TOKEN", "CUSTOM_OBJ"}
     assert set(KIND_MAP) | set(REFUSED_KINDS) == {k.name for k in InputKind}
 
 
@@ -201,7 +204,7 @@ def _fake_exported(kind_name, target="t", name="n"):
 
 @pytest.mark.parametrize("kind_name,expected", [
     ("PARAMETER", "param"), ("BUFFER", "param"),
-    ("CONSTANT_TENSOR", "const"), ("CUSTOM_OBJ", "const"), ("USER_INPUT", "input"),
+    ("CONSTANT_TENSOR", "const"), ("USER_INPUT", "input"),
 ])
 def test_input_plan_maps_each_kind(kind_name, expected):
     assert input_plan(_fake_exported(kind_name))[0]["kind"] == expected
@@ -226,17 +229,27 @@ class _ConstAttr(nn.Module):
         return x + self.w
 
 
-def test_custom_obj_is_a_constant_taken_from_exported_constants():
-    """CUSTOM_OBJ 的值在 exported.constants 里，不该向 example_inputs 要一项。
+def test_custom_obj_is_refused_because_it_has_no_real_export_backing():
+    """第十六轮 I-2：CUSTOM_OBJ 在 M1a 明确拒绝，不再映射成 const。
 
-    第十二轮之后 placeholder_args 只接受真 ExportedProgram，所以拿真导出产物就地
-    把 CONSTANT_TENSOR 改成 CUSTOM_OBJ（两者都映射成 const，值同样取自 constants），
-    不再用 SimpleNamespace 拼一个只有三个属性的替身。
+    第十一轮把它映射成 const 时**没有真实导出用例**：torch 2.15 会把
+    self.obj.add(x) 常量折叠成 x+3，造不出 CUSTOM_OBJ 的 spec。拿真导出产物就地把
+    CONSTANT_TENSOR 改成 CUSTOM_OBJ，现在应当 exit 2 而不是「支持」。
     """
     module, exported = _exported(_ConstAttr(), (torch.zeros(2, 4),))
     for spec in exported.graph_signature.input_specs:
         if spec.kind == InputKind.CONSTANT_TENSOR:
             spec.kind = InputKind.CUSTOM_OBJ
+    with pytest.raises(BuildError) as info:
+        input_plan(exported)
+    text = str(info.value)
+    assert "CUSTOM_OBJ" in text and "ScriptObject" in text, text
+    assert "M1b" in text and "拒绝出图" in text, text
+
+
+def test_the_same_export_without_the_mutation_still_resolves_the_constant():
+    """反向对照：上一条不是「什么都拒绝」——同一个真产物不改 kind 就取得到值。"""
+    module, exported = _exported(_ConstAttr(), (torch.zeros(2, 4),))
     plan = input_plan(exported)
     table = classify(plan)
     assert table["consts"] == {"c_w"} and table["inputs"] == ["x"], table
