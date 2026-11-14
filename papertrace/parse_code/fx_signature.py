@@ -15,6 +15,7 @@ from papertrace.parse_code.fx_contract import (
     check_plan_source,
     require_real_export,
 )
+from papertrace.parse_code.fx_shapes import check_value_shape
 
 # InputKind 的名字 → 我们 trace.json 里的 kind。
 # CUSTOM_OBJ 是 exported.constants 里的 ScriptObject 常量（torch/_export/converter.py
@@ -190,4 +191,8 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
         args.append(queue.pop(0))
     if queue:
         raise TraceUnsupported(f"example_inputs 多出 {len(queue)} 项，torch.export 没用到")
+    # target 互换：四张表与名字/顺序/认领全不变，只有图自己记的形状看得见（第十三轮 I-1）。
+    holders = [n for n in exported.graph.nodes if n.op == "placeholder"]
+    for node, value in zip(holders, args):
+        check_value_shape(node, value, spec_by_name[node.name].get("target"))
     return args

@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from papertrace.exceptions import BuildError
+
 
 def val_shape(value: Any) -> list[int] | None:
     """张量形状。0 维张量是 []（标量），不是「未知」；未知返回 None。"""
@@ -69,3 +71,28 @@ def navigate(tree: Any, path: list[Any]) -> Any:
         else:
             return None
     return cur
+
+def check_value_shape(node: Any, value: Any, target: Any) -> None:
+    """spec 的 target 取到的张量，形状必须与导出图自己记的一致。
+
+    这是**另一个**地面真相：`node.meta["val"]` 来自导出器在图上做的 fake 传播，与
+    `input_specs` 的 target 映射是两个独立字段。互换两个**不同形状**参数的 target 时，
+    名字/顺序/认领/四张表可以完全不变（第十三轮 I-1 实测放行，权重形状被记反、
+    shape_broken 仍是 0），只有这道核对看得见。
+
+    诚实的边界：同形状互换不可观测，本来也不会产生可见错误，所以不假装抓得住。
+    非张量（int/bool/None/ScriptObject）与动态形状（SymInt）不比——不猜。
+    """
+    want = getattr(getattr(node, "meta", {}).get("val"), "shape", None)
+    got = getattr(value, "shape", None)
+    if want is None or got is None:
+        return
+    want, got = tuple(want), tuple(got)
+    if any(not isinstance(d, int) for d in want + got):
+        return
+    if want != got:
+        raise BuildError(
+            f"input_specs 把 {node.name} 指到 target={target}，取到的张量是 {got}，"
+            f"但导出图里这个节点是 {want}；spec 的 target 被改过"
+            "（权重形状会被记反），按约定拒绝出图"
+        )
