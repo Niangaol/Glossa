@@ -145,6 +145,10 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `example_inputs()` 必须按 `forward` 形参顺序给。数量对不上时 `build` 一律 `exit 5`：
   多数情况 `torch.export` 当场报「missing a required argument」，漏到我们这层的则由
   `placeholder_args` 明说「按 forward 形参顺序给，多/少都不猜」——两种情况都不写 trace。
+  **pytree 输入（dict/list）本切片不自动摊平**：`forward(d)` 的 `d` 是 dict 时，导出器把它摊成
+  `d_a`、`d_b` 两个数据输入，而 `example_inputs()` 给的是一个容器 → 数量对不上 → exit 5，
+  消息点名「图里有 2 个数据输入（d_a、d_b）」。不猜容器的摊平顺序（自定义 pytree 的 flatten
+  顺序不由我们决定），M1b 再支持；直接调 `placeholder_args` 时自己给摊平后的元组即可。
 - **边**：按参数位置一条条连（`args[1][0]` 这种 label），`torch.cat([a, b])` 不会丢边。
   每条边同时记 `shape`（消费者这一项的真实输入）、`producer_shape`（生产者真实输出）和
   `checked`。`shape_consistent` 只在 `checked` 时才有意义；两边对不上就是 False，
@@ -184,14 +188,15 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 - 示例输入优先用模型自带的 `example_inputs()`；没有就按 `config.vocab_size` + `config.block_size` 造 token id；都没有就报 `BuildError`，不会拿随机形状糊弄。
 - 缺 torch → 退出码 **4**；追不动 → 退出码 **5**；仓库/入口对不上、`input_specs` 与图**或模块**对不上 → 退出码 **2**。三种情况都**不写** `trace.json`。
   分界线一句话：**spec 与图/模块对不上是契约错误（2）**，**torch 追不动或 `example_inputs` 数量不对是能力边界（5）**。
-  「追不动」有三种：① `torch.export` 就失败（数据依赖分支）；② 导出图能画出来，但拿真实张量
+  「追不动」有四种：① `torch.export` 就失败（数据依赖分支）；② 导出图能画出来，但拿真实张量
   **再跑一遍会炸**（自定义算子只有 meta 实现、真 CPU 实现抛错）；③ 图里有**非张量节点**
   （`get_attr`/`call_module`）——`forward` 里写 `torch.no_grad()` 时，导出器会把那段包成子模块
   `submod_N`。这种图契约校验是过的，但那个 `get_attr` 不是张量：空根模块构造 `GraphModule`
   当场 `AttributeError`，就算把子模块挂回去跑通，它也会被标成 `param`，让「权重 1」变成「权重 2」
   （实测）。所以一律 exit 5 并点名是哪几个节点，把 `no_grad` 移到 `forward` 外可绕过。
   ② 以前会照常产出 `source=runtime` 的 trace，把推断形状冒充成真实形状；现在一律 exit 5——
-  没有第二遍执行，就不许说自己是 runtime。
+  没有第二遍执行，就不许说自己是 runtime。④ **pytree 输入没摊平**（dict/list 被导出器摊成多个
+  数据输入，`example_inputs()` 给的却是容器本身）——同样 exit 5、不写 trace，不猜摊平顺序。
 - 退出码 5 时 stderr 前面可能有 torch 自己打的一二十行诊断图/警告（那是它的内部输出，
   我们拦不住）；**papertrace 的结论永远在最后一行**，脚本里请只看退出码。
 
@@ -204,7 +209,7 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
-| 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行、图里有非张量的 `get_attr`/`call_module`（如 `forward` 内的 `no_grad`），或 `example_inputs` 数量与数据输入个数对不上） |
+| 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行、图里有非张量的 `get_attr`/`call_module`（如 `forward` 内的 `no_grad`），或 `example_inputs` 数量与数据输入个数对不上（含 pytree 输入未摊平）） |
 
 ## 文档
 

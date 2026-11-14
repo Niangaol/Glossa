@@ -331,3 +331,35 @@ def test_dict_output_model_traces_with_zero_orphans():
     counts = traced["runtime"]["counts"]
     assert counts["orphan"] == 0, counts
     assert traced["edges"] == [], "直接输出的常量确实没有边"
+
+# ------------------------------- 能力边界：pytree 输入不自动摊平（CLI 级）
+
+DICT_IN = """import torch
+import torch.nn as nn
+
+
+class M(nn.Module):
+    def forward(self, d):
+        return d["a"] + d["b"]
+
+    def example_inputs(self):
+        return {"a": torch.zeros(2, 4), "b": torch.zeros(2, 4)}
+
+
+def build_model():
+    return M().eval()
+"""
+
+
+def test_cli_exits_5_when_pytree_inputs_are_not_flattened(capsys):
+    """导出器把 dict 摊成 d_a/d_b 两个数据输入，example_inputs() 给的是一个容器。
+
+    本切片不猜容器的摊平顺序（自定义 pytree 的 flatten 顺序不由我们决定），
+    所以 fail-closed：exit 5、点名图里有几个数据输入、不写 trace。
+    """
+    repo = _write_repo("twelfth-dictin-cli", DICT_IN)
+    out_dir = scratch_dir("twelfth-dictin-cli-out")
+    assert _build(repo, out_dir) == 5
+    err = capsys.readouterr().err
+    assert "2 个数据输入" in err and "d_a" in err and "d_b" in err, err
+    assert not (out_dir / "trace.json").exists()

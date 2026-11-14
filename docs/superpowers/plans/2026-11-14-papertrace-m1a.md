@@ -5,7 +5,7 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**328 passed**，第三至第十二轮评审的必修项都已修完。
+**状态（2026-11-14）**：Task 7–11 全部落地，**329 passed**，第三至第十二轮评审的必修项都已修完。
 第十一轮把 kind 的最终权威交给 `torch.export` 自己（plan 逐项核对），并堵住了「两边互换」这个
 前四轮关卡全过却 kind 相反的洞；另外新增一条能力边界（`forward` 内 `no_grad` → exit 5）。
 第十二轮发现「与导出器核对」的 expected 也是从调用方传进来的对象重生的（同源），补了三道防线：
@@ -492,18 +492,26 @@ I-3（TOKEN→2 / no_grad→5 的文档契约）在第十一轮文档提交 `e10
 不是「有但数量为 0」，这条正是集合相等抓出来的）；补 `output_node_ids` 的**字典输出**用例（tuple 之外）；
 补 mutation 结果的 **CLI 级** orphan=0 用例；`no_grad` 的能力边界与「本切片不做死代码检测」都已在 README 写死。
 
-**测试**：新增 `tests/test_twelfth_review.py`（32 条，333 行）；`tests/test_model_zoo.py` 断言加牙（304 行）；
+**测试**：新增 `tests/test_twelfth_review.py`（33 条，365 行）；`tests/test_model_zoo.py` 断言加牙（304 行）；
 `test_tenth_review` 的 `_const_plan_without_values` 不再用 `SimpleNamespace`，改清真产物的 `_constants`
 （`constants` 是只读 property，torch 2.15 没有公开 setter）；`test_eleventh_review` 的互换用例改名
 `test_swapped_kinds_fool_names_and_counts_but_break_the_ordering`（顺序不变量先命中，逐项核对仍是第二道），
 `CUSTOM_OBJ` 用例改用真导出 + 就地 `CONSTANT_TENSOR→CUSTOM_OBJ`（534 行）。
 
+**自己又挖出一条能力边界（评审没测）**：`fx_trace.py:136` 把 `example_inputs` **原样**传给
+`placeholder_args`，而 `torch.export` 会把 pytree 摊平——`forward(d)` 的 `d` 是 dict 时图里有
+`d_a`、`d_b` 两个数据输入，`example_inputs()` 给的却是一个容器。`output/probes/probe15.py` 实测
+CLI **exit 5**、不写 trace、消息「example_inputs 有 1 项，图里有 2 个数据输入（d_a、d_b）；请按
+forward 形参顺序给，多/少都不猜」。**裁决：不自动摊平**——自定义 pytree 的 flatten 顺序不由我们
+决定，猜错就是把两个输入静默喂反（与第七轮顺序断言同一个理由）。M1a 保持 fail-closed，README
+「追不动」从三种扩到四种并补 CLI 级用例；直接调 `placeholder_args` 时自己给摊平后的元组即可
+（`test_pytree_inputs_are_not_refused_by_the_new_invariants` 就是这么测的）。
 变异探针（四组，均已还原）：类型守卫改 `if False and …` → **2 条红**（两个入口的替身用例）；
 顺序不变量 `if late:` → `if False and late:` → **4 条红**（真 export 互换 + eleventh 三条）；
 重复认领 `if twice:` → `if False and twice:` → **2 条红**（直接 API + CLI）；
 `output_node_ids` 只取第一项输出 → **3 条红**（dict 两条 + tuple 一条）。
 
-全量 **328 passed in 51.28s**。端到端 `output/twelfth-check`：build exit 0，nodes=128（算子 75 / 权重 18 /
+全量 **329 passed in 50.66s**。端到端 `output/twelfth-check`：build exit 0，nodes=128（算子 75 / 权重 18 /
 输入 1 / 模块 34）、edges=101、degraded=2、fused=0、orphan=0、shape_broken=0、shape_unchecked=0、
 `real_execution={ok:True}`——与第八至十一轮逐项一致，三道新防线没误伤 fixture。
 行数（python `splitlines` 口径）：`OVER200=[]`，最大 `fx_signature` 193 / `fx_nodes` 187 / `fx_edges` 184 /
