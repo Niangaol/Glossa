@@ -22,6 +22,7 @@ import pytest
 
 pytest.importorskip("torch", reason="本切片要真实例化模型，CPU 版 torch 即可")
 
+from papertrace.align import struct_signal as struct_signal_module  # noqa: E402
 from papertrace.align.struct_signal import StructSignal, struct_signal  # noqa: E402
 from papertrace.build_trace import build_trace, load_entry  # noqa: E402
 from papertrace.ingest.paper import ingest_paper  # noqa: E402
@@ -105,9 +106,19 @@ def test_score_starts_at_half():
     assert sig.pairs == []
 
 
-def test_score_is_clamped(fixture):
-    """分数永远落在 [0,1]：confidence() 会拒收越界值。"""
+def test_score_is_clamped(fixture, monkeypatch):
+    """分数永远落在 [0,1]：confidence() 会拒收越界值。
+
+    光断言「五组可达输入的分数在 [0,1] 内」是杀不死的：本切片可达区间只有
+    [0.5, 0.8]（R23 让三条惩罚/加分常量零引用），把 clamp 删掉、写反甚至改成
+    return 0.0 都照样绿。所以这里用 monkeypatch 把模块级权重顶出 [0,1]，
+    让 clamp 真正承重：上界把 BASE_SCORE 顶到 1.5、把 BONUS_ISOMORPHIC 顶到
+    2.0；下界把 BASE_SCORE 压到 -0.5——后者正是 M4 打开两条惩罚后的越界形态
+    （0.5-0.4-0.3 = -0.2）。monkeypatch 的 setattr 测试结束自动还原。
+    """
     mod, doc, terms = fixture
+
+    # 可达区间断言（保留）：五组输入都不得越界。
     cases = [
         ([], [], None),
         (doc["nodes"], terms, mod.config),
@@ -117,6 +128,23 @@ def test_score_is_clamped(fixture):
     ]
     for nodes, case_terms, config in cases:
         assert 0.0 <= struct_signal(nodes, case_terms, config).score <= 1.0
+
+    base = struct_signal_module.BASE_SCORE
+    bonus = struct_signal_module.BONUS_ISOMORPHIC
+
+    # 上界①：初值 1.5（+0.1 超参 +0.2 同构 = 1.8）→ 被钳到 1.0。
+    monkeypatch.setattr(struct_signal_module, "BASE_SCORE", 1.5)
+    assert struct_signal(doc["nodes"], terms, mod.config).score == 1.0
+
+    # 上界②：只把同构加分顶到 2.0（0.5+0.1+2.0 = 2.6）→ 仍被钳到 1.0。
+    monkeypatch.setattr(struct_signal_module, "BASE_SCORE", base)
+    monkeypatch.setattr(struct_signal_module, "BONUS_ISOMORPHIC", 2.0)
+    assert struct_signal(doc["nodes"], terms, mod.config).score == 1.0
+
+    # 下界：初值压到 -0.5（-0.5+0.1+0.2 = -0.2）→ 被钳到 0.0。
+    monkeypatch.setattr(struct_signal_module, "BONUS_ISOMORPHIC", bonus)
+    monkeypatch.setattr(struct_signal_module, "BASE_SCORE", -0.5)
+    assert struct_signal(doc["nodes"], terms, mod.config).score == 0.0
 
 
 def test_no_retrieval_means_rule_not_fired(fixture):
