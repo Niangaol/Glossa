@@ -324,4 +324,6 @@ spec 缺项/多出图里没有的名字/example_inputs 少一项都 `TraceUnsupp
 | `2de86a2` | 第四轮必修：容器里的权重不当输入、畸形 trace 根 exit 2、`-`/`(?)` 三态、`eval()` 异常翻译 |
 | `6a87f7d` | 第四轮文档与账本（README/计划/执行账本同步） |
 | `fce6b2d` | 第五轮必修：mangled 名认权重、权重派生量不算输入、id/端点类型守卫 |
-| （本轮） | 第六轮必修：input_specs 定 kind/层级、常量不算输入、参数-only 子模块的 parent、兜底撞名守卫；三个模块拆分 |
+| `5fd9b7c` | 第六轮必修：input_specs 定 kind/层级、常量不算输入、参数-only 子模块的 parent；三个模块拆分 |
+| `b48f361` | 常量独立成 `kind=const`（节点/schema/摘要/`--ops` 端到端） |
+| `f9e3546` | 第七轮必修：没有 `input_specs` 就 fail-closed、`*_like` 不算数据输入、spec 完备性与数量校验 |
