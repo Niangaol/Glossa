@@ -5,7 +5,9 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**329 passed**，第三至第十二轮评审的必修项都已修完。
+**状态（2026-11-14）**：Task 7–11 全部落地，**345 passed**，第三至第十三轮评审的必修项都已修完。
+第十三轮评审结论：**可以进入 M1b，必修项无**；唯一的条件项（target 互换）我选择**修**而不是只写文档——
+补了第七道关：`placeholder_args` 取到真实张量后与 `node.meta["val"]` 的形状核对（两个独立字段，真核对）。
 第十一轮把 kind 的最终权威交给 `torch.export` 自己（plan 逐项核对），并堵住了「两边互换」这个
 前四轮关卡全过却 kind 相反的洞；另外新增一条能力边界（`forward` 内 `no_grad` → exit 5）。
 第十二轮发现「与导出器核对」的 expected 也是从调用方传进来的对象重生的（同源），补了三道防线：
@@ -15,8 +17,9 @@
 第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验；
 第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5；第九轮 I-1 orphan 双向语义 + I-2 未知/错位 kind fail-closed + M-1…M-3；
 第十轮（自查）反向认领 + 常量不许顶替参数；第十一轮 C1 导出器逐项核对 + I-1 `CUSTOM_OBJ`/`TOKEN` + I-2 orphan 输出边界 + I-3 弱断言 + M-1…M-5；
-第十二轮 I-1 同源 expected → 类型守卫 + 顺序不变量 + 恰好认领一次、I-3 补 CLI 级退出码用例、Minor zoo 集合相等/dict 输出/mutation CLI），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a`。
+第十二轮 I-1 同源 expected → 类型守卫 + 顺序不变量 + 恰好认领一次、I-3 补 CLI 级退出码用例、Minor zoo 集合相等/dict 输出/mutation CLI；
+第十三轮 I-1 target 互换 → 形状核对（第七道关）、M-1 pytree 措辞改准、M-3 TOKEN 归类说明、M-5 `cond`/`while_loop` 点名、M-6 补 target 互换回归），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → （本次）。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -520,6 +523,47 @@ forward 形参顺序给，多/少都不猜」。**裁决：不自动摊平**—�
 **这一轮的教训**：「与权威核对」这句话里，权威是谁要问到底。expected 从调用方传进来的对象重生，
 那它就不是第三方，只是同一份数据的第二个副本。能拿到的独立约束只有两种：别的实体（模块）、
 以及权威自己公开写死的结构不变量（顺序）。找不到第三种时，就把边界如实写出来，不要假装关上了。
+### 第十三轮评审（基线 9ec97b3，328 passed / HEAD 329）：结论「可以进 M1b」，条件项我选择修
+
+评审快照 `output/review12/9ec97b3`（117 文件），探针未改源码。**Critical 0、必修项 0**，
+总评「可以进入 M1b（论文侧对齐）」。唯一条件项：如果把「六道关」当成**防就地篡改**的完整性保证，
+就必须补 I-1；否则 README 要写明「target 互换也能过」。**我选修**——因为不同形状的 target 互换
+会在 trace 里留下**可见的错误数据**（权重形状被记反、`shape_broken` 还是 0），这正是本项目
+一贯拒绝的那类静默错误，只写文档等于把它留给读者。
+
+| 项 | 评审证据 | 处理 |
+| --- | --- | --- |
+| I-1 | `output/review12/probe13x.py`：`TwoParams`（a=(2,4)、b=(1,4)）在**真** `ExportedProgram` 上互换两个参数的 `target` → `check_contract` OK、`placeholder_args` OK、`build_op_nodes(exported=)` OK，trace 里 `root.p_a` 形状 `[1,4]`、`root.p_b` `[2,4]`，`shape_broken=0`。`ParamBuf`（参数↔缓冲）、`TwoConsts`（常量↔常量）同样全过；`ConstParam`（常量 target 改成真实参数）被 `Counter` 抓住。根因：`fx_contract.py:87-98` 只收集 target **集合**查重复，不校验 `name → target` 的对应；`fx_signature.py:158-160` 用 `params | buffers` 并集取张量；`check_plan_table` 只比四张表，target 互换后四张表**完全不变** | 新增**第七道关** `fx_shapes.check_value_shape(node, value, target)`：`placeholder_args` 排好 args 后，逐个与 `node.meta["val"].shape` 比。地面真相是导出器在图上做 fake 传播的结果，与 `input_specs` 的 target 映射是**两个独立字段**——所以这是真核对，不是同源比对。不同形状互换一律 `BuildError`/exit 2，消息点名「取到的张量是 (1,4)，但导出图里这个节点是 (2,4)」。非张量（int/bool/None/ScriptObject）与动态形状（SymInt）**不比**，不猜 |
+| M-1 | pytree 不摊平是**保守边界**而非技术必需：`torch/export/_trace.py:1986` 用的就是 `pytree.tree_flatten((params_buffers_args, kwargs))`，与 `exported.call_spec.in_spec` 对照即可不猜顺序地支持。另评审说缺 dict 输入 CLI 用例 | README 措辞改准：「这是范围控制，不是技术上必须猜；M1b 用导出器同一个 `tree_flatten` + `call_spec.in_spec` 对照支持」。**CLI 用例其实已有**（`b9ea76a` 的 `test_cli_exits_5_when_pytree_inputs_are_not_flattened`，评审读的是更早的代码快照） |
+| M-2 | `build_op_nodes(exported=None)` 仍是未受检的公开签名，建议拆成必填公开入口 + 私有未检入口 | **留到 M1b**，理由写死：拆分会让 `fx_nodes` 到 199 行、贴着 ≤200 行约束，且要改 10 处测试调用；评审明确「保持现状不算 M1a bug」。现状是 README 已标明内部 API、`fx_trace` 自己传 `exported=`，未检路径只有直接 API 调用方能走 |
+| M-3 | TOKEN→2 与 no_grad→5 自洽，但用户可能把 exit 2 误解成「输入写错」 | README 退出码表后补一段：分界线是「**spec 合不合法**」而不是「用户有没有写错」——TOKEN 是已知但不支持的 InputKind（契约策略），no_grad/cond 是 spec 合法但图里有非张量节点（能力边界） |
+| M-4 | 有入边没人用的死算子不计入 orphan | 不改（已写死的取舍）。M1b 若要对账，另加 `dead_op`（从 graph output 反向可达），**不要改 orphan 语义** |
+| M-5 | `torch.cond`/`torch.while_loop` 也走 exit 5，但 README 没点名；评审实测它们的 spec 顺序正常、`check_contract` 通过，拒绝发生在更早的 `get_attr` 检查（`true_graph_0`/`while_loop_body_0`） | README 的 `get_attr`/`call_module` 段与退出码表都点名这两个高阶控制流，并写明**不是顺序不变量误杀** |
+| M-6 | 缺 target 互换回归；zoo 18 个模型期望值评审用原始 `input_specs` 独立重算**全部一致** | 新增 `tests/test_thirteenth_review.py`（16 条）：三种互换（参数↔参数、参数↔缓冲、常量↔常量）各一条，**先断言前面几关全过**再断言形状核对拒绝；三条反向对照（真 spec 取到模块里那一个张量 / 常量取自 `exported.constants`）；**同形状互换不可观测**钉成显式用例；int 形参不被误杀；`check_value_shape` 五种边界参数化；CLI 级篡改 `torch.export.export` 返回值 → exit 2、不写 trace、无 Traceback，外加未篡改的同仓库 exit 0 对照 |
+
+**为什么这道关不是同源比对**（与前几轮的关键区别）：`check_plan_source`/`check_plan_table` 的
+expected 都从**调用方传进来的** exported 重生，篡改 spec 时两边一起错。而 `node.meta["val"]`
+是导出器在**图上**做 fake 传播留下的形状，`input_specs.target` 是**另一个字段**：改后者不会改前者。
+评审也确认「从原始 graph_signature 独立重算也只是把映射复制一遍」——所以正确的修法不是再造一个
+看起来独立的 expected，而是找一个**真的**独立产物。形状就是。
+
+**诚实边界（写进 README 与用例）**：同形状的 target 互换抓不到，但它在 trace 里也没有任何可见差异，
+所以不假装封死；就地篡改真产物仍属「篡改权威本身」，与 monkeypatch 全部 `input_plan` 同一类。
+
+变异探针（两组，均已还原）：`if want != got:` → `if False and …` → **5 failed**（三种互换 + 单元 + CLI）；
+去掉 `if want is None or got is None: return` 守卫 → **4 failed**（int 形参 + 三种非张量边界，
+`TypeError` at fx_shapes.py:90）——证明守卫不是死代码。还原后 16 passed。
+
+全量 **345 passed in 51.80s**（329 + 16）。端到端 `output/twelfth-check`：EXIT 0、nodes=128
+（module 34/param 18/input 1/op 75）、edges=101、degraded 2、fused 0、orphan 0、shape_broken 0、
+shape_unchecked 0、`real_execution={ok:true,reason:null}`——与第八至十二轮**逐项一致**，
+第七道关没有误伤 fixture。行数（pathlib splitlines 口径）**OVER200=[]**：fx_signature **198**
+（只剩 2 行余量，M1b 动它之前先拆）、fx_nodes 187、fx_edges 184、fx_contract 175、fx_shapes **98**、
+fx_trace 160、cli 157；新测试 `tests/test_thirteenth_review.py` 16 条。
+
+**教训**：一道关卡的价值取决于它的地面真相**独立性**，不取决于它看起来多严格。前六关里有三关
+（③⑤⑥）的地面真相都来自同一个可被篡改的对象；第七关之所以有牙，是因为它比的是导出器留在
+**图节点上**的另一份产物。评审那句「不要再造一个看起来独立的 expected」是这一轮最有用的一句话。
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。

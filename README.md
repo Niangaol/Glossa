@@ -91,7 +91,7 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   输入标 param、常量消失），而且计数可能「看起来正常」。
   真的没有 placeholder（纯常量模型）时，空 plan 是合法的。
   **边界要说清**：`build_op_nodes` 自己只保证「覆盖齐全、不重叠、无幽灵名、kind 都认识」；
-  「这个 kind 标得**对不对**」由 `fx_contract` + `placeholder_args` 把六道关，地面真相各不相同：
+  「这个 kind 标得**对不对**」由 `fx_contract` + `placeholder_args` 把七道关，地面真相各不相同：
   ① spec 说它是权重 → **模块**里必须真有这个参数/缓冲；
   ② **模块**里每个参数/缓冲 → 必须被某个 `param`/`const` spec 认领；
   ③ 传入的 plan 必须与 **`torch.export` 自己的 `input_specs`** 逐项一致（name/kind/target/顺序）。
@@ -127,8 +127,16 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   ⑥ **恰好认领一次**：同一个参数/常量被两个 placeholder 认领就拒绝（用 `Counter` 而不是 `set`，
   `set` 会把重复压成一个、让图里凭空多出一模一样的权重节点）。
   ⑤⑥ 在**真** `ExportedProgram` 上就地改 `graph_signature.input_specs` 也复现过，所以类型守卫单独不够。
+  **第十三轮补的第七道**（评审实测：④⑤⑥ 之后，在真产物上互换两个参数的 `target` 仍能全过——
+  名字、顺序、认领、四张表**完全不变**，trace 把 `p_a` 记成 `b` 的形状、`shape_broken` 还是 0）：
+  ⑦ **形状核对**：`placeholder_args` 取到真实张量后，与 `node.meta["val"]` 的形状逐项比。
+  那是导出器在图上做 fake 传播的结果，与 `input_specs` 的 `target` 映射是**两个独立字段**，
+  所以这是真核对而不是同源比对。不同形状的 target 互换（参数↔参数、参数↔缓冲、常量↔常量）
+  一律 exit 2 并点名「取到的张量是 (1,4)，但导出图里这个节点是 (2,4)」。
   残余边界照旧说清：就地篡改真产物的 spec 属于「篡改权威本身」，与 monkeypatch 掉全部 `input_plan`
-  同一类，不在本切片的威胁模型内；⑤⑥ 只抓其中最常见的两种改法。
+  同一类，不在本切片的威胁模型内；⑤⑥⑦ 只抓其中**可观测**的改法——**同形状**的 target 互换
+  抓不到（`tests/test_thirteenth_review.py::test_same_shape_target_swap_is_not_observable` 把这条
+  钉成显式用例），但它在 trace 里也没有任何可见差异，所以不假装封死。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
@@ -147,8 +155,10 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `placeholder_args` 明说「按 forward 形参顺序给，多/少都不猜」——两种情况都不写 trace。
   **pytree 输入（dict/list）本切片不自动摊平**：`forward(d)` 的 `d` 是 dict 时，导出器把它摊成
   `d_a`、`d_b` 两个数据输入，而 `example_inputs()` 给的是一个容器 → 数量对不上 → exit 5，
-  消息点名「图里有 2 个数据输入（d_a、d_b）」。不猜容器的摊平顺序（自定义 pytree 的 flatten
-  顺序不由我们决定），M1b 再支持；直接调 `placeholder_args` 时自己给摊平后的元组即可。
+  消息点名「图里有 2 个数据输入（d_a、d_b）」。**这是范围控制，不是技术上必须猜**：M1b 用
+  导出器同一个 `pytree.tree_flatten((example_inputs, {}))` 再与 `exported.call_spec.in_spec`
+  对照即可支持，结构不一致就拒绝，全程不猜顺序。本切片先不做；直接调 `placeholder_args`
+  时自己给摊平后的元组即可（`tests/test_twelfth_review.py` 的 pytree 三条就是这么测的）。
 - **边**：按参数位置一条条连（`args[1][0]` 这种 label），`torch.cat([a, b])` 不会丢边。
   每条边同时记 `shape`（消费者这一项的真实输入）、`producer_shape`（生产者真实输出）和
   `checked`。`shape_consistent` 只在 `checked` 时才有意义；两边对不上就是 False，
@@ -193,10 +203,14 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
   （`get_attr`/`call_module`）——`forward` 里写 `torch.no_grad()` 时，导出器会把那段包成子模块
   `submod_N`。这种图契约校验是过的，但那个 `get_attr` 不是张量：空根模块构造 `GraphModule`
   当场 `AttributeError`，就算把子模块挂回去跑通，它也会被标成 `param`，让「权重 1」变成「权重 2」
-  （实测）。所以一律 exit 5 并点名是哪几个节点，把 `no_grad` 移到 `forward` 外可绕过。
+  （实测）。`torch.cond` / `torch.while_loop` 这类高阶控制流也走这条 exit 5（导出器把分支图
+  存成 `true_graph_0`/`while_loop_body_0` 等非张量 `get_attr`）——它们的 `input_specs` 顺序是
+  正常的，**不是顺序不变量误杀**，实测 `check_contract` 通过后才被这道能力边界拒绝。
+  所以一律 exit 5 并点名是哪几个节点，把 `no_grad` 移到 `forward` 外可绕过。
   ② 以前会照常产出 `source=runtime` 的 trace，把推断形状冒充成真实形状；现在一律 exit 5——
   没有第二遍执行，就不许说自己是 runtime。④ **pytree 输入没摊平**（dict/list 被导出器摊成多个
-  数据输入，`example_inputs()` 给的却是容器本身）——同样 exit 5、不写 trace，不猜摊平顺序。
+  数据输入，`example_inputs()` 给的却是容器本身）——同样 exit 5、不写 trace；M1b 用导出器
+  同一个 `tree_flatten` + `call_spec.in_spec` 对照来支持，不猜顺序。
 - 退出码 5 时 stderr 前面可能有 torch 自己打的一二十行诊断图/警告（那是它的内部输出，
   我们拦不住）；**papertrace 的结论永远在最后一行**，脚本里请只看退出码。
 
@@ -206,10 +220,14 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | --- | --- |
 | 0 | 成功 |
 | 1 | 内部错误：生成的 trace 不合 schema（属 bug，不是用法问题） |
-| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次） |
+| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次/`target` 取到的张量形状与导出图里这个节点不符） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
-| 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行、图里有非张量的 `get_attr`/`call_module`（如 `forward` 内的 `no_grad`），或 `example_inputs` 数量与数据输入个数对不上（含 pytree 输入未摊平）） |
+| 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行、图里有非张量的 `get_attr`/`call_module`（如 `forward` 内的 `no_grad`、`torch.cond`/`torch.while_loop` 的分支图），或 `example_inputs` 数量与数据输入个数对不上（含 pytree 输入未摊平）） |
+
+`TOKEN` 归 **2** 是**契约策略**而不是「你输入写错了」：spec 里出现本切片不支持的 `InputKind`
+就是契约错误（与未知 kind 同一类）；`no_grad`/`cond` 归 **5** 是**能力边界**（spec 完全合法，
+只是图里有非张量节点）。两者的分界线是「spec 合不合法」，不是「用户有没有写错」。
 
 ## 文档
 
