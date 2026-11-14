@@ -78,6 +78,15 @@ def _structural_errors(doc: dict) -> list[str]:
             endpoint = edge.get(end)
             if endpoint not in ids:
                 errors.append(f"edges: {edge_id} 的 {end} 端点不存在：{endpoint}")
+                continue
+            # 边是**算子之间**的数据流；模块节点画边会让层级树和形状链互相污染
+            if by_id[endpoint].get("level") != "op":
+                errors.append(
+                    f"edges: {edge_id} 的 {end} 端点必须是算子节点，实际是 "
+                    f"{endpoint}（level={by_id[endpoint].get('level')}）"
+                )
+        if edge.get("src") == edge.get("dst"):
+            errors.append(f"edges: {edge_id} 是自环（src == dst）：{edge.get('src')}")
     return errors
 
 

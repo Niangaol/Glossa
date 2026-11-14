@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -11,7 +12,7 @@ from papertrace.parse_code.fx_edges import build_edges
 from papertrace.parse_code.fx_graph import fused_items
 from tests._tmp import scratch_dir
 
-FIXTURE = "tests/fixtures/nanogpt"
+FIXTURE = str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "nanogpt")
 ENTRY = "model:build_model"
 
 

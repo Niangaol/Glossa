@@ -274,7 +274,10 @@ def test_runtime_meta_records_how_the_trace_was_made():
     """同一个 trace 必须能回答：用哪版 torch、什么 dtype、batch/seq 多少。"""
     from papertrace.build_trace import build_trace
 
-    doc = build_trace("tests/fixtures/nanogpt", entry="model:build_model")
+    from pathlib import Path
+
+    fixture = str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "nanogpt")
+    doc = build_trace(fixture, entry="model:build_model")
     runtime = doc["meta"]["runtime"]
     assert runtime["ok"] is True
     assert runtime["torch_version"].startswith("2.")

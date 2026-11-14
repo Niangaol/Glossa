@@ -95,7 +95,12 @@ def build_edges(
                 consumer_leaf = tree_leaf(seen.get("out"))
             else:
                 consumer_leaf = tree_leaf(navigate(tree, path))
-            item = _producer_item(producer, node, node.args)
+            item = None
+            container = node.args[0] if node.args else None
+            if getattr(container, "name", None) == arg.name:
+                # 只有容器本身就是一个生产者节点时，「取第几项」才有确定含义；
+                # 容器里混了多个生产者时索引落到谁身上无从判断，宁可不核实。
+                item = _producer_item(producer, node, node.args)
             producer_leaf = item if item is not None else tree_leaf(producer.get("out"))
             if producer_leaf is None:
                 # get_attr 节点不走 Interpreter.run_node，只能退回 export 的 val；

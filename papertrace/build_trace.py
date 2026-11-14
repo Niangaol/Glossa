@@ -76,8 +76,10 @@ def load_entry(repo: str | Path, entry: str):
     try:
         sys.modules.pop(module_name, None)  # 别让上一次 build 的旧模块顶替
         module = importlib.import_module(module_name)
-    except ImportError as exc:
-        raise BuildError(f"导入 {module_name} 失败：{exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - 用户模块顶层任何异常都得是能读懂的错
+        raise BuildError(
+            f"导入 {module_name} 失败：{type(exc).__name__}: {exc}"
+        ) from exc
     finally:
         if inserted and root_str in sys.path:
             sys.path.remove(root_str)
@@ -90,6 +92,10 @@ def load_entry(repo: str | Path, entry: str):
         raise BuildError(
             f"{entry} 不能零参构造（{exc}）。"
             "请改成 模块:工厂函数，比如 def build_model(): return GPT(GPTConfig(n_layer=2))"
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 - 工厂里抛的错也是入口/用法问题
+        raise BuildError(
+            f"{entry} 实例化失败：{type(exc).__name__}: {exc}"
         ) from exc
 
 
@@ -114,7 +120,13 @@ def example_inputs_for(model, *, batch: int = DEFAULT_BATCH, seq_len: int | None
     """
     factory = getattr(model, "example_inputs", None)
     if callable(factory):
-        return _as_input_tuple(factory())
+        try:
+            raw = factory()
+        except Exception as exc:  # noqa: BLE001 - 模型自己的示例输入炸了，也归入口
+            raise BuildError(
+                f"{type(model).__name__}.example_inputs() 抛异常：{type(exc).__name__}: {exc}"
+            ) from exc
+        return _as_input_tuple(raw)
 
     torch_mod = _require_torch()
     config = getattr(model, "config", None)

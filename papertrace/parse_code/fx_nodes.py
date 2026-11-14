@@ -106,14 +106,21 @@ def build_op_nodes(
         if seen:
             shapes = tree_shapes(seen.get("out"))
             inputs: list[list[int]] = []
+            # inputs 只放**数据**输入：权重（param）位置整个跳过。
+            # 否则 linear 的 shape_in 会变成权重形状，param-only 算子更会把
+            # 权重冒充成数据输入（README 早就这么写，代码必须一致）。
             for position, arg in enumerate(seen.get("args") or []):
+                source = node.args[position] if position < len(node.args) else None
+                if getattr(source, "name", None) in param_names:
+                    continue
                 shapes_here = tree_shapes(arg)
                 inputs.extend(shapes_here)
-                source = node.args[position] if position < len(node.args) else None
-                is_param = getattr(source, "name", None) in param_names
-                if data_input is None and shapes_here and not is_param:
+                if data_input is None and shapes_here:
                     data_input = shapes_here[0]
-            for arg in (seen.get("kwargs") or {}).values():
+            for key, arg in (seen.get("kwargs") or {}).items():
+                source = node.kwargs.get(key)
+                if getattr(source, "name", None) in param_names:
+                    continue
                 shapes_here = tree_shapes(arg)
                 inputs.extend(shapes_here)
                 if data_input is None and shapes_here:
@@ -121,8 +128,6 @@ def build_op_nodes(
         else:
             shapes = all_val_shapes(value)
             inputs = []
-        if data_input is None and inputs:
-            data_input = inputs[0]
         kind = node_kind(node)
         op = op_name(node)
         if op == "getitem" and shapes:

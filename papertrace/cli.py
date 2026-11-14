@@ -19,6 +19,7 @@ from papertrace.build_trace import (
     skeleton_trace,
 )
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
+from papertrace.parse_code.fx_graph import FUSION_WARNING, fused_items
 from papertrace.schema_validate import dump_trace, load_trace, validate_trace
 
 UNIMPLEMENTED = 2
@@ -93,7 +94,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             print(f"papertrace build：{exc}", file=sys.stderr)
             return MISSING_RUNTIME
         except TraceUnsupported as exc:
-            print("papertrace build：下面是 torch.export 原始诊断——", file=sys.stderr)
+            # 追不动就不写 trace：宁可 exit 5，也不给一份「看起来成功」的假结果
             print(f"papertrace build：{exc}", file=sys.stderr)
             return UNTRACEABLE
         except BuildError as exc:
@@ -101,10 +102,16 @@ def _cmd_build(args: argparse.Namespace) -> int:
             return UNIMPLEMENTED
         fused = fused_ops_in(doc)
         if fused:
+            items: list[str] = []
+            for name in fused:
+                for item in fused_items(name) or ():
+                    if item not in items:
+                        items.append(item)
             print(
-                "papertrace build：警告——图里有融合算子 "
-                + "、".join(fused)
-                + "，论文里对应的中间算子已被吞掉，算子级对账会漏检（节点已标 degraded）。",
+                "papertrace build：警告——"
+                + FUSION_WARNING.format(
+                    count=len(fused), names="、".join(fused), items="/".join(items)
+                ),
                 file=sys.stderr,
             )
     try:
@@ -142,9 +149,6 @@ def _cmd_build(args: argparse.Namespace) -> int:
                 counts.get("shape_unchecked", "?"),
             )
         )
-        real = (doc["meta"].get("runtime") or {}).get("real_execution") or {}
-        if not real.get("ok", True):
-            print(f"  注意：导出图没能再跑一遍，形状链来自 torch.export 推断：{real.get('reason')}")
     return 0
 
 
@@ -153,7 +157,11 @@ def _cmd_dump(args: argparse.Namespace) -> int:
     if not path.is_file():
         print(f"papertrace dump：找不到 {path}", file=sys.stderr)
         return 2
-    doc = load_trace(path)
+    try:
+        doc = load_trace(path)
+    except (OSError, ValueError) as exc:  # ValueError 覆盖 JSONDecodeError
+        print(f"papertrace dump：{path} 读不成 JSON：{exc}", file=sys.stderr)
+        return UNIMPLEMENTED
     try:
         validate_trace(doc)
     except TraceSchemaError as exc:

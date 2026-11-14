@@ -129,10 +129,17 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     tree, module_ids = module_nodes(module, module_id, module_types)
     root_loc = f"{type(module).__module__}.{type(module).__name__}"
     # 真实执行一遍导出图：边的两端形状从这里拿，不再靠 SSA 推断。
+    # 跑不起来就**不能**冒充「真实追踪」：没有第二遍执行，形状只是 torch.export
+    # 的推断，节点 source 也不再是 runtime。宁可 exit 5 不写 trace。
     try:
         observed, observe_error = observe(exported.module(), example_inputs)
-    except Exception as exc:  # noqa: BLE001 - 观察失败不该拖垮追踪
+    except Exception as exc:  # noqa: BLE001 - 统一翻译成可读原因
         observed, observe_error = {}, _short_error(exc)
+    if observe_error is not None:
+        raise TraceUnsupported(
+            "导出图无法再真实执行一遍（自定义算子/数据依赖等），形状链只能靠推断；"
+            "按约定不写 trace 冒充结果：" + observe_error
+        )
     op_nodes, by_name, all_shapes = build_op_nodes(
         module, graph, module_id, module_ids, root_loc, observed=observed
     )
@@ -141,5 +148,6 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     counts = finish_nodes(nodes, edges)
     runtime = _runtime_meta(module, torch_mod, example_inputs)
     runtime["counts"] = counts
-    runtime["real_execution"] = {"ok": observe_error is None, "reason": observe_error}
+    # 走到这里说明第二遍真实执行成功了；失败已在上面转成 TraceUnsupported
+    runtime["real_execution"] = {"ok": True, "reason": None}
     return {"nodes": nodes, "edges": edges, "runtime": runtime}

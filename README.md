@@ -34,11 +34,12 @@ python -m papertrace dump --trace output/m1a/trace.json --ops
 python -m papertrace dump --trace output/m1a/trace.json --edges
 ```
 
-`--ops` 一行一个算子，形如（形状是真实跑出来的，不是推的）：
+`--ops` 一行一个算子，下面是本仓库夹具的**真实输出**（形状是第二遍执行跑出来的，不是推的）：
 
 ```text
-root/@037  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) matmul
-root/@043  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) softmax
+root/@020        transformer.wte                    (2, 8) -> (2, 8, 32) embedding
+root/@037        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8) matmul
+root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8) softmax
 ```
 
 权重/输入节点不是算子，`--ops` 里它们的输入形状打 `-`；算子输入确实拿不到时打 `(?)`，
@@ -47,9 +48,16 @@ root/@043  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) softmax
 `--edges` 一行一条边，左列是**消费者真实拿到的输入形状**，右列是**生产者真实吐出的输出形状**。
 行首空格 = 两边核实相等，`!` = 对不上，`?` = 有一边没观察到（未核实，不等于一致）：
 
+前两行是夹具的真实输出（embedding 的数据入边是 token id `(2, 8)`，权重边 `(64, 32)` 也在，但不冒充主输入）：
+
 ```text
   (64, 32)         生产者 (64, 32)         root/@015 (placeholder) -> root/@020 (embedding) e:root/@015->root/@020:args[0]
-  (2, 8)           生产者 (2, 8)           root/@018 (placeholder) -> root/@020 (embedding) e:root/@018->root/@020:args[1]
+  (2, 8)           生产者 (2, 8)           root/@020 (embedding) -> root/@022 (add) e:root/@020->root/@022:args[0]
+```
+
+第三行是**反例**（不是夹具输出）：消费者只取了 split 的第 2 项 `(2, 8)`，却拿到 `(2, 6)`——
+
+```text
 ! (2, 6)           生产者 (2, 8)           root/@031 (split) -> root/@034 (add) e:root/@031->root/@034:args[1][0]
 ```
 
@@ -64,18 +72,21 @@ root/@043  transformer.h.0.attn  (2, 4, 8, 8) -> (2, 4, 8, 8) softmax
 - **`kind`**：`op` | `input` | `param`。`input` 是图入口，`param` 是权重/缓冲（torch.export
   把权重抬成图输入，名字带 `p_`/`b_` 前缀），`parent_id` 指向它真正所属的模块。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
-  `[[]]` = 0 维标量）。`inputs` 是这个算子实际吃到的张量入参形状（按参数顺序，权重位置跳过），
-  `shape_in` 就是 `inputs[0]`；权重边不会冒充输入。
+  `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
+  `shape_in` 就是 `inputs[0]`；权重边不会冒充输入，只用权重的算子 `inputs` 为空、
+  `shape_in` 也为空（`--ops` 打 `(?)`，绝不回退成权重形状）。权重本身的形状看 param 节点
+  和它的入边。
 - **边**：按参数位置一条条连（`args[1][0]` 这种 label），`torch.cat([a, b])` 不会丢边。
   每条边同时记 `shape`（消费者这一项的真实输入）、`producer_shape`（生产者真实输出）和
   `checked`。`shape_consistent` 只在 `checked` 时才有意义；两边对不上就是 False，
   `dump --edges` 打 `!`；没观察到就打 `?`，**未核实不算通过**。
 - **`meta.runtime`**：这次追踪怎么来的——设备、torch 版本、dtype、**实际**的 batch/seq_len、
   示例输入、entry，`requested`（命令行请求的 batch/seq_len，和实际值分开记，免得自相矛盾），
-  `real_execution`（第二遍真实执行是否成功，失败原因），以及 `counts`
+  `real_execution`（第二遍真实执行是否成功；**失败时根本不写 trace**，见退出码 5），以及 `counts`
   （operators/degraded/fused/orphan/shape_broken/shape_unchecked）。没有它就没法判断这份 trace 能不能复现。
 - **结构校验**：`validate_trace` 除了 JSON Schema 还查重复 id、悬空边、`parent_id` 不存在、
-  module 节点必须 `source=static`。这些错误一律 `TraceSchemaError`，不静默放过。
+  module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、
+  **不接受自环**（`src == dst`）。这些错误一律 `TraceSchemaError`，不静默放过。
 
 ### 入口契约：模块:工厂函数
 
@@ -93,7 +104,13 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 
 - 零参类也能用（`--entry model:TinyNet`），但 `GPT(config)` 这种必须给工厂，我们不猜你的配置。
 - 示例输入优先用模型自带的 `example_inputs()`；没有就按 `config.vocab_size` + `config.block_size` 造 token id；都没有就报 `BuildError`，不会拿随机形状糊弄。
-- 缺 torch → 退出码 **4**；模型追不动（自定义算子、数据依赖分支）→ 退出码 **5**；仓库/入口对不上 → 退出码 **2**。三种情况都**不写** `trace.json`。
+- 缺 torch → 退出码 **4**；追不动 → 退出码 **5**；仓库/入口对不上 → 退出码 **2**。三种情况都**不写** `trace.json`。
+  「追不动」有两种：① `torch.export` 就失败（数据依赖分支）；② 导出图能画出来，但拿真实张量
+  **再跑一遍会炸**（自定义算子只有 meta 实现、真 CPU 实现抛错）。第二种以前会照常产出
+  `source=runtime` 的 trace，把推断形状冒充成真实形状；现在一律 exit 5——没有第二遍执行，
+  就不许说自己是 runtime。
+- 退出码 5 时 stderr 前面可能有 torch 自己打的一二十行诊断图/警告（那是它的内部输出，
+  我们拦不住）；**papertrace 的结论永远在最后一行**，脚本里请只看退出码。
 
 ## 退出码
 
@@ -104,7 +121,7 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | 2 | 用法/入口错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
-| 5 | 模型可加载但追不动 |
+| 5 | 模型可加载但追不动（export 失败，或导出图无法真实再执行） |
 
 ## 文档
 

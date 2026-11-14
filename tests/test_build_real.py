@@ -1,5 +1,7 @@
 """M1a：build 必须真的把 nanoGPT 的算子图抓出来，而不是写个空骨架。"""
 
+from pathlib import Path
+
 import pytest
 
 pytest.importorskip("torch", reason="真实追踪需要 torch（CPU 版即可）")
@@ -7,7 +9,7 @@ pytest.importorskip("torch", reason="真实追踪需要 torch（CPU 版即可）
 from papertrace.build_trace import BuildError, build_trace  # noqa: E402
 from papertrace.schema_validate import validate_trace  # noqa: E402
 
-FIXTURE = "tests/fixtures/nanogpt"
+FIXTURE = str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "nanogpt")
 ENTRY = "model:build_model"
 
 

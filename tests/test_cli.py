@@ -1,9 +1,13 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from papertrace.schema_validate import load_trace, validate_trace
 from tests._tmp import scratch_dir
+
+# 不依赖 cwd：从哪个目录跑 pytest 都得找得到夹具
+FIXTURE = str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "nanogpt")
 
 
 def run_cli(*args: str) -> subprocess.CompletedProcess:
@@ -39,7 +43,7 @@ def test_skeleton_build_writes_valid_empty_trace():
     out_dir = scratch_dir("skeleton-build")
     r = run_cli(
         "build",
-        "--repo", "tests/fixtures/nanogpt",
+        "--repo", FIXTURE,
         "--paper", "none",
         "--out", str(out_dir),
         "--skeleton",
@@ -66,7 +70,7 @@ def test_build_without_skeleton_runs_real_trace():
     out_dir = scratch_dir("build-real")
     r = run_cli(
         "build",
-        "--repo", "tests/fixtures/nanogpt",
+        "--repo", FIXTURE,
         "--paper", "none",
         "--out", str(out_dir),
     )
@@ -88,7 +92,7 @@ def test_build_exits_4_when_torch_missing(monkeypatch):
     monkeypatch.setattr(fx_trace, "_require_torch", boom)
     out_dir = scratch_dir("no-torch")
     code = cli.main(
-        ["build", "--repo", "tests/fixtures/nanogpt", "--paper", "none", "--out", str(out_dir)]
+        ["build", "--repo", FIXTURE, "--paper", "none", "--out", str(out_dir)]
     )
     assert code == 4
     assert not (out_dir / "trace.json").exists()
@@ -98,7 +102,7 @@ def test_build_with_paper_refuses():
     out_dir = scratch_dir("build-with-paper")
     r = run_cli(
         "build",
-        "--repo", "tests/fixtures/nanogpt",
+        "--repo", FIXTURE,
         "--paper", "arxiv:1706.03762",
         "--out", str(out_dir),
         "--skeleton",
@@ -111,7 +115,7 @@ def test_dump_prints_counts():
     out_dir = scratch_dir("dump")
     built = run_cli(
         "build",
-        "--repo", "tests/fixtures/nanogpt",
+        "--repo", FIXTURE,
         "--paper", "none",
         "--out", str(out_dir),
         "--skeleton",
@@ -132,7 +136,7 @@ def test_dump_ops_prints_topological_operator_list():
     out_dir = scratch_dir("dump-ops")
     built = run_cli(
         "build",
-        "--repo", "tests/fixtures/nanogpt",
+        "--repo", FIXTURE,
         "--paper", "none",
         "--out", str(out_dir),
     )
@@ -161,7 +165,7 @@ def test_dump_ops_on_empty_trace_prints_nothing():
     out_dir = scratch_dir("dump-ops-empty")
     built = run_cli(
         "build",
-        "--repo", "tests/fixtures/nanogpt",
+        "--repo", FIXTURE,
         "--paper", "none",
         "--out", str(out_dir),
         "--skeleton",
@@ -180,7 +184,7 @@ def test_dump_surfaces_degraded_nodes_and_broken_shapes():
     out_dir = scratch_dir("dump-degraded")
     built = run_cli(
         "build",
-        "--repo", "tests/fixtures/nanogpt",
+        "--repo", FIXTURE,
         "--paper", "none",
         "--out", str(out_dir),
     )
@@ -200,7 +204,7 @@ def test_second_build_refuses_to_clobber_without_force():
     out_dir = scratch_dir("no-clobber")
     args = (
         "build",
-        "--repo", "tests/fixtures/nanogpt",
+        "--repo", FIXTURE,
         "--paper", "none",
         "--out", str(out_dir),
         "--skeleton",

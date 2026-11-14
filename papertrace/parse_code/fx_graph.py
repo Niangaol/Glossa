@@ -32,7 +32,6 @@ FUSED_OPS: dict[str, tuple[str, ...]] = {
     "_efficient_attention_forward": _ATTENTION_ITEMS,
     "_flash_attention_forward": _ATTENTION_ITEMS,
     "_native_multi_head_attention": ("linear", "matmul", "softmax", "linear"),
-    "multi_head_attention_forward": ("linear", "matmul", "softmax", "linear"),
 }
 
 #: 名字前缀兜底：torch 版本升级换了后缀时，别因为表里没写就漏报融合。
