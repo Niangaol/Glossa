@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from papertrace.exceptions import BuildError
-from papertrace.parse_code.fx_graph import FUSED_OPS
+from papertrace.parse_code.fx_graph import fused_items
 from papertrace.parse_code.fx_trace import _require_torch, trace_module
 from papertrace.schema_validate import minimal_trace
 
@@ -93,6 +93,19 @@ def load_entry(repo: str | Path, entry: str):
         ) from exc
 
 
+def _as_input_tuple(value):
+    """example_inputs() 可能返回裸张量；裸张量不能被 tuple() 拆成按维度的多个参数。"""
+    try:
+        from torch import Tensor
+    except ImportError:  # pragma: no cover - 没 torch 时走不到这里
+        Tensor = ()  # type: ignore[assignment]
+    if Tensor and isinstance(value, Tensor):
+        return (value,)
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return (value,)
+
+
 def example_inputs_for(model, *, batch: int = DEFAULT_BATCH, seq_len: int | None = None):
     """给模型造一组示例输入。
 
@@ -101,7 +114,7 @@ def example_inputs_for(model, *, batch: int = DEFAULT_BATCH, seq_len: int | None
     """
     factory = getattr(model, "example_inputs", None)
     if callable(factory):
-        return tuple(factory())
+        return _as_input_tuple(factory())
 
     torch_mod = _require_torch()
     config = getattr(model, "config", None)
@@ -127,6 +140,9 @@ def build_trace(
     seq_len: int | None = None,
 ) -> dict:
     """真实追踪一个模型，返回可校验的 trace 文档（节点/边已填充）。"""
+    # 先确认 torch 在，再 import 用户仓库：否则顶层 import torch 会先炸成 BuildError（exit 2），
+    # 把「没装 torch」误报成「仓库写错了」。缺 torch 必须是 RuntimeUnavailable（exit 4）。
+    _require_torch()
     model = load_entry(repo, entry)
     inputs = example_inputs_for(model, batch=batch, seq_len=seq_len)
     traced = trace_module(model, inputs, module_id=module_id)
@@ -138,8 +154,8 @@ def build_trace(
     # 这次追踪是怎么跑的：不写进去，同一个 trace 就没法复现也没法解释
     runtime = dict(traced.get("runtime") or {})
     runtime["entry"] = entry
-    runtime["batch"] = batch
-    runtime["seq_len"] = seq_len if seq_len is not None else runtime.get("seq_len")
+    # batch/seq_len 是**实际喂进去的**形状，不是命令行请求的值；请求值单独记，免得自相矛盾。
+    runtime["requested"] = {"batch": batch, "seq_len": seq_len}
     doc["meta"]["runtime"] = runtime
     return doc
 
@@ -148,6 +164,6 @@ def fused_ops_in(doc: dict) -> list[str]:
     """图里被融合吞掉的算子名（去重、按出现顺序），调用方拿它决定要不要喊人。"""
     seen: list[str] = []
     for node in doc.get("nodes", []):
-        if node.get("level") == "op" and node.get("op") in FUSED_OPS and node["op"] not in seen:
+        if node.get("level") == "op" and fused_items(node.get("op")) is not None and node["op"] not in seen:
             seen.append(node["op"])
     return seen

@@ -49,5 +49,7 @@ def test_op_nodes_have_shapes_and_parents():
     op_nodes = [n for n in doc["nodes"] if n["level"] == "op" and n["op"] != "placeholder"]
     assert op_nodes
     for node in op_nodes:
-        assert node["shape_out"], f"{node['label']} 没有输出形状"
+        # 0 维标量的 shape_out 合法地是 []，所以看 outputs 里是否记录了「标量」这一项
+        assert node["outputs"] or node["shape_out"], f"{node['label']} 没有输出形状"
+        assert node["shape_out"] or node["outputs"] == [[]], node["label"]
         assert node["parent_id"] in by_id

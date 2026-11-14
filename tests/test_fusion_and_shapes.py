@@ -12,7 +12,13 @@ import torch.nn as nn  # noqa: E402
 from torch.nn import functional as F  # noqa: E402
 
 from papertrace.build_trace import fused_ops_in  # noqa: E402
-from papertrace.parse_code.fx_edges import resolve_arg_shape  # noqa: E402
+from papertrace.parse_code.fx_edges import _producer_item  # noqa: E402
+from papertrace.parse_code.fx_shapes import (  # noqa: E402
+    navigate,
+    shape_tree,
+    tree_leaf,
+    tree_shapes,
+)
 from papertrace.parse_code.fx_trace import trace_module  # noqa: E402
 
 
@@ -81,25 +87,50 @@ def test_split_items_keep_their_own_shapes_in_edges():
     assert all(e["shape_consistent"] for e in doc["edges"])
 
 
-def test_resolve_arg_shape_only_answers_when_it_can():
-    class FakeArg:
+def test_shape_tree_helpers_answer_only_when_they_can():
+    """形状树：没有信息就返回 None（未核实），绝不猜一个「看起来合理」的形状。"""
+
+    class T:
+        def __init__(self, shape):
+            self.shape = shape
+
+    assert shape_tree(T((2, 3))) == {"t": [2, 3]}
+    assert shape_tree([T((2, 3)), T((4,))]) == {"l": [{"t": [2, 3]}, {"t": [4]}]}
+    assert shape_tree({"x": T((1,))}) == {"d": {"x": {"t": [1]}}}
+    assert shape_tree(3) is None
+
+    assert tree_leaf({"t": [2, 3]}) == [2, 3]
+    assert tree_leaf({"l": [{"t": [2, 3]}]}) is None
+    assert tree_leaf(None) is None
+    assert tree_shapes({"l": [{"t": [2, 3]}, {"l": [{"t": [1]}]}]}) == [[2, 3], [1]]
+
+    tree = {"d": {"args": {"l": [{"t": [2, 3]}, {"d": {"y": {"t": [5]}}}]}}}
+    assert navigate(tree, ["args", 0]) == {"t": [2, 3]}
+    assert navigate(tree, ["args", 1, "y"]) == {"t": [5]}
+    assert navigate(tree, ["args", 9]) is None
+    assert navigate(tree, ["kwargs", "x"]) is None
+
+
+def test_producer_item_reads_the_indexed_output_only():
+    """getitem 的边形状 = 生产者容器里被取出的那一项；索引不是常量就不猜。"""
+
+    class FakeNode:
         op = "getitem"
 
         def __init__(self, args):
             self.args = args
+            self.kwargs = {}
 
-    shapes = [[2, 2], [2, 3]]
-    assert resolve_arg_shape(FakeArg([None, 0]), shapes) == [2, 2]
-    assert resolve_arg_shape(FakeArg([None, 1]), shapes) == [2, 3]
-    assert resolve_arg_shape(FakeArg([None, -1]), shapes) == [2, 3]
-    # 索引越界 → 不知道，交给调用方按断链处理
-    assert resolve_arg_shape(FakeArg([None, 5]), shapes) is None
-    # 单输出、非 getitem、索引不是常量 → 都不猜
-    assert resolve_arg_shape(FakeArg([None, 0]), [[2, 2]]) is None
-    assert resolve_arg_shape(FakeArg([None, 0]), shapes) == [2, 2]
+    observed = {"out": {"l": [{"t": [2, 2]}, {"t": [2, 3]}]}}
+    assert _producer_item(observed, FakeNode([None, 0]), [None, 0]) == [2, 2]
+    assert _producer_item(observed, FakeNode([None, 1]), [None, 1]) == [2, 3]
+    assert _producer_item(observed, FakeNode([None, -1]), [None, -1]) == [2, 3]
+    assert _producer_item(observed, FakeNode([None, 5]), [None, 5]) is None
+    assert _producer_item(observed, FakeNode([None, "i"]), [None, "i"]) is None
+    # 单输出（不是容器）→ 不知道，交给调用方按未核实处理
+    assert _producer_item({"out": {"t": [2, 2]}}, FakeNode([None, 0]), [None, 0]) is None
 
-    class NotGetitem(FakeArg):
+    class NotGetitem(FakeNode):
         op = "add"
 
-    assert resolve_arg_shape(NotGetitem([None, 1]), shapes) is None
-    assert resolve_arg_shape(FakeArg([None, "i"]), shapes) is None
+    assert _producer_item(observed, NotGetitem([None, 1]), [None, 1]) is None

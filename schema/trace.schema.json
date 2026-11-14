@@ -59,6 +59,14 @@
             "seq_len": { "type": ["integer", "null"] },
             "entry": { "type": ["string", "null"] },
             "example_inputs": { "type": "array", "items": { "type": "array" } },
+            "requested": { "type": "object" },
+            "real_execution": {
+              "type": "object",
+              "properties": {
+                "ok": { "type": "boolean" },
+                "reason": { "type": ["string", "null"] }
+              }
+            },
             "counts": { "type": "object" }
           }
         }
@@ -139,6 +147,7 @@
         "kind": { "enum": ["op", "input", "param"] },
         "shape_in": { "type": "array" },
         "shape_out": { "type": "array" },
+        "inputs": { "type": "array", "items": { "type": "array" } },
         "outputs": { "type": "array", "items": { "type": "array" } },
         "dtype": { "type": ["string", "null"] },
         "inplace": { "type": "boolean" },
@@ -157,7 +166,13 @@
           }
         },
         "stale": { "type": "boolean" }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["level"], "properties": { "level": { "const": "op" } } },
+          "then": { "required": ["kind", "inputs", "outputs", "degraded_reason"] }
+        }
+      ]
     },
     "detailLayer": {
       "type": "object",
@@ -183,7 +198,8 @@
     "edge": {
       "type": "object",
       "required": [
-        "id", "src", "dst", "label", "shape", "dtype", "inplace", "shape_consistent"
+        "id", "src", "dst", "label", "shape", "producer_shape", "checked",
+        "dtype", "inplace", "shape_consistent"
       ],
       "properties": {
         "id": { "type": "string" },
@@ -191,6 +207,8 @@
         "dst": { "type": "string" },
         "label": { "type": "string" },
         "shape": { "type": "array" },
+        "producer_shape": { "type": ["array", "null"] },
+        "checked": { "type": "boolean" },
         "dtype": { "type": ["string", "null"] },
         "inplace": { "type": "boolean" },
         "shape_consistent": { "type": "boolean" }

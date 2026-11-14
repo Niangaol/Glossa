@@ -12,20 +12,44 @@ from __future__ import annotations
 
 from typing import Any
 
+from papertrace.parse_code.fx_shapes import val_shape
+
 #: 模块节点：结构来自代码，不是来自执行。
 STATIC = "static"
 #: 算子节点：形状来自真实执行。
 RUNTIME = "runtime"
 
 #: 融合算子：一个 aten 算子内部吞掉了论文里好几个公式项。
+#: 名字按 torch 2.15 的**真实** aten 名写（后端注意力算子都带 `_` 前缀）。
+_ATTENTION_ITEMS = ("matmul", "scale", "mask", "softmax")
 FUSED_OPS: dict[str, tuple[str, ...]] = {
-    "scaled_dot_product_attention": ("matmul", "scale", "mask", "softmax"),
-    "_scaled_dot_product_attention_math": ("matmul", "scale", "mask", "softmax"),
-    "scaled_dot_product_flash_attention": ("matmul", "scale", "mask", "softmax"),
-    "scaled_dot_product_efficient_attention": ("matmul", "scale", "mask", "softmax"),
+    "scaled_dot_product_attention": _ATTENTION_ITEMS,
+    "_scaled_dot_product_attention_math": _ATTENTION_ITEMS,
+    "_scaled_dot_product_flash_attention": _ATTENTION_ITEMS,
+    "_scaled_dot_product_flash_attention_for_cpu": _ATTENTION_ITEMS,
+    "_scaled_dot_product_efficient_attention": _ATTENTION_ITEMS,
+    "_scaled_dot_product_cudnn_attention": _ATTENTION_ITEMS,
+    "_efficient_attention_forward": _ATTENTION_ITEMS,
+    "_flash_attention_forward": _ATTENTION_ITEMS,
     "_native_multi_head_attention": ("linear", "matmul", "softmax", "linear"),
     "multi_head_attention_forward": ("linear", "matmul", "softmax", "linear"),
 }
+
+#: 名字前缀兜底：torch 版本升级换了后缀时，别因为表里没写就漏报融合。
+_FUSED_PREFIXES: tuple[str, ...] = (
+    "_scaled_dot_product_",
+    "_efficient_attention_forward",
+    "_flash_attention_forward",
+)
+
+
+def fused_items(op: str) -> tuple[str, ...] | None:
+    """这个算子是融合算子吗？是的话返回它吞掉的公式项。"""
+    if op in FUSED_OPS:
+        return FUSED_OPS[op]
+    if op.startswith(_FUSED_PREFIXES):
+        return _ATTENTION_ITEMS
+    return None
 
 FUSION_WARNING = (
     "图里有 {count} 个融合算子（{names}）：论文里对应的 {items} 已被吞进单个 aten 算子，"
@@ -37,14 +61,6 @@ FUSION_WARNING = (
 def simple_type(type_str: Any) -> str:
     text = str(type_str)
     return text.rsplit(".", 1)[-1] if "." in text else text
-
-
-def val_shape(value: Any) -> list[int] | None:
-    """张量形状。0 维张量是 []（标量），不是「未知」；未知返回 None。"""
-    shape = getattr(value, "shape", None)
-    if shape is None:
-        return None
-    return [int(d) for d in shape]
 
 
 def all_val_shapes(value: Any) -> list[list[int]]:
@@ -68,7 +84,6 @@ def val_dtype(value: Any) -> str | None:
     dtype = getattr(value, "dtype", None)
     return str(dtype).replace("torch.", "") if dtype is not None else None
 
-
 def op_name(node) -> str:
     """placeholder/get_attr 用自己的 op 名，别拿属性名（wte.weight）冒充算子名。"""
     if getattr(node, "op", None) in ("placeholder", "get_attr"):
@@ -79,6 +94,11 @@ def op_name(node) -> str:
         return str(schema.name).split("::")[-1]
     name = getattr(target, "__name__", None)
     return str(name) if name else str(target)
+
+
+def is_getitem(node) -> bool:
+    """torch.export 里 getitem 的 node.op 就是 "getitem"；兼容只有 target 的假节点。"""
+    return getattr(node, "op", None) == "getitem" or op_name(node) == "getitem"
 
 
 def node_kind(node) -> str:
@@ -147,5 +167,4 @@ def fmt_shape(shape) -> str:
     if not shape:
         return "()"
     return "(" + ", ".join(str(d) for d in shape) + ")"
-
 

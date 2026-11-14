@@ -29,6 +29,7 @@ from papertrace.parse_code.fx_graph import (
     val_shape,
 )
 from papertrace.parse_code.fx_nodes import build_op_nodes, module_nodes
+from papertrace.parse_code.fx_observe import observe
 
 __all__ = [
     "FUSED_OPS",
@@ -127,10 +128,18 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     module_types = collect_module_types(graph)
     tree, module_ids = module_nodes(module, module_id, module_types)
     root_loc = f"{type(module).__module__}.{type(module).__name__}"
-    op_nodes, by_name, all_shapes = build_op_nodes(module, graph, module_id, module_ids, root_loc)
-    edges = build_edges(graph, by_name, op_nodes, all_shapes)
+    # 真实执行一遍导出图：边的两端形状从这里拿，不再靠 SSA 推断。
+    try:
+        observed, observe_error = observe(exported.module(), example_inputs)
+    except Exception as exc:  # noqa: BLE001 - 观察失败不该拖垮追踪
+        observed, observe_error = {}, _short_error(exc)
+    op_nodes, by_name, all_shapes = build_op_nodes(
+        module, graph, module_id, module_ids, root_loc, observed=observed
+    )
+    edges = build_edges(graph, by_name, op_nodes, all_shapes, observed=observed)
     nodes = list(tree) + op_nodes
     counts = finish_nodes(nodes, edges)
     runtime = _runtime_meta(module, torch_mod, example_inputs)
     runtime["counts"] = counts
+    runtime["real_execution"] = {"ok": observe_error is None, "reason": observe_error}
     return {"nodes": nodes, "edges": edges, "runtime": runtime}

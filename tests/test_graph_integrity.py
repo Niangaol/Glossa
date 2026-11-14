@@ -201,12 +201,13 @@ def test_duplicate_edge_ids_are_rejected():
         "label": "a", "loc": "m.py:1", "shape_in": [], "shape_out": [2, 2],
         "dtype": None, "inplace": False, "source": "runtime",
         "degraded": False, "repeat": 1, "stale": False,
+        "kind": "op", "inputs": [[2, 2]], "outputs": [[2, 2]], "degraded_reason": None,
     }
     b = dict(a, id="root/@001", op="add")
     edge = {
         "id": "e:root/@000->root/@001:args[0]", "src": "root/@000", "dst": "root/@001",
-        "label": "args[0]", "shape": [2, 2], "dtype": None, "inplace": False,
-        "shape_consistent": True,
+        "label": "args[0]", "shape": [2, 2], "producer_shape": [2, 2], "checked": True,
+        "dtype": None, "inplace": False, "shape_consistent": True,
     }
     doc["nodes"] = [root, a, b]
     doc["edges"] = [edge, dict(edge)]
@@ -233,19 +234,22 @@ def test_inconsistent_edge_is_visible_in_dump():
             "label": "a", "loc": "m.py:1",
             "shape_in": [], "shape_out": [2, 2], "dtype": None, "inplace": False,
             "source": "runtime", "degraded": False, "repeat": 1, "stale": False,
+            "kind": "op", "inputs": [[2, 2]], "outputs": [[2, 2]], "degraded_reason": None,
         },
         {
             "id": "root/@001", "parent_id": "root", "level": "op", "op": "add",
             "label": "b", "loc": "m.py:1",
             "shape_in": [2, 2], "shape_out": [2, 2], "dtype": None, "inplace": False,
             "source": "runtime", "degraded": False, "repeat": 1, "stale": False,
+            "kind": "op", "inputs": [[2, 2]], "outputs": [[2, 2]], "degraded_reason": None,
         },
     ]
     doc["edges"] = [
         {
             "id": "e:root/@000->root/@001:args[0]", "src": "root/@000", "dst": "root/@001",
             "label": "args[0]",
-            "shape": [2, 2], "dtype": None, "inplace": False, "shape_consistent": False,
+            "shape": [2, 2], "producer_shape": [2, 2], "checked": True,
+            "dtype": None, "inplace": False, "shape_consistent": False,
         }
     ]
     path = scratch_dir("bad-trace") / "bad.json"

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from papertrace.exceptions import BuildError
 from papertrace.parse_code.fx_graph import (
-    FUSED_OPS,
     RUNTIME,
     STATIC,
     all_val_shapes,
     fmt_shape,
+    fused_items,
     node_kind,
     op_name,
     owned_paths,
@@ -17,6 +18,7 @@ from papertrace.parse_code.fx_graph import (
     stack_paths,
     val_dtype,
 )
+from papertrace.parse_code.fx_shapes import tree_shapes
 
 def _module_entry(module, *, entry_id, parent_id, op, label, loc) -> dict:
     return {
@@ -51,6 +53,11 @@ def module_nodes(module, module_id: str, module_types: dict[str, str]) -> tuple[
     for path in sorted(module_types, key=lambda p: (p.count("."), p)):
         if not path:
             continue
+        if "@" in path:
+            # 算子 id 形如 root/@007；模块路径里再出现 @ 就可能把两种 id 撞成一个
+            raise BuildError(
+                f"模块路径 {path!r} 含 '@'，会和算子 id（root/@序号）撞车；请重命名子模块。"
+            )
         parent = path.rsplit(".", 1)[0] if "." in path else ""
         entries[path] = _module_entry(
             module,
@@ -66,12 +73,27 @@ def module_nodes(module, module_id: str, module_types: dict[str, str]) -> tuple[
     return ordered, {path: info["id"] for path, info in entries.items()}
 
 
-def build_op_nodes(module, graph, module_id: str, module_ids: dict[str, str], root_loc: str) -> tuple[list[dict], dict[str, str], dict[str, list[list[int]]]]:
-    """算子/输入/权重节点。id 用 `模块id/@序号`，与模块 id（`/` 路径）互不撞车。"""
+def build_op_nodes(
+    module,
+    graph,
+    module_id: str,
+    module_ids: dict[str, str],
+    root_loc: str,
+    observed: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[dict], dict[str, str], dict[str, list[list[int]]]]:
+    """算子/输入/权重节点。id 用 `模块id/@序号`，与模块 id（`/` 路径）互不撞车。
+
+    形状优先取真实执行观察到的值（`observed`）；没跑成的那部分退回 `node.meta["val"]`。
+    """
     owner = owned_paths(module)
+    observed = observed or {}
     nodes: list[dict] = []
     by_name: dict[str, str] = {}
     all_shapes: dict[str, list[list[int]]] = {}
+    # 权重在 export 图里也是 placeholder，得先认出它们，才能从「入参」里挑出真正的数据输入
+    param_names = {
+        n.name for n in graph.nodes if node_kind(n) == "param" or n.name in owner
+    }
 
     for index, node in enumerate(graph.nodes):
         if node.op == "output":
@@ -79,9 +101,34 @@ def build_op_nodes(module, graph, module_id: str, module_ids: dict[str, str], ro
         node_id = f"{module_id}/@{index:03d}"
         by_name[node.name] = node_id
         value = node.meta.get("val")
-        shapes = all_val_shapes(value)
+        seen = observed.get(node.name) or {}
+        data_input: list[int] | None = None
+        if seen:
+            shapes = tree_shapes(seen.get("out"))
+            inputs: list[list[int]] = []
+            for position, arg in enumerate(seen.get("args") or []):
+                shapes_here = tree_shapes(arg)
+                inputs.extend(shapes_here)
+                source = node.args[position] if position < len(node.args) else None
+                is_param = getattr(source, "name", None) in param_names
+                if data_input is None and shapes_here and not is_param:
+                    data_input = shapes_here[0]
+            for arg in (seen.get("kwargs") or {}).values():
+                shapes_here = tree_shapes(arg)
+                inputs.extend(shapes_here)
+                if data_input is None and shapes_here:
+                    data_input = shapes_here[0]
+        else:
+            shapes = all_val_shapes(value)
+            inputs = []
+        if data_input is None and inputs:
+            data_input = inputs[0]
         kind = node_kind(node)
         op = op_name(node)
+        if op == "getitem" and shapes:
+            # getitem 的入参是容器，它真正拿到手的只有被取出的那一项
+            inputs = [shapes[0]]
+            data_input = shapes[0]
 
         paths = stack_paths(node)
         parent_key = paths[-1] if paths else ""
@@ -91,18 +138,20 @@ def build_op_nodes(module, graph, module_id: str, module_ids: dict[str, str], ro
             parent_key = owner.get(node.name, parent_key)
         parent_id = module_ids.get(parent_key, module_id)
 
-        reason = None
+        reasons: list[str] = []
         if len(shapes) > 1:
-            reason = (
+            reasons.append(
                 f"多输出算子，shape_out 记的是第 1 项（共 {len(shapes)} 项："
                 + "、".join(fmt_shape(sh) for sh in shapes)
                 + "），逐项形状见 outputs"
             )
-        elif op in FUSED_OPS:
-            reason = (
-                "融合算子：内部已把 " + "/".join(FUSED_OPS[op])
+        fused = fused_items(op)
+        if fused is not None:
+            reasons.append(
+                "融合算子：内部已把 " + "/".join(fused)
                 + " 吞成一个 aten 算子，算子级对账会漏检；需拆开或人工核对"
             )
+        reason = "；".join(reasons) or None
 
         nodes.append(
             {
@@ -113,13 +162,14 @@ def build_op_nodes(module, graph, module_id: str, module_ids: dict[str, str], ro
                 "label": f"{module_id}.{node.name}",
                 "loc": root_loc,
                 "kind": kind,
-                "shape_in": [],
+                "shape_in": data_input if data_input is not None else [],
+                "inputs": inputs,
                 "shape_out": shapes[0] if shapes else [],
                 "outputs": shapes,
                 "dtype": val_dtype(value),
                 "inplace": op.endswith("_"),
                 "source": RUNTIME,
-                "degraded": len(shapes) > 1 or op in FUSED_OPS,
+                "degraded": len(shapes) > 1 or fused is not None,
                 "degraded_reason": reason,
                 "repeat": 1,
                 "stale": False,

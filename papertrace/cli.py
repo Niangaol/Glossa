@@ -93,6 +93,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
             print(f"papertrace build：{exc}", file=sys.stderr)
             return MISSING_RUNTIME
         except TraceUnsupported as exc:
+            print("papertrace build：下面是 torch.export 原始诊断——", file=sys.stderr)
             print(f"papertrace build：{exc}", file=sys.stderr)
             return UNTRACEABLE
         except BuildError as exc:
@@ -122,20 +123,28 @@ def _cmd_build(args: argparse.Namespace) -> int:
         print(f"已写出 {out_path}（nodes=0 edges=0 anchors=0，骨架）")
     else:
         counts = (doc["meta"].get("runtime") or {}).get("counts") or {}
-        ops = sum(1 for n in doc["nodes"] if n["level"] == "op")
+        kinds = {"op": 0, "param": 0, "input": 0}
+        for node in doc["nodes"]:
+            if node["level"] == "op":
+                kinds[node.get("kind", "op")] = kinds.get(node.get("kind", "op"), 0) + 1
+        total_ops = kinds["op"] + kinds["param"] + kinds["input"]
         print(
-            f"已写出 {out_path}（nodes={len(doc['nodes'])} 其中算子 {ops}，"
-            f"edges={len(doc['edges'])}，真实追踪）"
+            f"已写出 {out_path}（nodes={len(doc['nodes'])}：算子 {kinds['op']} / "
+            f"权重 {kinds['param']} / 输入 {kinds['input']}，edges={len(doc['edges'])}，真实追踪）"
         )
         # 降级、融合、孤点、断链必须在摘要里就看得见，不能等用户去翻 JSON
         print(
-            "  degraded={} fused={} orphan={} shape_broken={}".format(
+            "  degraded={} fused={} orphan={} shape_broken={} shape_unchecked={}".format(
                 counts.get("degraded", "?"),
                 counts.get("fused", "?"),
                 counts.get("orphan", "?"),
                 counts.get("shape_broken", "?"),
+                counts.get("shape_unchecked", "?"),
             )
         )
+        real = (doc["meta"].get("runtime") or {}).get("real_execution") or {}
+        if not real.get("ok", True):
+            print(f"  注意：导出图没能再跑一遍，形状链来自 torch.export 推断：{real.get('reason')}")
     return 0
 
 
@@ -156,8 +165,13 @@ def _cmd_dump(args: argparse.Namespace) -> int:
     if args.edges:
         _print_edges(doc)
         return 0
-    broken = [e for e in doc["edges"] if not e["shape_consistent"]]
+    broken = [e for e in doc["edges"] if e.get("checked") and not e["shape_consistent"]]
+    unchecked = [e for e in doc["edges"] if not e.get("checked")]
     degraded = [n for n in doc["nodes"] if n["level"] == "op" and n["degraded"]]
+    kinds = {"op": 0, "param": 0, "input": 0}
+    for node in doc["nodes"]:
+        if node["level"] == "op":
+            kinds[node.get("kind", "op")] = kinds.get(node.get("kind", "op"), 0) + 1
     print(
         "nodes={} edges={} anchors={} mismatches={} unresolved={}".format(
             len(doc["nodes"]),
@@ -167,12 +181,17 @@ def _cmd_dump(args: argparse.Namespace) -> int:
             len(doc["unresolved"]),
         )
     )
-    print("operators={} degraded={} shape_broken={}".format(
-        sum(1 for n in doc["nodes"] if n["level"] == "op"), len(degraded), len(broken)
-    ))
+    print(
+        "operators={} (param={} input={}) degraded={} shape_broken={} shape_unchecked={}".format(
+            kinds["op"], kinds["param"], kinds["input"], len(degraded), len(broken), len(unchecked)
+        )
+    )
     # 形状链断了必须看得见，不能只在 JSON 里躺着
     for edge in broken:
-        print(f"  ! 形状对不上 {edge['src']} -> {edge['dst']} {_fmt_shape(edge['shape'])}")
+        print(
+            f"  ! 形状对不上 {edge['src']} -> {edge['dst']} "
+            f"消费者 {_fmt_shape(edge['shape'])} ≠ 生产者 {_fmt_shape(edge.get('producer_shape'))}"
+        )
     for node in degraded:
         print(f"  ~ {node['id']} {node['op']}：{node.get('degraded_reason') or '未说明原因'}")
     return 0
@@ -191,16 +210,24 @@ def _print_edges(doc: dict) -> None:
     """形状链对账入口：每条边一行，不一致的用 ! 标出来。"""
     by_id = {n["id"]: n for n in doc["nodes"]}
     broken = 0
+    unchecked = 0
     for edge in doc["edges"]:
         src, dst = by_id.get(edge["src"]), by_id.get(edge["dst"])
-        flag = "!" if not edge["shape_consistent"] else " "
-        broken += 0 if edge["shape_consistent"] else 1
+        if not edge.get("checked"):
+            flag = "?"
+            unchecked += 1
+        elif edge["shape_consistent"]:
+            flag = " "
+        else:
+            flag = "!"
+            broken += 1
         print(
             f"{flag} {_fmt_shape(edge['shape']):<16} "
+            f"生产者 {_fmt_shape(edge.get('producer_shape')):<16} "
             f"{edge['src']} ({src['op'] if src else '?'}) -> "
             f"{edge['dst']} ({dst['op'] if dst else '?'}) {edge['id']}"
         )
-    print(f"edges={len(doc['edges'])} shape_broken={broken}")
+    print(f"edges={len(doc['edges'])} shape_broken={broken} shape_unchecked={unchecked}")
 
 
 def _print_ops(doc: dict) -> None:
@@ -218,8 +245,14 @@ def _print_ops(doc: dict) -> None:
         # outputs 为空 = 这个节点没有张量输出；[[]] = 0 维标量
         known_out = bool(node.get("outputs")) or bool(node["shape_out"])
         shown_out = _fmt_shape(node["shape_out"]) if known_out else "(?)"
-        # 形参/权重没有「输入形状」，画 - 别让人误读成 0 维标量
-        shown_in = _fmt_shape(node["shape_in"]) if node.get("kind") == "op" else "-"
+        # 形参/权重没有「输入形状」，画 - 别让人误读成 0 维标量；
+        # 算子没观察到入参时画 (?)：空 [] 是 0 维标量，不能混用
+        if node.get("kind") != "op":
+            shown_in = "-"
+        elif node.get("inputs"):
+            shown_in = _fmt_shape(node["shape_in"])
+        else:
+            shown_in = "(?)"
         print(
             f"{node['id']:<16} {where:<34} "
             f"{shown_in} -> {shown_out} "
