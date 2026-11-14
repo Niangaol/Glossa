@@ -169,6 +169,29 @@ def test_dump_ops_on_empty_trace_prints_nothing():
     assert r.stdout.strip() == ""
 
 
+def test_dump_surfaces_degraded_nodes_and_broken_shapes():
+    """降级和断链必须出现在 dump 里，不能只在 JSON 里躺着。"""
+    import pytest
+
+    pytest.importorskip("torch", reason="真实追踪需要 torch")
+    out_dir = scratch_dir("dump-degraded")
+    built = run_cli(
+        "build",
+        "--repo", "tests/fixtures/nanogpt",
+        "--paper", "none",
+        "--out", str(out_dir),
+    )
+    assert built.returncode == 0, built.stderr
+
+    r = run_cli("dump", "--trace", str(out_dir / "trace.json"))
+    assert r.returncode == 0, r.stderr
+    assert "shape_broken=" in r.stdout
+    assert "degraded=" in r.stdout
+    # nanoGPT 的 split 一定是多输出节点 → 至少一条 degraded 明细
+    assert "~ " in r.stdout
+    assert "多输出算子" in r.stdout
+
+
 def test_second_build_refuses_to_clobber_without_force():
     """默认不覆盖已有的 trace.json——那可能是算了几十分钟的结果。"""
     out_dir = scratch_dir("no-clobber")

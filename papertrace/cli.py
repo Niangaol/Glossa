@@ -134,6 +134,8 @@ def _cmd_dump(args: argparse.Namespace) -> int:
     if args.ops:
         _print_ops(doc)
         return 0
+    broken = [e for e in doc["edges"] if not e["shape_consistent"]]
+    degraded = [n for n in doc["nodes"] if n["level"] == "op" and n["degraded"]]
     print(
         "nodes={} edges={} anchors={} mismatches={} unresolved={}".format(
             len(doc["nodes"]),
@@ -143,6 +145,14 @@ def _cmd_dump(args: argparse.Namespace) -> int:
             len(doc["unresolved"]),
         )
     )
+    print("operators={} degraded={} shape_broken={}".format(
+        sum(1 for n in doc["nodes"] if n["level"] == "op"), len(degraded), len(broken)
+    ))
+    # 形状链断了必须看得见，不能只在 JSON 里躺着
+    for edge in broken:
+        print(f"  ! 形状对不上 {edge['src']} -> {edge['dst']} {_fmt_shape(edge['shape'])}")
+    for node in degraded:
+        print(f"  ~ {node['id']} {node['op']}：{node.get('degraded_reason') or '未说明原因'}")
     return 0
 
 
