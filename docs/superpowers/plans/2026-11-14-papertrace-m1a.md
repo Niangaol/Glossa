@@ -5,11 +5,14 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**236 passed**，第三至第九轮评审的必修项都已修完，第十轮自查又堵了一个 kind 标反的洞
+**状态（2026-11-14）**：Task 7–11 全部落地，**288 passed**，第三至第十一轮评审的必修项都已修完。
+第十一轮把 kind 的最终权威交给 `torch.export` 自己（plan 逐项核对），并堵住了「两边互换」这个
+前四轮关卡全过却 kind 相反的洞；另外新增一条能力边界（`forward` 内 `no_grad` → exit 5）。
 （第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2；
 第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验；
-第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5；第九轮 I-1 orphan 双向语义 + I-2 未知/错位 kind fail-closed + M-1…M-3），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692`。
+第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5；第九轮 I-1 orphan 双向语义 + I-2 未知/错位 kind fail-closed + M-1…M-3；
+第十轮（自查）反向认领 + 常量不许顶替参数；第十一轮 C1 导出器逐项核对 + I-1 `CUSTOM_OBJ`/`TOKEN` + I-2 orphan 输出边界 + I-3 弱断言 + M-1…M-5），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -248,10 +251,13 @@ observe 也跟着改了：`exported.module()` 的 placeholder 被换成 target �
 **行数口径（踩过坑，钉死）**：用 `len(pathlib.Path(f).read_text(encoding="utf-8").splitlines())`。
 `Get-Content` 在这台机器上会**少算**（fx_nodes 实测 159 vs 真值 175、fx_signature 190 vs 208），
 第八轮就是用它核的「≤200 行」，结果 fx_signature 实际已 208 行超标而没被发现。
-当前真值：`fx_signature` 183、`build_trace` 181、`fx_nodes` 175、`report` 165、`fx_edges` 161、
-`cli` 157、`fx_trace` 153、`fx_graph` 148、`schema_structure` 129、`schema_validate` 100、
-`fx_inputs` 98、`fx_runtime` 31、`fx_contract` 54。**没有一个文件超过 200 行。**
-第十轮把契约校验从 fx_signature 拆到 `fx_contract.py` 后，fx_signature 从 202 降回 162。
+当前真值（第十一轮末，全仓扫描 `OVER200=[]`）：`fx_signature` 187、`fx_nodes` 185、`fx_edges` 184、
+`build_trace` 181、`report` 165、`fx_trace` 160、`cli` 157、`fx_graph` 148、`schema_structure` 129、
+`fx_contract` 126、`schema_validate` 100、`fx_inputs` 98、`fx_runtime` 31。**没有一个文件超过 200 行。**
+第十轮把契约校验从 fx_signature 拆到 `fx_contract.py` 后，fx_signature 从 202 降回 162；
+第十一轮加 `check_plan_source` 让它回到 187，仍在上限内（`fx_contract` 54 → 126）。
+测试文件不受这条约束，但也记一下最大的几个：`test_eleventh_review` 449、`test_seventh_review` 356、
+`test_sixth_review` 341、`test_tenth_review` 296、`test_model_zoo` 246。
 
 ### 第七轮评审（基线 b48f361，196 passed）：兜底、`*_like`、spec 契约
 
@@ -374,6 +380,68 @@ CLI 一条（monkeypatch `fx_trace.input_plan` 把权重标成 input → exit 2�
 标反时两边一起反，validate_trace 照样查不出。但这一轮说明我第九轮的**核对本身漏了一个方向**：
 真正缺的不是冗余副本，而是**另一个地面真相（模块）**。补上之后，build 侧两个方向都闭合了。
 
+
+### 第十一轮评审（基线 500c692，236 passed）：kind 的权威是导出器，不是调用方
+
+评审拿**两份报告**打这一轮（第二份基线 500c692）。最狠的一条 C1 是：第十轮的四道关卡
+（覆盖齐全、不重叠、无幽灵名、反向认领、数量校验）**全过，而 kind 正好相反**：
+
+```
+模型：self.x = nn.Parameter(...)，forward(x)      # 参数名与形参名同名
+真实 plan：[('p_x','param','x'), ('x','input',None)]
+改成：    [('p_x','input',None), ('x','param','x')]
+→ 名字全覆盖、顺序对、模块的参数 x 被「认领」了、USER_INPUT 数 == example_inputs 数
+→ 实测 CLI exit 0，trace 里 root/@000 kind=input（真参数）、root/@001 kind=param（真输入）
+→ validate_trace PASS
+```
+
+根因：前面所有关卡的地面真相是**模块**和**名字集合**，而「哪个 placeholder 是权重」这件事的
+权威其实是 `torch.export` 自己给的 `graph_signature.input_specs`。拿模块核只能证明「这个名字
+在模块里存在」，证明不了「这个 placeholder 就是它」。
+
+| 编号 | 问题 | 修法 |
+| --- | --- | --- |
+| C1 | plan 与导出器自己的 specs 从不比对，两边互换 kind 可全过四道关卡并 exit 0 | `fx_contract.check_plan_source(plan, expected)`：逐项比 name/kind/target/**顺序**，不一致 `BuildError`（exit 2），消息「传入的 input_specs 与 torch.export 自己给的不一致…kind 的权威是导出器而不是调用方」。`placeholder_args` 在 `check_contract` **之后**调它——顺序刻意，让第七/十轮 monkeypatch `fx_trace.input_plan` 的 CLI 用例仍拿到原文案 |
+| I-1（第二份 C1） | `KIND_MAP` 把 `CUSTOM_OBJ` 与 `TOKEN` 都映射成 `input`。torch 只把 ScriptObject 建成 `CUSTOM_OBJ`（值在 `exported.constants`），`TOKEN` 是 `TokenArgument`（副作用/控制流令牌）。旧测试只断言 `set(KIND_MAP)=={k.name for k in InputKind}`，**只查键不查值**，错映射全绿 | `CUSTOM_OBJ → const`；`TOKEN` 进 `REFUSED_KINDS` 明确拒绝（带理由）；未知 kind 仍拒绝。测试改成**钉死每个值** + `set(KIND_MAP) \| set(REFUSED_KINDS)` 覆盖全部 InputKind + 六种 kind 逐个映射的参数化 + `CUSTOM_OBJ` 从 `exported.constants` 取 sentinel 的真实路径 |
+| I-1（第一份） | `check_contract` 只做集合差：重复 target、常量不被认领、`const` 顶替缓冲都察觉不到 | ① `check_plan_source` 一旦生效，plan 就是导出器自己的，重复 target 无从伪造（探针实测 16 个模型 `dup_targets` 全为空，**再加唯一性判据不增加验证力反而有误杀风险**，故不加）；② `const` 分支删掉 `buffers` 兜底：值**只能**来自 `exported.constants`，顶替参数或缓冲一律 `BuildError`（评审 Q2：缓冲是可变状态，`BUFFER→param`，不能给 const 开第二套语义）；③ `build_op_nodes` 加可选 `exported=`，入口用 `check_plan_table` 核四张表（params/consts/inputs/owner），并标明它是**内部 API** |
+| I-2 | `orphan` 误报「直接 `return` 的常量」：`return torch.ones(2,4)` → edges=0、orphan=1、exit 0 | 新增 `fx_edges.output_node_ids(graph, by_name)`（递归展开 tuple/dict 输出），`finish_nodes(nodes, edges, outputs=None)` 的 orphan 判据加 `and n["id"] not in outputs`。补 CLI 级用例（常量输出 / 零实参输出都断言 `orphan==0`）与 tuple 输出的单元用例 |
+| I-3 | `test_legitimate_models_are_not_refused` 三个模型形参都叫 `x`，`assert table["params"]` 只判真值——自证弱断言 | 形参改成 `tokens` / `(y, z)`，断言**精确** params 集合、inputs 顺序、owner 字典，并逐个 param 位置断言 `arg is named[target]`；buffer-as-const 用例**反转**成「拒绝」；另建 `tests/test_model_zoo.py`：16 个模型的精确 kind 计数回归，期望值来自探针实测而不是从被测代码反推 |
+| M-1 | 死算子（有入边没人用）不被任何计数捕获 | **取舍写死**：本切片不做死代码检测，README 明说 `orphan==0` 不等于没有死代码；加一条单元用例钉死这个语义，免得以后被当成 bug「修」掉 |
+| M-2 | `example_inputs` 少一项时 CLI 文案来自 `torch.export`（`TypeError: missing a required argument`） | 接受现状（export 先炸，我们的友好文案走不到），README 已写清两种来源；补 CLI 用例断言 exit 5 且不写 trace |
+| M-3 | README 把 `torch.ones(...)` 写成常量；orphan 定义没考虑图输出；exit 2 清单缺项 | README 六处同步：常量 vs 字面量算子（`self.const`→`CONSTANT_TENSOR`/`kind=const`，forward 里现写的 `torch.ones`→`ones` 算子/`kind=op`）、orphan 三条件、三道关与「两边互换」反例、`build_op_nodes` 内部 API、exit 2/5 清单 |
+| M-4/M-5 | 文档漂移、`fx_signature` 职责偏重 | 行数按 python splitlines 重测（见上）；`fx_contract` 承担全部契约判据（126 行），`fx_signature` 187 行 |
+
+**自己又挖出一条评审没测到的能力边界**：zoo 里的 `NoGrad`（`forward` 内 `with torch.no_grad()`）
+走全链路会炸——导出器把那段包成子模块，图里出现 `get_attr submod_3 → target submod_1`。
+评审只测了 `check_contract`（过得去），没测 `trace_module`。探针实测：
+失败发生在 `torch.fx.GraphModule(nn.Module(), ex.graph)` 构造期（`AttributeError: 'Module' object
+has no attribute 'submod_1'`）。试过把 `ex.module().named_children()` 挂回空根模块：observe 能跑通，
+**但那个非张量 `get_attr` 被标成 `param`，「权重 1」变成「权重 2」**——是错数据。
+
+裁决：**拒绝，不挂回去**。`fx_trace` 在拿到 `exported.graph` 后先查
+`artifacts = [n for n in graph.nodes if n.op in ("get_attr", "call_module")]`，非空即
+`TraceUnsupported`（exit 5），消息点名节点、说明常见于 `forward` 内 `no_grad`、给出绕过办法
+（把 `no_grad` 移到 `forward` 外）。理由与全项目 fail-closed 一致：宁可说清楚追不动，
+也不产权重数不对的 trace；给非张量节点发明新 kind 属 M1b 范围。zoo 相应改成 15 条正向 +
+1 条「精确拒绝理由」（先证契约关是过的，再证 `trace_module` 拒绝且消息含「子模块」「no_grad」「权重」）。
+
+**测试**：新增 `tests/test_eleventh_review.py`（24 条 + 后续追加，449 行）、`tests/test_model_zoo.py`
+（15 条正向 + 1 条拒绝，246 行）；`test_ninth_review` 的 coverage 用例改成 `set(KIND_MAP) | set(REFUSED_KINDS)`、
+flipped 用例改名并断言新文案；`test_tenth_review` 反转 buffer 用例 + 新增 `BufferOnly` 精确 plan +
+`ConstAttr` 走「导出器自己的 plan 但 constants 清空」的路径。
+
+变异探针（七组，均已还原）：关掉 `check_plan_source` 调用 → **4 条红**；`CUSTOM_OBJ` 退回 input → 3 条红；
+`REFUSED_KINDS` 判断改 `if False` → TOKEN 文案那条红；删 orphan 的 `not in outputs` → 4 条红；
+恢复 const→buffer 兜底 → 1 条红；`check_plan_table(...)` 换 `pass` → 1 条红；`if artifacts:` → `if False and artifacts:` → 1 条红。
+
+全量 **288 passed in 49.22s**。端到端 `output/eleventh-check`：build exit 0，nodes=128（算子 75 /
+权重 18 / 输入 1 / 模块 34）、edges=101、degraded=2、fused=0、orphan=0、shape_broken=0、
+shape_unchecked=0、`real_execution={ok:True}`——与第八/九/十轮逐项一致，新守卫没误伤 fixture。
+
+**这一轮的教训**：前四轮都在加「关卡」，但关卡的地面真相选错了就全是摆设。
+名字集合、模块参数表都只能证明「存在」，证明不了「对应」。真正独立的第三方是导出器自己——
+它早就把答案写在 `input_specs` 里，我们却一直没拿它当权威，只当初始值。
+
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
@@ -443,3 +511,6 @@ CLI 一条（monkeypatch `fx_trace.input_plan` 把权重标成 input → exit 2�
 | `b8d39d2` | 第九轮必修：orphan 改判双向、未知/重叠/幽灵 kind 一律拒绝、runtime_meta 拆出 fx_runtime、行数口径改 python splitlines |
 | `d4c84a2` | 第九轮文档：钉住提交哈希与行数口径 |
 | `500c692` | 第十轮自查：反向认领判据（模块地面真相）、常量不许顶替参数、spec↔模块契约统一 exit 2、拆出 fx_contract |
+| `7dc55f2` | 第十轮文档：记录自查、钉住提交哈希 |
+| `0e9e608` | 第十一轮必修：plan 与导出器逐项核对（`check_plan_source`）、`CUSTOM_OBJ→const`/`TOKEN` 拒绝、orphan 认图输出、const 不许顶替缓冲、`build_op_nodes` 的 `exported` 入口断言、`no_grad` 子模块图 exit 5、16 模型 zoo 回归、弱断言加牙 |
+| `ed0abc3` | 第十一轮文档：README 六处同步、计划记录、账本、行数重测 |
