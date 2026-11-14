@@ -137,20 +137,37 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `Sub.w` 与根 `M.a` 都是 `(2,4)` 时，trace 把 `root.p_a` 的 `parent_id` 写成 `root/sub`、
   `root.p_sub_w` 写成 `root`，而 `shape_broken`/`orphan` 全 0、`validate_trace` 通过、CLI exit 0。
   那是**可见的错误数据**；第十三轮写的「同形状互换没有任何可见差异」是错的，已纠正）：
-  ⑧ **名字 ↔ target 核对**（`fx_names.check_name_target`）：placeholder 的**名字**在图上，
-  torch 按 `前缀 + target.replace(".", "_")` 生成（重名再加 `_N`）；`target` 在 `input_specs` 里。
-  改后者不会改前者——与 ⑦ 同一个道理：找另一份产物，而不是把同一份映射再算一遍。
-  反推出的 target 与 spec 说的不符就 exit 2，点名「`p_a` 的名字对应 `a`，但 spec 说它是 `sub.w`」。
-  11 个真实模型普查零 mismatch；嵌套/tied/ParameterList/ParameterDict/非持久缓冲/普通张量属性/
-  同名遮蔽都有正向对照用例，18 个 zoo 模型全过。
-  **只在反推唯一时比较**：`a.b` 与 `a_b` 压平后同名，名字区分不了两个 target，跳过不猜；
-  `ws.0` 这种本来就带数字的 target 必须**先按全名查、查不到才剥 `_N`**（剥错了会静默跳过，
+  ⑧ **名字 ↔ target 核对**（`fx_names.check_name_target`）：placeholder 的**名字**在图上
+  （torch 的 `placeholder_naming_pass` 生成，`torch/_export/utils.py:1080-1215`），`target` 在
+  `input_specs` 里。改后者不会改前者——与 ⑦ 同一个道理：找另一份产物，而不是把同一份映射再算一遍。
+  **第十五轮把实现从「反推索引」改成「正向核对」**，因为反推是**有损**的：torch 生成名字时
+  先剥**开头**的 `L__self___`/`self_`、把非字母数字换成 `_`、再 `lower()`
+  （`utils.py:1113-1119`、`:1168`；嵌套的 `sub.self_attn` **不剥**，实测确认）。
+  第十四轮只按 `target.replace(".", "_")` 反推，后果是双向的：
+  - **误杀合法模型**（评审 C1）：`self_attn.weight` 的名字是 `p_attn_weight`，反推索引里
+    `attn_weight` 唯一指向 `attn.weight`，与 spec 说的 `self_attn.weight` 不符 → exit 2。
+    `a-b`+`a_b`、`W`+`w`、`x`+`self_x` 同理，四个合法模型全被拒、不写 trace。
+  - **漏检 + 静默写错 parent**（评审 C2）：`self_a`/`self_b` 的 base `a_weight` 在索引里
+    **查不到**（索引键是 `self_a_weight`）→ 跳过不猜 → 互换 target 后 `parent_id` 写反、
+    CLI exit 0、counts 全 0。这**不是**已文档化的压平歧义，是映射缺失。
+  正向核对按 torch 的规则把 spec 的 `target` 映射成期望的 base，再与图上观察到的 base 比
+  （允许 `_N` 重名后缀，**先比全名**：`ws.0` 的 base 本来就是 `ws_0`，先剥后缀会漏检，
   `test_parameter_list_target_swap_is_refused` 钉死这个顺序）。
-  名字反推与模块无关，所以**同模块**的同形状互换也被拒——第十三轮那条「不可观测」用例
+  **按构造不会误杀**：参数真名叫 `self_` 时 base 是空串，反推会误杀，正向不会。
+  对不上就 exit 2，点名「`p_a_weight` 的名字按 torch 的命名规则对应 'a_weight'，
+  但 spec 说它是 'self_b.weight'」。前缀表含 `obj_`（CUSTOM_OBJ）：命名 pass 会把它的
+  `target` 改写成 `name[4:]`（`utils.py:1211-1215`），所以两种写法都接受。
+  期望值不是我自己拍的：`tests/test_fifteenth_review.py` 用六个真实模型
+  （`self_attn`+`attn`、`self_a`/`self_b`、`a-b`+`a_b`、`W`+`w`、嵌套 `self_attn`、`x`+`self_x`）
+  把我们的 `strip_name` 与 torch **真实生成的名字**逐个交叉核对，并断言 `parent_id` 精确正确；
+  另有 11 个温和命名模型与 18 个 zoo 模型的正向对照。
+  名字核对与模块无关，所以**同模块**的同形状互换也被拒——第十三轮那条「不可观测」用例
   已按事实改写成 `test_same_shape_target_swap_is_refused_by_the_name_gate`。
-  残余边界（这次真的只剩这一条）：压平撞名时跳过，`parent_id` 确实会写反，
-  `tests/test_fourteenth_review.py::test_ambiguous_swap_really_does_change_parent_id`
-  构建整份 trace 把这个代价钉成可见事实，不假装封死。
+  残余边界（真的只剩这一条）：**压平撞名**——`a.b` 与 `a_b`、`self_attn.weight` 与 `attn.weight`
+  正向映射到同一个 base，名字区分不了它们，互换仍然抓不到，`parent_id` 确实会写反。
+  两条 trace 级用例把这个代价钉成可见事实，不假装封死：
+  `test_fourteenth_review.py::test_ambiguous_swap_really_does_change_parent_id`、
+  `test_fifteenth_review.py::test_flattening_clash_swap_is_still_not_observable_by_name`。
   就地篡改真产物的 spec 属于「篡改权威本身」，与 monkeypatch 掉全部 `input_plan` 同一类，
   不在本切片的威胁模型内；⑤⑥⑦⑧ 只抓其中**可观测**的改法。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，

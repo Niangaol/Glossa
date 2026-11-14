@@ -5,14 +5,20 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**375 passed**，第三至第十四轮评审的必修项都已修完。
+**状态（2026-11-14）**：Task 7–11 全部落地，**417 passed**，第三至第十五轮评审的必修项都已修完。
 第十三轮评审结论：**可以进入 M1b，必修项无**；唯一的条件项（target 互换）我选择**修**而不是只写文档——
 补了第七道关：`placeholder_args` 取到真实张量后与 `node.meta["val"]` 的形状核对（两个独立字段，真核对）。
 第十四轮评审推翻了第七道关留下的那句「同形状互换不可观测」：**同形状、跨模块**互换 target 会把
 `parent_id` 写反（可见的错误数据，CLI 仍 exit 0）。补第八道关 `fx_names.check_name_target`：
-placeholder 的**名字**在图上、`target` 在 spec 里，是两个独立字段，反推唯一时不符就拒绝。
-名字反推与模块无关，所以**同模块**的同形状互换也一并被拒；真正剩下的洞只有「压平撞名」，
+placeholder 的**名字**在图上、`target` 在 spec 里，是两个独立字段，对不上就拒绝。
+名字核对与模块无关，所以**同模块**的同形状互换也一并被拒；真正剩下的洞只有「压平撞名」，
 已用整份 trace 的 `parent_id` 差异钉成显式用例，不假装封死。
+第十五轮评审指出第八道关**自己**有映射缺口：torch 生成名字时会剥开头的 `self_`/`L__self___`、
+sanitize 非字母数字、再 `lower()`，而我只按 `target.replace(".", "_")` 反推 —— 既**误杀**四个合法模型
+（`self_attn`+`attn`、`a-b`+`a_b`、`W`+`w`、`x`+`self_x` 全部 exit 2），又**漏检** `self_a`/`self_b`
+（索引查不到 → 静默跳过 → 互换后 `parent_id` 写反而 CLI exit 0）。改成**正向核对**：按 torch 的规则
+把 spec 的 target 映射成期望的 base 再比，按构造不会误杀；六个真实模型与 torch **实际生成的名字**
+逐个交叉核对，`parent_id` 精确断言。
 第十一轮把 kind 的最终权威交给 `torch.export` 自己（plan 逐项核对），并堵住了「两边互换」这个
 前四轮关卡全过却 kind 相反的洞；另外新增一条能力边界（`forward` 内 `no_grad` → exit 5）。
 第十二轮发现「与导出器核对」的 expected 也是从调用方传进来的对象重生的（同源），补了三道防线：
@@ -24,8 +30,9 @@ placeholder 的**名字**在图上、`target` 在 spec 里，是两个独立字�
 第十轮（自查）反向认领 + 常量不许顶替参数；第十一轮 C1 导出器逐项核对 + I-1 `CUSTOM_OBJ`/`TOKEN` + I-2 orphan 输出边界 + I-3 弱断言 + M-1…M-5；
 第十二轮 I-1 同源 expected → 类型守卫 + 顺序不变量 + 恰好认领一次、I-3 补 CLI 级退出码用例、Minor zoo 集合相等/dict 输出/mutation CLI；
 第十三轮 I-1 target 互换 → 形状核对（第七道关）、M-1 pytree 措辞改准、M-3 TOKEN 归类说明、M-5 `cond`/`while_loop` 点名、M-6 补 target 互换回归；
-第十四轮 I-1 同形状跨模块互换 → 名字↔target 核对（第八道关）、M-1 「不可观测」用例按事实改写、M-3 拆出 `fx_kinds`、M-5 提交链与端到端路径补齐），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1`。
+第十四轮 I-1 同形状跨模块互换 → 名字↔target 核对（第八道关）、M-1 「不可观测」用例按事实改写、M-3 拆出 `fx_kinds`、M-5 提交链与端到端路径补齐；
+第十五轮 C1 误杀 + C2 漏检 → 第八道关改**正向核对**（复刻 torch 的 `_strip_name`+`lower`）、I-1 文档纠正、I-2 六个真实命名模型 + 与导出器实际名字交叉核对、M-1 补 `obj_` 前缀、M-3 sanitize/lower、M-4 提交链补齐），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1` → `c2608ea` →（本次）。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -679,6 +686,120 @@ torch），再 `shape_prop.py`（推不出的边置 `shape_consistent=False`，*
 `args[0] is module.b` 就写下「trace 里没有任何可见差异」，而 `parent_id` 恰恰是用 target 定位的——
 没构建整份 trace 就宣称无差异，等于把错误行为钉成了规格。评审 M-1 要求的「trace 级断言」是对的，
 只是实测结果比它预期的更强：新关连同模块互换一起拒了。
+
+### 第十五轮评审（基线 0ca6837，375 passed）：第八道关自己的映射缺口
+
+评审结论「需要修」，两条 Critical 都在**我上一轮新写的那道关**里。它说得对，而且比我想的更严重：
+不是「边界没写清」，是**既误杀又漏检**。
+
+**C1 误杀合法模型**（`output/review14/repos/self_attn_clash/`）：`self_attn=Linear(4,4)` +
+`attn=Linear(4,4)`，真实 spec 是 `p_attn_weight→self_attn.weight`、`p_attn_weight_1→attn.weight`。
+我的反推索引键是 `self_attn_weight`，而图上观察到的 base 是 `attn_weight` → 索引里唯一指向
+`attn.weight` → 与 spec 不符 → **CLI exit 2、不写 trace**。同族还有 `a-b`+`a_b`、`W`+`w`、`x`+`self_x`。
+
+**C2 漏检 + 静默写错 parent**（`output/review14/repos/self_ab/`）：`self_a`/`self_b` 各一个同形状
+`weight`，真实 spec `p_a_weight→self_a.weight`、`p_b_weight→self_b.weight`。base `a_weight` 在索引里
+**查不到**（键是 `self_a_weight`）→ `candidates is None` → 跳过不猜。互换 target 后 `trace_module`
+成功、CLI **exit 0**，`root.p_a_weight.parent_id` 变成 `root/self_b`、`root.p_b_weight` 变成 `root/self_a`，
+counts 全 0。**这不是已文档化的压平歧义**（`a_weight`/`b_weight` 本来唯一），是映射缺失。
+
+**根因：我把 torch 的命名规则近似成了 `target.replace(".", "_")`。** 读
+`pydeps/torch/_export/utils.py` 的真实实现：
+
+| 位置 | 规则 |
+| --- | --- |
+| `:58-65` | `placeholder_prefixes`：`USER_INPUT:""`、`PARAMETER:"p_"`、`BUFFER:"b_"`、`CONSTANT_TENSOR:"c_"`、**`CUSTOM_OBJ:"obj_"`**、`TOKEN:"token"` |
+| `:1113-1119` | `_strip_name(x)`：剥**开头**的 `L__self___`（10 字符）`elif` `self_`（5 字符），再 `re.sub(r"[^a-zA-Z0-9]", "_", x)`。**是函数内闭包，import 不到，只能复刻** |
+| `:1168-1169` | `base_name = _strip_name(spec.target).lower()`，再 sanitize 一次（冗余） |
+| `:1171-1178` | `_rename_without_collisions(..., prefix + base_name, is_placeholder=True)` → 撞名加 `_N` |
+| `:1206-1210` | `spec.arg.name = name_map[spec.arg.name]`（名字回写 spec，所以两者确实同步） |
+| `:1211-1215` | **CUSTOM_OBJ 特例**：`spec.target = name_map[spec.target][4:]` → 命名 pass 之后 target **就等于 `name[4:]`**，不再是原始属性路径 |
+
+六个模型实测（`output/probes/probe17d.py` → `p17.txt`，修前）：
+
+| 模型 | torch 真实名字 → target | 修前 |
+| --- | --- | --- |
+| `self_attn`+`attn` | `p_attn_weight→self_attn.weight`、`p_attn_weight_1→attn.weight` | **REFUSES**（C1） |
+| `self_a`/`self_b` | `p_a_weight→self_a.weight`、`p_b_weight→self_b.weight` | pass（其实是**跳过** → C2） |
+| `a-b`+`a_b` | `p_a_b_weight→a-b.weight`、`p_a_b_weight_1→a_b.weight` | **REFUSES** |
+| `W`+`w` | `p_w→W`、`p_w_1→w` | **REFUSES**（缺 `lower()`） |
+| 嵌套 `sub.self_attn` | `p_sub_self_attn_weight→sub.self_attn.weight` | pass（**证实 `self_` 只剥开头**） |
+| `x`+`self_x` | `p_x→x`、`p_x_1→self_x` | **REFUSES** |
+
+**修法：反推索引 → 正向核对。** 新 `fx_names.strip_name(target)` 复刻 torch 的规则，
+`_matches(base, expected)` 判「base == expected，或 base == expected + `_数字`」
+（**先比全名**：`ws.0` 的 base 本来就是 `ws_0`，先剥后缀会漏检）。对每个非 input 的 placeholder：
+剥前缀得 base，`expected = strip_name(spec.target)`，不匹配就 BuildError。
+**不再需要索引，也不再需要 `named`/`constants` 参数** → 签名从
+`check_name_target(placeholders, plan, named, constants)` 变成 `check_name_target(placeholders, plan)`。
+
+为什么正向严格更好（不只是「换个写法」）：
+
+- **反推是有损的**。`_strip_name` 不是单射：参数真名叫 `self_` 时 base 是空串，反推索引会把它
+  映射到空键、与 target `self_` 不符 → **误杀**。正向按构造无误杀（`strip_name("self_") == ""`）。
+- **歧义不需要显式检测**。压平撞名时两个 target 正向映射到同一个 base，核对自然通过 ——
+  那正是已文档化的残余洞，不必再维护「唯一候选」这套逻辑（它恰恰是 C2 的来源）。
+- **代码更短**：`_flat_index` 整个删掉，fx_names 79 → 106 行（多出来的是复刻规则与 docstring）。
+
+修后六模型全部建得出来，`parent_id` 精确正确（`output/probes/probe18.py` 实测，期望值写死在
+`tests/test_fifteenth_review.py::PARENTS`，**不是从被测代码反推**）：
+`SelfAttnClash` 四个权重分别挂 `root/self_attn`×2、`root/attn`×2；`SelfAB` 挂 `root/self_a`/`root/self_b`；
+`Hyphen` 挂 `root/a-b`/`root/a_b`；`NestedSelf` 挂 `root/sub.self_attn`/`root/sub.attn`
+（嵌套模块 id 保留点分路径作为一个 module 节点，实测**无悬挂 parent**）。
+
+**M-1（`obj_` 前缀）已补**：`PREFIXES` 加 `obj_`；CUSTOM_OBJ 的 target 既可能等于 base 本身
+（命名 pass 改写过）也可能仍是原始路径（`:1211` 的 `if spec.target in name_map` 不成立时），两种都接受。
+**诚实说明**：试着用 `@torch.jit.script` 的 ScriptObject 造真 CUSTOM_OBJ 导出，torch 2.15 把
+`self.obj.add(x)` **常量折叠**成了 `x + 3`，spec 里只剩 `x` 一个 USER_INPUT，没能产生 CUSTOM_OBJ。
+所以 `obj_` 分支是**按源码实现 + 单元用例钉死**（`custom-obj-rewritten`/`custom-obj-raw`/`custom-obj` 拒绝），
+没有真实导出背书，这一点不假装。
+
+**I-1（文档过度声称）已纠正**：README 删掉「11 个真实模型普查零 mismatch」这种以偏概全的话，
+改成写明 C1/C2 两个方向的反例与修法；「真正剩下的洞只有压平撞名」这句**修后仍然成立**，
+但现在它是有证据的：残余洞多了第二个实例（`self_attn.weight` ↔ `attn.weight`），
+`test_flattening_clash_swap_is_still_not_observable_by_name` 构建整份 trace 证明 `parent_id` 写反。
+plan 提交链补 `c2608ea`（M-4）。
+
+**I-2（正向模型自选、断言偏弱）已修**：
+
+- 新增 `tests/test_fifteenth_review.py`（19 条）：六个真实命名模型 × 2（合法 build + `parent_id` 精确断言；
+  `strip_name` 与 torch **实际生成的名字**逐个交叉核对，后缀规则在测试里独立写出来、不调被测的 `_matches`）；
+  `self_a`/`self_b` 互换的直接 API 拒绝（先跑 `_older_gates` 证明前几关全过）、owner 复算证明错误可见、
+  **CLI 级 exit 2**（篡改 `torch.export.export` 返回值）+ 不写 trace + 无 Traceback；
+  三个合法命名仓库的 **CLI 级 exit 0** 并从写出的 `trace.json` 里核 `parent_id`；压平撞名的 trace 级洞证据。
+- `test_ambiguous_flattening_swap_is_not_guessed` 从 `len(args)==3` 改成
+  `args[0] is module.a.b and args[1] is module.a_b` —— 直接证明洞是可观测的，不是「没报错就算过」。
+- `test_fourteenth_review.py` 的单元边界重写：`strip_name` 九条（含 `self_`→空串、嵌套不剥、`L__self___`）、
+  一致对 16 条（含 `obj_` 两种写法、`p_`+`self_`、大写、连字符、重名后缀）、不一致对 5 条。29 → 53 条。
+
+**M-3（不 lower/不 sanitize）**：随 `strip_name` 一起修好。**M-2（SymInt 静默跳过）仍留 M1b**，
+理由与第十四轮相同（要动 schema 与 20 处断言，M1b 引入符号维度时一起加 `shape_gate_skipped`）。
+
+**五组变异探针**（`output/probes/mutate15.py`，跑 fifteenth+fourteenth，全部 restored=True）：
+
+| 变异 | 结果 |
+| --- | --- |
+| A 关掉 `self_` 剥离（`elif False`） | 1 failed：`SelfAttnClash` 合法 build |
+| B 去掉 `.lower()` | 1 failed：`Upper` 合法 build |
+| C 去掉 sanitize（`return text.lower()`） | 1 failed：`SelfAttnClash`（`.` 没被换成 `_`） |
+| D 关掉 `check_name_target` 调用 | 1 failed：`self_a`/`self_b` 互换不再被拒 |
+| E `_matches` 的后缀分支恒 False | 1 failed：`p_attn_weight_1` 这类重名后缀被误杀 |
+
+还原后 targeted **72 passed**。全量 **417 passed in 51.80s**（375 + 19 + 23）。
+端到端 `output/fifteenth-check`：EXIT 0、nodes=128（module 34/param 18/input 1/op 75）、edges=101、
+degraded 2、fused 0、orphan 0、shape_broken 0、shape_unchecked 0、`real_execution={ok:true,reason:null}`。
+与第十四轮产物做**结构化逐字段 diff**（`output/probes/diff15.py`）：只有 `meta.created_at` 与
+`meta.repo.url`（这次传的是绝对路径）两处不同，**其余完全一致** —— 不是「看起来一样」。
+行数（pathlib splitlines）**OVER200=[]**：fx_nodes 187、fx_edges 184、build_trace 181、fx_contract 175、
+report 165、fx_signature 161、fx_trace 160、cli 157、fx_graph 148、schema_structure 129、**fx_names 106**、
+schema_validate 100、fx_shapes 98、fx_inputs 98、fx_kinds 54。
+
+**教训（这轮最贵的一条）**：评审第十二轮说过「expected 从调用方对象重生就不是第三方」，
+这轮它换了个说法——**「地面真相独立」不等于「我的映射正确」**。名字确实独立于 target（torch 回写同步），
+但我用来比较两者的**映射**是我自己近似的，近似错了就同时产生误杀与漏检，而且 29 条自选温和命名的
+用例全绿也发现不了。对策不是再加一道关，而是：①去读权威的**实现**（不是 docstring、不是我的记忆）；
+②让期望值来自权威的**实际输出**（交叉核对），而不是来自我的实现；③优先选**按构造不会误杀**的
+方向（正向映射）而不是需要「唯一性」兜底的方向（有损反推）。
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
@@ -762,3 +883,6 @@ torch），再 `shape_prop.py`（推不出的边置 `shape_consistent=False`，*
 | `870d614` | 第十三轮文档：七道关与残余边界、TOKEN 归类说明、`cond`/`while_loop` 点名、pytree 措辞改准、M-2 留 M1b 的理由 |
 | `aeea7e6` | 钉第十三轮提交链 |
 | `0ca6837` | 第十四轮必修：第八道关 `fx_names.check_name_target`（名字↔target，反推唯一才比）、拆出 `fx_kinds`、「不可观测」用例按事实改写、残余洞钉成 trace 级证据、29 条新回归，375 passed |
+| `81581a1` | 第十四轮文档：八道关与残余边界、计划记录、行数重测 |
+| `c2608ea` | 钉第十四轮提交链 |
+| （本次） | 第十五轮必修：第八道关改**正向核对**（复刻 torch `_strip_name`+`lower`+sanitize，补 `obj_`）、六个真实命名模型 + 与导出器实际名字交叉核对、CLI 级互换 exit 2 与合法 exit 0、歧义断言加牙，417 passed |
