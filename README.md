@@ -71,11 +71,15 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   `root/@037`——`@` 不会出现在模块路径里，所以两种 id 不可能撞车。真有子模块名里带 `@`，
   `build` 直接报 `BuildError` 要求改名，而不是生成一份 id 打架的 trace。
 - **`kind`**：`op` | `input` | `param` | `const`。**谁是谁由 `graph_signature.input_specs` 说了算**：
-  `PARAMETER`/`BUFFER` → `param`，`CONSTANT_TENSOR`/`CUSTOM_OBJ` → `const`，`USER_INPUT` → `input`，
-  `TOKEN` **明确拒绝**（它是 `TokenArgument`，副作用/控制流的令牌，不是张量，不该按张量喂）；
-  不认识的 `InputKind` 也拒绝，不默认成 `input`。`CUSTOM_OBJ` 是 `exported.constants` 里的
-  `ScriptObject` 常量（torch 只把 ScriptObject 建成这一类），标成 `input` 会让合法模型凭空多一个
-  数据输入、随后 `example_inputs` 数量对不上而 exit 5。
+  `PARAMETER`/`BUFFER` → `param`，`CONSTANT_TENSOR` → `const`，`USER_INPUT` → `input`；
+  `TOKEN` 与 `CUSTOM_OBJ` **明确拒绝**，不认识的 `InputKind` 也拒绝，不默认成 `input`。
+  `TOKEN` 是 `TokenArgument`（副作用/控制流的令牌），不是张量，不该按张量喂。
+  `CUSTOM_OBJ` 是 `exported.constants` 里的 `ScriptObject` 常量（torch 只把 ScriptObject
+  建成这一类）：第十一轮曾把它映射成 `const`，但**从来没有真实导出用例背书**——torch 2.15
+  会把 `self.obj.add(x)` 常量折叠成 `x+3`，造不出 `CUSTOM_OBJ` 的 spec。第十六轮起
+  **先拒绝**（exit 2），M1b 补真实 ScriptObject 导出用例再放开；没验证过的分支不写成「已支持」。
+  标成 `input` 会让合法模型凭空多一个数据输入、随后 `example_inputs` 数量对不上而 exit 5，
+  所以「不默认成 input」这条对两者都成立。
   `parent_id` 用 `spec.target` 的点分路径（`transformer.h.0.attn`）定位所属模块，不靠名字猜。
   **常量与字面量算子要分清**：`self.const = torch.ones(...)` 这种**属性**被导出器抬成
   `CONSTANT_TENSOR`，单独标 `kind=const`，摘要写「常量 N」而不是塞进「权重 N」；
@@ -154,20 +158,32 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
   （允许 `_N` 重名后缀，**先比全名**：`ws.0` 的 base 本来就是 `ws_0`，先剥后缀会漏检，
   `test_parameter_list_target_swap_is_refused` 钉死这个顺序）。
   **按构造不会误杀**：参数真名叫 `self_` 时 base 是空串，反推会误杀，正向不会。
-  对不上就 exit 2，点名「`p_a_weight` 的名字按 torch 的命名规则对应 'a_weight'，
-  但 spec 说它是 'self_b.weight'」。前缀表含 `obj_`（CUSTOM_OBJ）：命名 pass 会把它的
-  `target` 改写成 `name[4:]`（`utils.py:1211-1215`），所以两种写法都接受。
+  对不上就 exit 2，报错同时给出**观察到的 base** 与**按 target 应当得到的 base**
+  （「`p_a_weight` 去掉前缀 'p_' 后的 base 是 'a_weight'，而 target='self_b.weight'
+  按 torch 的命名规则应当是 'self_b_weight'」）——只印后两者的话，`strip_name(target)`
+  恰好等于 `target` 时会印成同一个值，用户看不出为什么被拒（第十六轮 M-2）。
+  **认不出前缀就拒绝，不静默跳过**（第十六轮 I-1）：原来 `prefix is None` 直接 continue，
+  等于 torch 一旦改命名规则、或直接 API 传个怪名字，这道关就悄悄失效。当前 torch 2.15
+  的前缀表是 `p_`/`b_`/`c_`/`obj_`/`token`，我们只留 `p_`/`b_`/`c_`：`obj_` 与 `token`
+  对应的种类已在更早一步被拒，万一直接 API 传进来会撞上「认不出前缀」而不是走没验证过的分支。
+  `tests/test_sixteenth_review.py` 真的把图上的 placeholder 改名（`node.name` 是可写成员）
+  来模拟「torch 换了命名规则」，并钉到 CLI 级 exit 2。
   期望值不是我自己拍的：`tests/test_fifteenth_review.py` 用六个真实模型
   （`self_attn`+`attn`、`self_a`/`self_b`、`a-b`+`a_b`、`W`+`w`、嵌套 `self_attn`、`x`+`self_x`）
   把我们的 `strip_name` 与 torch **真实生成的名字**逐个交叉核对，并断言 `parent_id` 精确正确；
   另有 11 个温和命名模型与 18 个 zoo 模型的正向对照。
   名字核对与模块无关，所以**同模块**的同形状互换也被拒——第十三轮那条「不可观测」用例
   已按事实改写成 `test_same_shape_target_swap_is_refused_by_the_name_gate`。
-  残余边界（真的只剩这一条）：**压平撞名**——`a.b` 与 `a_b`、`self_attn.weight` 与 `attn.weight`
-  正向映射到同一个 base，名字区分不了它们，互换仍然抓不到，`parent_id` 确实会写反。
-  两条 trace 级用例把这个代价钉成可见事实，不假装封死：
-  `test_fourteenth_review.py::test_ambiguous_swap_really_does_change_parent_id`、
-  `test_fifteenth_review.py::test_flattening_clash_swap_is_still_not_observable_by_name`。
+  残余边界（说全，不留「已封死」的错觉）：
+  - **压平撞名**：`a.b` 与 `a_b`、`self_attn.weight` 与 `attn.weight` 正向映射到同一个 base，
+    名字区分不了它们，互换仍然抓不到，`parent_id` 确实会写反。两条 trace 级用例把这个代价
+    钉成可见事实：`test_fourteenth_review.py::test_ambiguous_swap_really_does_change_parent_id`、
+    `test_fifteenth_review.py::test_flattening_clash_swap_is_still_not_observable_by_name`。
+  - **这一关单独调不是完整权威**：`_matches` 允许任意 `_数字` 后缀，所以
+    `check_name_target([p_a_1], target='a')` 会被接受；端到端由 ⑥ 的「恰好认领一次/未认领」
+    拒绝（`test_sixteenth_review.py` 把两层都钉死：单关接受 + 两个模型端到端拒绝）。
+    要让它独立可复用，得精确复刻 torch 的冲突计数，那会引入新的误杀风险，M1a 不做。
+  - **CUSTOM_OBJ 属 M1b 验证项**：现在直接拒绝，不是「支持了但没测」。
   就地篡改真产物的 spec 属于「篡改权威本身」，与 monkeypatch 掉全部 `input_plan` 同一类，
   不在本切片的威胁模型内；⑤⑥⑦⑧ 只抓其中**可观测**的改法。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
@@ -253,13 +269,13 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 | --- | --- |
 | 0 | 成功 |
 | 1 | 内部错误：生成的 trace 不合 schema（属 bug，不是用法问题） |
-| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次/`target` 取到的张量形状与导出图里这个节点不符/placeholder 的名字与 `target` 对不上） |
+| 2 | 用法/入口/契约错误（仓库不存在、entry 对不上、论文 ingest 未实现、trace.json 非法、`input_specs` 与图**或模块**或**导出器自己**对不上：缺项/多项/顺序/未知或拒绝的 kind（`TOKEN`/`CUSTOM_OBJ`）/权重与输入标反/常量顶替参数或缓冲/plan 与 `input_specs` 逐项不一致/`exported` 不是真 `ExportedProgram`/违反「权重排在数据输入之前」的顺序不变量/同一个参数被认领多次/`target` 取到的张量形状与导出图里这个节点不符/placeholder 的名字与 `target` 对不上/认不出 placeholder 前缀/非输入 spec 没给 `target`） |
 | 3 | 目标文件已存在，未加 `--force` |
 | 4 | 缺运行时（没装 torch） |
 | 5 | 模型可加载但追不动（export 失败、导出图无法真实再执行、图里有非张量的 `get_attr`/`call_module`（如 `forward` 内的 `no_grad`、`torch.cond`/`torch.while_loop` 的分支图），或 `example_inputs` 数量与数据输入个数对不上（含 pytree 输入未摊平）） |
 
-`TOKEN` 归 **2** 是**契约策略**而不是「你输入写错了」：spec 里出现本切片不支持的 `InputKind`
-就是契约错误（与未知 kind 同一类）；`no_grad`/`cond` 归 **5** 是**能力边界**（spec 完全合法，
+`TOKEN`/`CUSTOM_OBJ` 归 **2** 是**契约策略**而不是「你输入写错了」：spec 里出现本切片不支持的
+`InputKind` 就是契约错误（与未知 kind 同一类）；`no_grad`/`cond` 归 **5** 是**能力边界**（spec 完全合法，
 只是图里有非张量节点）。两者的分界线是「spec 合不合法」，不是「用户有没有写错」。
 
 ## 文档
