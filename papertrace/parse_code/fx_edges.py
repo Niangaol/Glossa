@@ -87,6 +87,7 @@ def build_edges(graph, by_name: dict[str, str], op_nodes: list[dict], all_shapes
                     "id": f"e:{src}->{dst}:{label}",
                     "src": src,
                     "dst": dst,
+                    "label": label,
                     "shape": edge_shape if edge_shape is not None else [],
                     "dtype": dtype_by_id.get(src),
                     "inplace": bool(inplace_by_id.get(src)),

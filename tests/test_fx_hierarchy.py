@@ -61,12 +61,30 @@ def test_parent_chain_terminates_at_root():
 
 
 def test_attention_ops_hang_under_the_attention_module():
+    """Attention 下必须真有一整套算子，不是「随便哪个 matmul 在 attn 下」就过。"""
     doc = _doc()
     by_id = {n["id"]: n for n in doc["nodes"]}
-    matmuls = [n for n in doc["nodes"] if n["op"] == "matmul"]
-    assert matmuls
-    parents = {by_id[n["parent_id"]]["label"] for n in matmuls}
-    assert any("attn" in p for p in parents), f"matmul 挂在 {parents}"
+    attn_ids = {
+        n["id"]
+        for n in doc["nodes"]
+        if n["level"] == "module" and n["op"] == "CausalSelfAttention"
+    }
+    assert attn_ids
+    under = [n for n in doc["nodes"] if n["level"] == "op" and n["parent_id"] in attn_ids]
+    ops = {n["op"] for n in under}
+    assert len(under) >= 4, f"attn 下只有 {len(under)} 个算子"
+    # 注意力必须真算出来：qk^T、mask、softmax、乘 V 四步缺一不可
+    assert "matmul" in ops, ops
+    assert "masked_fill" in ops, ops
+    assert "softmax" in ops, ops
+    assert {"transpose", "view"} & ops, ops
+    # 而且 attention 的算子不能一串全挂在 root 下冒充
+    root_like = [
+        n
+        for n in doc["nodes"]
+        if n["level"] == "op" and n["op"] in {"softmax", "masked_fill"} and "attn" not in by_id[n["parent_id"]]["label"]
+    ]
+    assert not root_like, f"这些节点没挂进 attention：{[n['id'] for n in root_like]}"
 
 
 def test_attention_module_is_a_child_of_its_block():

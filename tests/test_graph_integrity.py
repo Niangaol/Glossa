@@ -168,6 +168,7 @@ def test_inconsistent_edge_is_visible_in_dump():
     doc["edges"] = [
         {
             "id": "e:root/@000->root/@001:args[0]", "src": "root/@000", "dst": "root/@001",
+            "label": "args[0]",
             "shape": [2, 2], "dtype": None, "inplace": False, "shape_consistent": False,
         }
     ]

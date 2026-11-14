@@ -69,10 +69,15 @@ def test_shapes_follow_the_attention_math():
 
 
 def test_edges_are_shape_consistent():
+    """注意力内部的边必须全部对得上——这是 `shape_consistent` 的正常态。"""
     doc = _trace()
     assert doc["edges"], "一条边都没有，说明数据流没接对"
     broken = [e for e in doc["edges"] if not e["shape_consistent"]]
     assert not broken, f"形状对不上的边：{broken[:3]}"
+    # 每条边都得有真实形状和参数位置，不能是空标签糊出来的
+    for edge in doc["edges"]:
+        assert edge["shape"], f"{edge['id']} 没形状"
+        assert edge["label"].startswith(("args[", "kwargs[", "out")), edge["label"]
 
 
 def test_nodes_carry_every_schema_required_field():
@@ -85,6 +90,22 @@ def test_nodes_carry_every_schema_required_field():
             assert node["degraded"] is False or node["degraded_reason"]
         else:
             assert node["source"] == "static", "模块层级来自代码结构，不是执行"
+
+
+def test_inplace_operator_keeps_shape_and_is_flagged():
+    """inplace 是形状链最容易被糊弄的地方：必须真的标出来，且形状仍然一致。"""
+    module = torch.nn.Sequential(
+        torch.nn.Linear(8, 8),
+        torch.nn.ReLU(inplace=True),
+        torch.nn.Dropout(0.0),
+    ).eval()
+    doc = trace_module(module, (torch.randn(3, 8),), module_id="seq")
+    inplace_ops = [n for n in doc["nodes"] if n["inplace"]]
+    assert inplace_ops, "nn.ReLU(inplace=True) 必须被标成 inplace"
+    node = inplace_ops[0]
+    assert node["shape_in"] == [3, 8] == node["shape_out"], node
+    assert node["degraded"] is False
+    assert all(e["shape_consistent"] for e in doc["edges"])
 
 
 def test_missing_torch_raises_runtime_unavailable(monkeypatch):

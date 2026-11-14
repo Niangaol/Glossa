@@ -182,11 +182,14 @@
     },
     "edge": {
       "type": "object",
-      "required": ["id", "src", "dst", "shape", "dtype", "inplace", "shape_consistent"],
+      "required": [
+        "id", "src", "dst", "label", "shape", "dtype", "inplace", "shape_consistent"
+      ],
       "properties": {
         "id": { "type": "string" },
         "src": { "type": "string" },
         "dst": { "type": "string" },
+        "label": { "type": "string" },
         "shape": { "type": "array" },
         "dtype": { "type": ["string", "null"] },
         "inplace": { "type": "boolean" },

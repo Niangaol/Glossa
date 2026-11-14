@@ -152,6 +152,9 @@ def test_dump_ops_prints_topological_operator_list():
         assert want in joined, f"缺 {want}"
     # 所属模块要能看出来（挂到 attn 上，而不是笼统的 root）
     assert "transformer.h.0.attn" in joined
+    # 必须是拓扑序：id 里的序号只增不减（乱序打印等于没按数据流走）
+    order = [int(ln.split()[0].rsplit("@", 1)[1]) for ln in lines]
+    assert order == sorted(order), f"不是拓扑序：{order[:10]}"
 
 
 def test_dump_ops_on_empty_trace_prints_nothing():
