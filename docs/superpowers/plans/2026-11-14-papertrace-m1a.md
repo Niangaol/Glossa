@@ -513,4 +513,4 @@ shape_unchecked=0、`real_execution={ok:True}`——与第八/九/十轮逐项�
 | `500c692` | 第十轮自查：反向认领判据（模块地面真相）、常量不许顶替参数、spec↔模块契约统一 exit 2、拆出 fx_contract |
 | `7dc55f2` | 第十轮文档：记录自查、钉住提交哈希 |
 | `0e9e608` | 第十一轮必修：plan 与导出器逐项核对（`check_plan_source`）、`CUSTOM_OBJ→const`/`TOKEN` 拒绝、orphan 认图输出、const 不许顶替缓冲、`build_op_nodes` 的 `exported` 入口断言、`no_grad` 子模块图 exit 5、16 模型 zoo 回归、弱断言加牙 |
-| `ed0abc3` | 第十一轮文档：README 六处同步、计划记录、账本、行数重测 |
+| `e10d9d3` | 第十一轮文档：README 六处同步、计划记录、账本、行数重测 |
