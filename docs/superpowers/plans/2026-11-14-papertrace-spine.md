@@ -402,7 +402,7 @@
 
 ---
 
-## 收尾 Task S11：文档同步 + 交付
+## Task S11：收尾（文档同步 + 交付）
 
 1. README 增补：脊柱怎么跑（可复制的完整命令）、offline 为什么全 unresolved（附 §2 那张数学表）、点亮需要的四个环境变量、**只配 openai 是黄线不是绿线**（DeepSeek 无 embeddings）、符号表记声明值而运行时形状在 nodes、S16/S17 修订说明。
 2. 本计划补每个 Task 的真实提交哈希与实测数字；账本 `.superpowers/sdd/2026-11-14-papertrace-framework/progress.md` 追加脊柱段。
