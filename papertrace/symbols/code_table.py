@@ -75,18 +75,25 @@ def _candidate_files(mod):
 
 
 def _locate_config_field(mod, field):
-    """config 字段的声明点：优先在模型文件里该 config 类的类体内找（R31）。"""
+    """config 字段的声明点：只在**含该 config 类类体**的候选文件里找（R36）。
+
+    fail-closed：圈不到该类类体的文件整个跳过，绝不退回整文件查找——那会在模型
+    文件里命中同名诱饵行，产出指错文件错行的 defined_at，比省略该符号更坏。
+    全都找不到 → None（调用方按 R21 省略）；没有 config 对象也返回 None，不猜。
+    """
     config = getattr(mod, "config", None)
-    class_name = type(config).__name__ if config is not None else ""
+    if config is None:
+        return None  # 没有 config 对象：没有依据，不猜（R36）
+    class_name = type(config).__name__
     for path in _candidate_files(mod):
         lines = _read_lines(path)
         if not lines:
             continue
-        region = _class_region(lines, class_name) if class_name else None
+        region = _class_region(lines, class_name)
         if region is None:
-            hit = _find_line(lines, field)
-        else:
-            hit = _find_line(lines, field, region[0], region[1])
+            # 这个文件里没有该 config 类：整个跳过，绝不退回整文件查找（R36）
+            continue
+        hit = _find_line(lines, field, region[0], region[1])
         if hit is not None:
             return f"{path}:{hit}"
     return None

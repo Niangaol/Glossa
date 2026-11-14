@@ -16,6 +16,8 @@
 """
 
 import pathlib
+import shutil
+import sys
 from dataclasses import dataclass
 
 import pytest
@@ -27,6 +29,7 @@ from papertrace.ingest.paper import ingest_paper  # noqa: E402
 from papertrace.symbols.code_table import build_code_symbols  # noqa: E402
 from papertrace.symbols.mapping import map_symbols  # noqa: E402
 from papertrace.symbols.paper_table import build_paper_symbols  # noqa: E402
+from tests._tmp import scratch_dir  # noqa: E402
 
 HERE = pathlib.Path(__file__).resolve()
 REPO = str(HERE.parents[1] / "tests" / "fixtures" / "nanogpt")
@@ -180,7 +183,13 @@ def test_paper_symbols_extract_d_k(paper_bundle):
 
 
 def test_mapping_marks_value_mismatch_explicitly(code_symbols, paper_bundle):
-    """两侧都有值且不等 -> value_mismatch，且不是 matched（显式标记）。"""
+    """两种情形都覆盖：论文侧没给数 -> matched；两侧都有值且不等 -> value_mismatch。
+
+    名字里的 value_mismatch 必须是真话（R35）：第一段用夹具，论文侧 d_k 的
+    value=None，无法比较 -> matched，mapping.value 取代码侧 8；第二段用**手工
+    构造的两侧列表**（代码侧 Dh=4、论文侧 d_k=8）钉死 value_mismatch，并断言
+    两侧的值都还能从各自的表里取回——绝不静默取一个当成两边共同的值（R22）。
+    """
     paper_rows = build_paper_symbols(paper_bundle)
     rows = map_symbols(code_symbols, paper_rows)
     paired = [row for row in rows if row["paper_symbol"] == "d_k"]
@@ -192,6 +201,17 @@ def test_mapping_marks_value_mismatch_explicitly(code_symbols, paper_bundle):
     # 其余代码符号没有论文对手 -> code_only
     only_code = sorted(row["code_var"] for row in rows if row["status"] == "code_only")
     assert only_code == ["DEFAULT_BATCH", "block_size", "n_embd", "n_head"]
+    # 手工两侧都有值且不等 -> value_mismatch：显式标记，不是 matched
+    hand_code = [{"var": "Dh", "symbol": "Dh", "value": 4, "defined_at": "x.py:3", "used_by": []}]
+    hand_paper = [{"symbol": "d_k", "meaning": None, "value": 8, "first_seen": "S3.2-eq-attn"}]
+    mismatch = [row for row in map_symbols(hand_code, hand_paper) if row["paper_symbol"] == "d_k"]
+    assert len(mismatch) == 1, f"d_k 只能映射一次：{mismatch}"
+    assert mismatch[0]["code_var"] == "Dh"
+    assert mismatch[0]["status"] == "value_mismatch", "两侧都有值且不等必须显式记 value_mismatch"
+    # mapping.value 取代码侧；论文侧的 8 仍留在 paperSymbol.value，两边都留痕
+    assert mismatch[0]["value"] == 4
+    assert hand_code[0]["value"] == 4, "map_symbols 不得改代码侧的值"
+    assert hand_paper[0]["value"] == 8, "map_symbols 不得改论文侧的值"
 
 
 def test_mapping_never_silently_picks_one_value(code_symbols, paper_bundle):
@@ -210,3 +230,71 @@ def test_mapping_never_silently_picks_one_value(code_symbols, paper_bundle):
     assert mismatch["status"] == "value_mismatch"
     assert code_rows[0]["value"] == 6 and paper_rows[0]["value"] == 6.4
     assert mismatch["value"] == 6, "mapping.value 取代码侧，论文侧的值仍留在论文表"
+
+#: R36 场景 A 文件：config 类单独住一个文件（真实仓库里常见的独立 config.py）。
+_SPLIT_CONFIG_SOURCE = '''\
+"""R36 场景 A：config 类自己住一个文件。"""
+
+
+class SplitConfig:
+    block_size: int = 8
+    n_head: int = 2
+    n_embd: int = 48
+'''
+
+#: R36 场景 B 文件：模型类住这里，类体里放一个同名字段的诱饵赋值。
+_SPLIT_MODEL_SOURCE = '''\
+"""R36 场景 B：模型类 + 同名诱饵字段。"""
+
+from s4_splitcfg_a import SplitConfig
+
+
+class SplitModel:
+    n_embd = 999
+
+    def __init__(self):
+        self.config = SplitConfig()
+
+
+def build_model():
+    return SplitModel()
+'''
+
+
+def test_config_field_definition_is_not_guessed_from_the_model_file():
+    """R36：config 类在 A 文件时，字段声明点必须落在 A 的类体里，不是 B 的诱饵行。
+
+    真实仓库里 config 常独立成文件，模型文件里也可能出现同名字段的赋值
+    （本测试的诱饵是 `n_embd = 999`）。fail-closed：某个候选文件里圈不到该
+    config 类的类体，就整个跳过这个文件，绝不退回整文件查找——一个指错文件
+    错行的 defined_at 是静默产出错误事实，比省略该符号更坏（R36/R21）。
+    """
+    repo = scratch_dir("s4-split-config")
+    (repo / "s4_splitcfg_a.py").write_text(_SPLIT_CONFIG_SOURCE, encoding="utf-8")
+    (repo / "s4_model_b.py").write_text(_SPLIT_MODEL_SOURCE, encoding="utf-8")
+    try:
+        mod = load_entry(repo, entry="s4_model_b:build_model")
+        rows = build_code_symbols(mod, {"meta": {"runtime": {"batch": 2}}})
+        # 先把两个文件的内容读出来：finally 会删掉这个临时目录
+        a_lines = (repo / "s4_splitcfg_a.py").read_text(encoding="utf-8").splitlines()
+        b_text = (repo / "s4_model_b.py").read_text(encoding="utf-8")
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        sys.modules.pop("s4_splitcfg_a", None)
+        sys.modules.pop("s4_model_b", None)
+
+    assert "999" in b_text, "诱饵行必须真的写在 B 文件里，否则这个场景是空的"
+    row = next(item for item in rows if item["symbol"] == "D")
+    # 值来自实例化后的 config，不是模型文件里的诱饵 999
+    assert row["value"] == 48, f"值必须来自 SplitConfig 实例：{row}"
+    file_part, _, line_text = row["defined_at"].rpartition(":")
+    assert pathlib.Path(file_part).name == "s4_splitcfg_a.py", (
+        f"defined_at 必须指向 config 类所在的 A 文件，实际：{row['defined_at']}"
+    )
+    line_no = int(line_text)
+    assert 1 <= line_no <= len(a_lines), f"行号越界：{row['defined_at']}"
+    assert "n_embd" in a_lines[line_no - 1], (
+        f"那一行必须是 n_embd 的声明，实际：{a_lines[line_no - 1]!r}"
+    )
+    assert "s4_model_b.py" not in row["defined_at"], "绝不指向模型文件里的诱饵行"
+
