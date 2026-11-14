@@ -693,7 +693,7 @@ python -m papertrace eval --golden data/golden
 
 | 规格 | 本计划 Task | 备注 |
 |---|---|---|
-| A1 5 分钟出 HTML | 14，依赖 0–11 | 计时从 CLI 调用起，不含首次 ollama pull |
+| A1 5 分钟出 HTML | 14，依赖 0–11 | 计时从 CLI 调用起，不含首次模型下载（若启用）；框架切片下 backend=offline，下载为零 |
 | A2 播放+shape | 8 + 7 | MVP 可降级为无动画仍显示当前节点 |
 | A3 项级同步 | 11 + 10，论文是 Vaswani | 规格写 GPT-2 论文，见 S5 |
 | A4 来源可见 | 1 + 8 | |

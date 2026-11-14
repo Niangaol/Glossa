@@ -1,0 +1,250 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://papertrace.local/schema/trace.schema.json",
+  "title": "PaperTrace trace.json",
+  "description": "唯一数据契约。所有模块只通过本文件交换数据。version 变更必须同步改 schema 与校验器。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "meta", "symbols", "nodes", "edges", "anchors",
+    "mismatches", "unresolved", "annotations", "conflicts", "view_state"
+  ],
+  "properties": {
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "repo", "paper", "model", "created_at", "schema_version"],
+      "properties": {
+        "version": { "const": "1.0" },
+        "schema_version": { "const": "1.0.0" },
+        "repo": {
+          "type": "object",
+          "required": ["url", "commit", "language"],
+          "properties": {
+            "url": { "type": "string" },
+            "commit": { "type": "string", "minLength": 7 },
+            "language": { "const": "python" },
+            "entry_module": { "type": ["string", "null"] }
+          }
+        },
+        "paper": {
+          "type": "object",
+          "required": ["source", "unit_count", "ingest_mode"],
+          "properties": {
+            "source": { "type": "string" },
+            "unit_count": { "type": "integer", "minimum": 0 },
+            "ingest_mode": { "enum": ["tex", "markdown", "pdf_marker", "pdf_mineru", "none"] },
+            "title": { "type": "string" }
+          }
+        },
+        "model": {
+          "type": "object",
+          "required": ["name", "prompt_version", "embed_model"],
+          "properties": {
+            "name": { "type": "string", "default": "qwen2.5-coder:7b" },
+            "prompt_version": { "type": "string" },
+            "embed_model": { "type": "string", "default": "nomic-embed-text" }
+          }
+        },
+        "created_at": { "type": "string" },
+        "runtime": {
+          "type": ["object", "null"],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "reason": { "type": ["string", "null"] },
+            "device": { "type": "string" }
+          }
+        }
+      }
+    },
+    "symbols": {
+      "type": "object",
+      "required": ["code", "paper", "mapping"],
+      "properties": {
+        "code": { "type": "array", "items": { "$ref": "#/$defs/codeSymbol" } },
+        "paper": { "type": "array", "items": { "$ref": "#/$defs/paperSymbol" } },
+        "mapping": { "type": "array", "items": { "$ref": "#/$defs/symbolMapping" } }
+      }
+    },
+    "nodes": { "type": "array", "items": { "$ref": "#/$defs/node" } },
+    "edges": { "type": "array", "items": { "$ref": "#/$defs/edge" } },
+    "anchors": { "type": "array", "items": { "$ref": "#/$defs/anchor" } },
+    "mismatches": { "type": "array", "items": { "$ref": "#/$defs/mismatch" } },
+    "unresolved": { "type": "array", "items": { "$ref": "#/$defs/unresolved" } },
+    "annotations": { "type": "array", "items": { "$ref": "#/$defs/annotation" } },
+    "conflicts": { "type": "array", "items": { "$ref": "#/$defs/conflict" } },
+    "view_state": {
+      "type": "object",
+      "properties": {
+        "collapsed": { "type": "array", "items": { "type": "string" } },
+        "breadcrumb": { "type": "array", "items": { "type": "string" } },
+        "zoom": { "enum": ["stage", "module", "op"] }
+      }
+    }
+  },
+  "$defs": {
+    "source": { "enum": ["runtime", "static", "model"] },
+    "codeSymbol": {
+      "type": "object",
+      "required": ["var", "symbol", "defined_at"],
+      "properties": {
+        "var": { "type": "string" },
+        "symbol": { "type": "string" },
+        "value": { "type": ["number", "null"] },
+        "defined_at": { "type": "string" },
+        "used_by": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "paperSymbol": {
+      "type": "object",
+      "required": ["symbol", "first_seen"],
+      "properties": {
+        "symbol": { "type": "string" },
+        "meaning": { "type": ["string", "null"] },
+        "value": { "type": ["number", "null"] },
+        "first_seen": { "type": "string" }
+      }
+    },
+    "symbolMapping": {
+      "type": "object",
+      "required": ["paper_symbol", "code_var", "status"],
+      "properties": {
+        "paper_symbol": { "type": ["string", "null"] },
+        "code_var": { "type": ["string", "null"] },
+        "value": { "type": ["number", "null"] },
+        "status": { "enum": ["matched", "value_mismatch", "code_only", "paper_only"] }
+      }
+    },
+    "node": {
+      "type": "object",
+      "required": [
+        "id", "level", "op", "label", "loc",
+        "shape_in", "shape_out", "dtype", "inplace",
+        "source", "degraded", "repeat", "stale"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "parent_id": { "type": ["string", "null"] },
+        "level": { "enum": ["stage", "module", "op"] },
+        "op": { "type": "string" },
+        "label": { "type": "string" },
+        "loc": { "type": "string" },
+        "shape_in": { "type": "array" },
+        "shape_out": { "type": "array" },
+        "dtype": { "type": ["string", "null"] },
+        "inplace": { "type": "boolean" },
+        "source": { "$ref": "#/$defs/source" },
+        "degraded": { "type": "boolean" },
+        "degraded_reason": { "type": ["string", "null"] },
+        "repeat": { "type": "integer", "minimum": 1 },
+        "detail": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "L0": { "$ref": "#/$defs/detailLayer" },
+            "L1": { "$ref": "#/$defs/detailLayer" },
+            "L2": { "$ref": "#/$defs/detailLayer" },
+            "L3": { "$ref": "#/$defs/detailL3" }
+          }
+        },
+        "stale": { "type": "boolean" }
+      }
+    },
+    "detailLayer": {
+      "type": "object",
+      "required": ["text", "generated_at", "source"],
+      "properties": {
+        "text": { "type": "string" },
+        "generated_at": { "type": "string" },
+        "source": { "$ref": "#/$defs/source" }
+      }
+    },
+    "detailL3": {
+      "type": "object",
+      "required": ["text", "probe", "equivalent", "adversarial", "conflicts", "generated_at"],
+      "properties": {
+        "text": { "type": "string" },
+        "probe": { "type": ["object", "null"] },
+        "equivalent": { "type": ["boolean", "null"] },
+        "adversarial": { "type": ["object", "null"] },
+        "conflicts": { "type": "array" },
+        "generated_at": { "type": "string" }
+      }
+    },
+    "edge": {
+      "type": "object",
+      "required": ["id", "src", "dst", "shape", "dtype", "inplace", "shape_consistent"],
+      "properties": {
+        "id": { "type": "string" },
+        "src": { "type": "string" },
+        "dst": { "type": "string" },
+        "shape": { "type": "array" },
+        "dtype": { "type": ["string", "null"] },
+        "inplace": { "type": "boolean" },
+        "shape_consistent": { "type": "boolean" }
+      }
+    },
+    "anchor": {
+      "type": "object",
+      "required": [
+        "paper_unit_id", "formula_term_index", "code_expr_range",
+        "aten_ops", "confidence", "source", "evidence"
+      ],
+      "properties": {
+        "paper_unit_id": { "type": "string" },
+        "formula_term_index": { "type": ["integer", "null"] },
+        "code_expr_range": { "type": "string" },
+        "aten_ops": { "type": "array", "items": { "type": "string" } },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "source": { "$ref": "#/$defs/source" },
+        "evidence": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "alternatives": { "type": "array", "maxItems": 2 },
+        "verified_by": { "enum": [null, "user"] },
+        "direction": { "enum": ["paper_to_code", "code_to_paper", "both"] }
+      }
+    },
+    "mismatch": {
+      "type": "object",
+      "required": ["type", "paper_unit_id", "code_loc", "claim", "observed", "severity", "note"],
+      "properties": {
+        "type": { "enum": ["dim", "struct", "missing", "reverse"] },
+        "paper_unit_id": { "type": ["string", "null"] },
+        "code_loc": { "type": ["string", "null"] },
+        "claim": { "type": "string" },
+        "observed": { "type": "string" },
+        "severity": { "enum": ["high", "medium", "low"] },
+        "note": { "type": "string" }
+      }
+    },
+    "unresolved": {
+      "type": "object",
+      "required": ["kind", "ref", "reason"],
+      "properties": {
+        "kind": { "enum": ["paper_unit", "code_node", "symbol"] },
+        "ref": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "required": ["node_id", "level", "correction", "user_verified", "created_at"],
+      "properties": {
+        "node_id": { "type": "string" },
+        "level": { "enum": ["L0", "L1", "L2", "L3"] },
+        "correction": { "type": "string" },
+        "user_verified": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      }
+    },
+    "conflict": {
+      "type": "object",
+      "required": ["parent_id", "child_id", "parent_claim", "child_claim"],
+      "properties": {
+        "parent_id": { "type": "string" },
+        "child_id": { "type": "string" },
+        "parent_claim": { "type": "string" },
+        "child_claim": { "type": "string" }
+      }
+    }
+  }
+}

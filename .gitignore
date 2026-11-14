@@ -12,3 +12,5 @@ wheels/
 tmpinstall/
 .tmp/
 pip.log
+_spec_extract.txt
+
