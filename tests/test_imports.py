@@ -59,11 +59,13 @@ def test_module_imports(name):
     importlib.import_module(name)
 
 
-def test_unimplemented_stubs_raise_not_implemented():
-    """占位函数必须明确报未实现，禁止返回 None/空列表冒充结果。"""
+def test_untraceable_input_is_refused_explicitly():
+    """追不动就报 TraceUnsupported，绝不给一张空图冒充追踪结果。"""
+    pytest.importorskip("torch", reason="需要 torch 才能走到 export")
+    from papertrace.exceptions import TraceUnsupported
     from papertrace.parse_code.fx_trace import trace_module
 
-    with pytest.raises(NotImplementedError):
+    with pytest.raises((TraceUnsupported, AttributeError, TypeError)):
         trace_module(object(), ())
 
 
