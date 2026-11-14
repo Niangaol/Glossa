@@ -25,6 +25,21 @@ STATIC = "static"
 #: 算子节点：形状来自真实执行。
 RUNTIME = "runtime"
 
+#: 融合算子：一个 aten 算子内部吞掉了论文里好几个公式项。
+#: 抓到它们不算失败，但**必须标出来**——否则算子级对账会安静地漏检。
+FUSED_OPS: dict[str, tuple[str, ...]] = {
+    "scaled_dot_product_attention": ("matmul", "scale", "mask", "softmax"),
+    "_scaled_dot_product_attention_math": ("matmul", "scale", "mask", "softmax"),
+    "scaled_dot_product_flash_attention": ("matmul", "scale", "mask", "softmax"),
+    "scaled_dot_product_efficient_attention": ("matmul", "scale", "mask", "softmax"),
+    "_native_multi_head_attention": ("linear", "matmul", "softmax", "linear"),
+    "multi_head_attention_forward": ("linear", "matmul", "softmax", "linear"),
+}
+
+#: 融合算子的上游形状：置位后 build 会往 stderr 打一行警告。
+FUSION_WARNING = "图里有 {count} 个融合算子（{names}）：论文里对应的 {items} 已被吞进单个 aten 算子，" \
+    "算子级对账会漏检。要么在仓库里拆开（如 nanoGPT 夹具把 flash 写死 False），要么把这些节点标成 degraded 交给人工。"
+
 
 def _require_torch():
     """拿到 torch，拿不到就给一个能读懂的错，而不是裸 ImportError。"""
@@ -186,6 +201,38 @@ def _module_nodes(module, module_id: str, module_types: dict[str, str]) -> tuple
     return ordered, {path: info["id"] for path, info in entries.items()}
 
 
+def _fmt(shape: list[int]) -> str:
+    return "(" + ", ".join(str(d) for d in shape) + ")" if shape else "(?)"
+
+
+def _is_getitem(node) -> bool:
+    """`torch.export` 的图里 node.op 是 `call_function`，真正的算子名在 target 上。"""
+    if getattr(node, "op", None) == "getitem":
+        return True
+    try:
+        return _op_name(node) == "getitem"
+    except AttributeError:
+        return False
+
+
+def _resolve_arg_shape(node, producer_shapes: list[list[int]]) -> list[int] | None:
+    """多输出生产者 + getitem 消费者：按索引取到**这一项**的形状。
+
+    `split_with_sizes(x, [2, 3])` 的两项分别是 (2,2) 和 (2,3)；
+    如果一律用第 1 项，第二条边就会把 (2,3) 记成 (2,2)，形状链在自家输出里就断了。
+    """
+    if len(producer_shapes) <= 1 or not _is_getitem(node) or len(node.args) < 2:
+        return None
+    index = node.args[1]
+    if not isinstance(index, int):
+        return None
+    if index < 0:
+        index += len(producer_shapes)
+    if 0 <= index < len(producer_shapes):
+        return producer_shapes[index]
+    return None
+
+
 def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     """追踪一个 nn.Module，返回 schema 形状的 {"nodes": [...], "edges": [...]}。"""
     torch_mod = _require_torch()
@@ -206,6 +253,8 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     nodes: list[dict] = list(module_nodes)
     by_name: dict[str, str] = {}
     edges: list[dict] = []
+    #: 每个算子节点的**全部**输出形状（多输出时逐项），只用来解析边，不进 trace.json
+    all_shapes: dict[str, list[list[int]]] = {}
 
     for index, node in enumerate(graph.nodes):
         if node.op == "output":
@@ -219,6 +268,19 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
         parent_key = paths[-1] if paths else ""
         op = _op_name(node)
         node_inplace = op.endswith("_")
+        reason = None
+        if multi_output:
+            reason = (
+                f"多输出算子，shape_out 记的是第 1 项（共 {len(shapes)} 项："
+                + "、".join(_fmt(sh) for sh in shapes)
+                + "）"
+            )
+        elif op in FUSED_OPS:
+            reason = (
+                "融合算子：内部已把 "
+                + "/".join(FUSED_OPS[op])
+                + " 吞成一个 aten 算子，算子级对账会漏检；需拆开或人工核对"
+            )
         nodes.append(
             {
                 "id": node_id,
@@ -232,16 +294,13 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
                 "dtype": _val_dtype(value),
                 "inplace": node_inplace,
                 "source": RUNTIME,
-                "degraded": multi_output,
-                "degraded_reason": (
-                    f"多输出算子，shape_out 记的是第 1 项（共 {len(shapes)} 项）"
-                    if multi_output
-                    else None
-                ),
+                "degraded": multi_output or op in FUSED_OPS,
+                "degraded_reason": reason,
                 "repeat": 1,
                 "stale": False,
             }
         )
+        all_shapes[node_id] = shapes
 
     shapes_by_id = {n["id"]: n["shape_out"] for n in nodes if n["level"] == "op"}
     inplace_by_id = {n["id"]: n["inplace"] for n in nodes if n["level"] == "op"}
@@ -254,12 +313,21 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
             if not getattr(arg, "name", None) or arg.name not in by_name:
                 continue
             src = by_name[arg.name]
-            edge_shape = shapes_by_id.get(src, [])
-            # 形状链一致性：图是 SSA 的，形状天然自洽；真正会断的是
-            # 「原地说会改形状但输入输出形状不一致」这类 inplace 算子。
-            consistent = bool(edge_shape) and not (
-                inplace_by_id.get(src) and edge_shape != shapes_by_id.get(dst, edge_shape)
+            producer_shapes = all_shapes.get(src) or [shapes_by_id.get(src, [])]
+            resolved = _resolve_arg_shape(node, producer_shapes)
+            edge_shape = resolved if resolved is not None else (
+                producer_shapes[0] if producer_shapes else []
             )
+            # 形状链一致性：真的拿「生产者这一项输出的形状」去比「消费者自己记下的形状」。
+            # 多输出算子只有索引解析失败、或 getitem 的形状与它取的那一项对不上，才算断链。
+            consistent = bool(edge_shape)
+            if consistent and resolved is not None and _is_getitem(node):
+                consumed = shapes_by_id.get(dst) or []
+                consistent = not consumed or consumed == resolved
+            if consistent and inplace_by_id.get(src):
+                consistent = bool(shapes_by_id.get(src)) and shapes_by_id.get(src) == shapes_by_id.get(
+                    dst, shapes_by_id.get(src)
+                )
             edges.append(
                 {
                     "id": f"e:{src}->{dst}:{position}",

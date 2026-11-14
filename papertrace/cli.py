@@ -11,7 +11,13 @@ import argparse
 import sys
 from pathlib import Path
 
-from papertrace.build_trace import BuildError, build_trace, repo_commit, skeleton_trace
+from papertrace.build_trace import (
+    BuildError,
+    build_trace,
+    fused_ops_in,
+    repo_commit,
+    skeleton_trace,
+)
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
 from papertrace.schema_validate import dump_trace, load_trace, validate_trace
 
@@ -87,6 +93,14 @@ def _cmd_build(args: argparse.Namespace) -> int:
         except BuildError as exc:
             print(f"papertrace build：{exc}", file=sys.stderr)
             return UNIMPLEMENTED
+        fused = fused_ops_in(doc)
+        if fused:
+            print(
+                "papertrace build：警告——图里有融合算子 "
+                + "、".join(fused)
+                + "，论文里对应的中间算子已被吞掉，算子级对账会漏检（节点已标 degraded）。",
+                file=sys.stderr,
+            )
     try:
         validate_trace(doc)
     except TraceSchemaError as exc:
@@ -144,7 +158,10 @@ def _print_ops(doc: dict) -> None:
             continue
         module = by_id.get(node.get("parent_id") or "")
         where = module["label"] if module else "-"
-        flag = "  [degraded]" if node["degraded"] else ""
+        flag = ""
+        if node["degraded"]:
+            reason = (node.get("degraded_reason") or "").strip()
+            flag = "  [degraded: " + (reason[:58] + "…" if len(reason) > 58 else reason) + "]"
         print(
             f"{node['id']:<16} {where:<34} "
             f"{_fmt_shape(node['shape_in'])} -> {_fmt_shape(node['shape_out'])} "

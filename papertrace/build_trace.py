@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from papertrace.exceptions import BuildError
-from papertrace.parse_code.fx_trace import _require_torch, trace_module
+from papertrace.parse_code.fx_trace import FUSED_OPS, _require_torch, trace_module
 from papertrace.schema_validate import minimal_trace
 
 #: 默认示例输入：batch=2、序列长度 8（够让 Attention 的 (B, H, T, T) 显形）。
@@ -135,3 +135,12 @@ def build_trace(
     doc["nodes"] = traced["nodes"]
     doc["edges"] = traced["edges"]
     return doc
+
+
+def fused_ops_in(doc: dict) -> list[str]:
+    """图里被融合吞掉的算子名（去重、按出现顺序），调用方拿它决定要不要喊人。"""
+    seen: list[str] = []
+    for node in doc.get("nodes", []):
+        if node.get("level") == "op" and node.get("op") in FUSED_OPS and node["op"] not in seen:
+            seen.append(node["op"])
+    return seen
