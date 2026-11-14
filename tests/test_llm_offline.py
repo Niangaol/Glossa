@@ -27,13 +27,38 @@ def test_offline_embed_raises(monkeypatch):
         get_llm().embed(["QK^T"])
 
 
-@pytest.mark.parametrize("value", ["ollama", "openai", "openai:deepseek"])
+@pytest.mark.parametrize("value", ["ollama"])
 def test_configured_but_unimplemented_backend_never_fakes_answers(monkeypatch, value):
     monkeypatch.setenv("PAPERTRACE_LLM_BACKEND", value)
     backend = get_llm()
     assert backend.name == "offline", "未实现的后端必须退化为 offline，禁止偷偷打网"
     with pytest.raises(LLMUnavailable):
         backend.chat("yes or no")
+
+
+@pytest.mark.parametrize("value", ["openai", "openai:deepseek"])
+def test_openai_backend_is_real_but_still_refuses_without_env(monkeypatch, value):
+    """R60：S8 起 openai 已实现，name 必须是 openai，而不是退化成的 offline。
+
+    但未配 base_url / api_key / model 时 chat 仍然抛 LLMUnavailable 并点名缺的
+    变量——开关点亮了不等于能打通，报错要能照着修。这是加强，不是放宽。
+    """
+    monkeypatch.setenv("PAPERTRACE_LLM_BACKEND", value)
+    for name in (
+        "PAPERTRACE_OPENAI_BASE_URL",
+        "PAPERTRACE_OPENAI_API_KEY",
+        "PAPERTRACE_LLM",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    backend = get_llm()
+    assert backend.name == "openai", "openai 已实现，不许再退化成 offline"
+    assert not isinstance(backend, OfflineBackend)
+    with pytest.raises(LLMUnavailable) as excinfo:
+        backend.chat("yes or no")
+    message = str(excinfo.value)
+    assert "PAPERTRACE_OPENAI_BASE_URL" in message
+    assert "PAPERTRACE_OPENAI_API_KEY" in message
+    assert "PAPERTRACE_LLM" in message
 
 
 def test_unknown_backend_value_rejected(monkeypatch):

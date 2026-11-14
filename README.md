@@ -65,6 +65,25 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
 末行给 `edges=N shape_broken=M shape_unchecked=K`。两边的形状不是同一条推断抄两遍：导出图会用真实张量
 **再跑一遍**（`fx_observe`），边两端取的是这次执行里各自的实际形状。
 
+### 接云端中转（可选）
+
+不配任何变量时，默认后端仍是 `offline`：该报 `LLMUnavailable` 就报，不编造结果。
+要真接模型（OpenAI 兼容中转；本地 ollama 仍未实现），设这四个变量：
+
+```bat
+set PAPERTRACE_LLM_BACKEND=openai
+set PAPERTRACE_OPENAI_BASE_URL=https://api.deepseek.com
+set PAPERTRACE_OPENAI_API_KEY=sk-...
+set PAPERTRACE_LLM=deepseek-chat
+```
+
+- `PAPERTRACE_LLM_BACKEND=openai:deepseek` 这种写法也认得，但冒号后缀只是**被容忍的写法，
+  不是模型名**：模型名只从 `PAPERTRACE_LLM` 读，写进后缀会被直接丢掉。
+- 上面三个变量缺任何一个，第一次调用模型时会**点名缺哪个**（抛 `LLMUnavailable`），
+  不会默默套一个默认模型名顶上去。
+- **DeepSeek 没有 embeddings 端点。** 只配 openai 时检索分 `s_retr` 仍然是 0，出的是
+  **黄线**（有 judge、没检索证据），不是绿线——配了 key 也不等于绿。
+
 ### trace.json 的字段约定
 
 - **节点 id**：模块节点是路径（`root`、`root/transformer.h.0.attn`），算子/输入/权重节点一律

@@ -5,8 +5,10 @@
 - 默认 `offline`。没装本地模型、也没配中转时，任何 chat/embed 都必须抛
   `LLMUnavailable`，禁止返回固定的 "yes" 或假向量——那会让后续的对齐
   看起来有结果，实际上全是幻觉。
-- 本切片只实现 offline。`ollama` / `openai` 只做「认得这个名字、但仍然
-  报未实现」，等真接的时候再补实现，不允许半吊子上网。
+- S8 起 `openai`（OpenAI 兼容中转）已实现，见 `papertrace.llm.openai_backend`；
+  `ollama`（本地）仍未实现：认得这个名字，但仍然如实报未实现。
+  冒号后缀（`openai:deepseek`）只是被容忍的写法，**不是模型名**（R59）——
+  模型名只从 `PAPERTRACE_LLM` 读。
 """
 
 from __future__ import annotations
@@ -41,13 +43,14 @@ def _offline_hint(configured: str) -> str:
         return (
             "LLM backend=offline。当前既没有安装本地模型，也没有配置云端中转；"
             "如果只是想跑框架，这是预期行为。要接模型请设置 "
-            "PAPERTRACE_LLM_BACKEND=openai（OpenAI 兼容中转）或 =ollama（本地），"
-            "这两条在框架切片里尚未实现，因此仍然会报这个错。"
+            "PAPERTRACE_LLM_BACKEND=openai（OpenAI 兼容中转，已实现，还需要 "
+            "PAPERTRACE_OPENAI_BASE_URL / PAPERTRACE_OPENAI_API_KEY / PAPERTRACE_LLM）"
+            "或 =ollama（本地，尚未实现）。"
         )
     return (
-        f"LLM backend={configured} 尚未实现（本切片只有 offline）。"
+        f"LLM backend={configured} 尚未实现（openai 兼容中转已实现，ollama 本地后端仍未实现）。"
         f"你已经设置了 PAPERTRACE_LLM_BACKEND={configured}，但这条路径还没有代码；"
-        "先改回 offline 或等 M3。"
+        "要现在用模型请改设 openai（见 README「接云端中转」），或等 M3 补 ollama。"
     )
 
 
@@ -80,10 +83,16 @@ def configured_backend() -> str:
 
 
 def get_llm() -> LLMBackend:
-    """当前唯一能返回的是 OfflineBackend。
+    """按 `configured_backend()` 分派：openai → 真后端，其余 → offline。
 
-    配置了 ollama / openai 也返回 offline：那两条路径还没实现，
-    假装能用比直接报错更危险。
+    `openai` 走 `papertrace.llm.openai_backend.OpenAICompatBackend`（S8 起已实现）。
+    `ollama` 仍未实现：返回 OfflineBackend 并如实报未实现——假装能用比直接报错
+    更危险。函数内 import 是为了避开 client ↔ openai_backend 的循环导入
+    （openai_backend 要从这里拿 ChatResult）。
     """
     configured = configured_backend()  # 非法值在这里就以 ValueError 暴露
+    if configured == "openai":
+        from papertrace.llm.openai_backend import OpenAICompatBackend
+
+        return OpenAICompatBackend()
     return OfflineBackend(configured)
