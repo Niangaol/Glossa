@@ -226,6 +226,16 @@
         "code_expr_range": { "type": "string" },
         "aten_ops": { "type": "array", "items": { "type": "string" } },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "tier": { "enum": ["green", "yellow", "none"] },
+        "signals": {
+          "type": "object",
+          "required": ["s_retr", "s_judge", "s_struct"],
+          "properties": {
+            "s_retr": { "type": "number", "minimum": 0, "maximum": 1 },
+            "s_judge": { "type": "number", "minimum": 0, "maximum": 1 },
+            "s_struct": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
         "source": { "$ref": "#/$defs/source" },
         "evidence": { "type": "string", "minLength": 1, "maxLength": 80 },
         "alternatives": { "type": "array", "maxItems": 2 },

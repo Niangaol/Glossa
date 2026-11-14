@@ -6,6 +6,8 @@ JSON Schema 只能校验单对象形状；跨对象的约束（边指向空气�
 
 from __future__ import annotations
 
+from papertrace.schema_anchor import anchor_errors
+
 
 def check_key_types(
     items: list[dict],
@@ -124,6 +126,9 @@ def structural_errors(doc: dict) -> list[str]:
                 )
         if edge.get("src") == edge.get("dst"):
             errors.append(f"edges: {edge_id} 是自环（src == dst）：{edge.get('src')}")
+    # anchor 的跨字段不变量：tier 必须与 signals 重算的门一致（RF3）。
+    # 挂在这里，validate_trace 就自动执行门，不用改 schema_validate.py。
+    errors.extend(anchor_errors(doc))
     return errors
 
 
