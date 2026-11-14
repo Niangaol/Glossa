@@ -21,6 +21,7 @@ from papertrace.parse_code.fx_edges import build_edges, finish_nodes  # noqa: E4
 from papertrace.parse_code.fx_nodes import build_op_nodes  # noqa: E402
 from papertrace.parse_code.fx_signature import (  # noqa: E402
     KIND_MAP,
+    REFUSED_KINDS,
     classify,
     input_plan,
     placeholder_args,
@@ -145,10 +146,12 @@ def test_known_input_kind_still_maps():
 
 
 def test_kind_map_covers_every_torch_input_kind():
-    """torch 加了新 InputKind 时这条会红——那时该补映射，而不是让它静默变 input。"""
-    assert set(KIND_MAP) == {k.name for k in InputKind}, sorted(
-        {k.name for k in InputKind} - set(KIND_MAP)
-    )
+    """torch 加了新 InputKind 时这条会红——那时该补映射，而不是让它静默变 input。
+
+    认识但明确不支持的 kind（TOKEN）放在 REFUSED_KINDS，两边合起来才算覆盖全。
+    """
+    known = set(KIND_MAP) | set(REFUSED_KINDS)
+    assert known == {k.name for k in InputKind}, sorted({k.name for k in InputKind} - known)
 
 
 def test_classify_refuses_unknown_kind():
@@ -190,9 +193,13 @@ def test_plan_with_a_ghost_placeholder_is_refused():
     assert "图里不存在的 placeholder" in str(info.value), str(info.value)
 
 
-def test_flipped_kind_is_caught_against_the_modules_real_parameters():
-    """名字覆盖齐全、kind 却标反：build_op_nodes 无从判断，但 placeholder_args
-    拿模块真实参数核对，必须拒绝——这是 kind 正确性的权威关卡。"""
+def test_flipped_kind_is_caught_against_the_exporters_own_specs():
+    """名字覆盖齐全、kind 却标反：build_op_nodes 无从判断，placeholder_args 必须拒绝。
+
+    第十一轮起权威是导出器自己的 input_specs（不再只靠「模块里有没有这个名字」：
+    同名参数 + 同名输入互换时那条判据会放行）。模块缺参数的分支另见
+    tests/test_eleventh_review.py::test_param_target_missing_from_the_module_is_still_refused。
+    """
     module, exported = _exported()
     plan = input_plan(exported)
     flipped = [dict(item) for item in plan]
@@ -201,4 +208,5 @@ def test_flipped_kind_is_caught_against_the_modules_real_parameters():
             item["kind"], item["target"] = "param", "x"  # 模块里没有叫 x 的参数
     with pytest.raises(BuildError) as info:
         placeholder_args(module, exported, flipped, ())
-    assert "是权重" in str(info.value) and "找不到" in str(info.value), str(info.value)
+    text = str(info.value)
+    assert "与 torch.export 自己给的不一致" in text and "kind" in text, text

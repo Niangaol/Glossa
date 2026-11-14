@@ -21,7 +21,9 @@ from papertrace.parse_code.fx_inputs import (
     data_shapes,
     param_derived,
 )
+from papertrace.parse_code.fx_contract import check_plan_table
 from papertrace.parse_code.fx_shapes import tree_shapes
+from papertrace.parse_code.fx_signature import classify, input_plan
 
 
 def build_op_nodes(
@@ -31,6 +33,7 @@ def build_op_nodes(
     root_loc: str,
     observed: dict[str, dict[str, Any]] | None = None,
     plan: dict | None = None,
+    exported=None,
 ) -> tuple[list[dict], dict[str, str], dict[str, list[list[int]]]]:
     """算子/输入/权重节点。id 用 `模块id/@序号`，与模块 id（`/` 路径）互不撞车。
 
@@ -40,8 +43,14 @@ def build_op_nodes(
     kind 只认 `torch.export` 的 `input_specs`（见 fx_signature）：没有它就无法区分
     权重/常量/数据输入，按名字猜会把整类标反（第七轮 C1）。缺 spec 时**拒绝出图**，
     不再保留 mangled 名兜底。
+
+    **内部 API**：本函数只按 plan 分表，自己判断不了 kind 对不对（它拿不到 module）。
+    外部调用请给 `exported`，入口会把 plan 与导出器自己的 input_specs 逐项核对；
+    不给 exported 就等于声明「这份 plan 已经核过契约」（只有 fx_trace 该这么用）。
     """
     plan = plan or {}
+    if exported is not None:
+        check_plan_table(plan, classify(input_plan(exported)))
     spec_inputs = set(plan.get("inputs") or ())
     spec_consts = set(plan.get("consts") or ())
     spec_owner: dict[str, str] = dict(plan.get("owner") or ())
@@ -124,7 +133,8 @@ def build_op_nodes(
         # torch.export 把权重抬成图输入（placeholder）；kind 以 input_specs 为准，
         # 父模块也用它给的 target（参数全名），不再拿会被压平的名字猜。
         if node.name in param_names:
-            # 常量（torch.ones(...)、self.const）不是训练权重：分开标，摘要才不会把
+            # 常量（self.const 这类被导出器抬成 CONSTANT_TENSOR 的属性；字面量
+            # torch.ones(...) 是 ones **算子**，kind=op，不在这里）不是训练权重：分开标，摘要才不会把
             # 「常量 1 / 权重 0」写成「权重 1」，让人以为模型有可训练参数。
             kind = "const" if node.name in spec_consts else "param"
             parent_key = spec_owner.get(node.name, parent_key)

@@ -17,7 +17,7 @@ import tempfile
 from typing import Any
 
 from papertrace.exceptions import BuildError, RuntimeUnavailable, TraceUnsupported
-from papertrace.parse_code.fx_edges import build_edges, finish_nodes
+from papertrace.parse_code.fx_edges import build_edges, finish_nodes, output_node_ids
 from papertrace.parse_code.fx_graph import (
     FUSED_OPS,
     FUSION_WARNING,
@@ -106,6 +106,19 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
         ) from exc
 
     graph = exported.graph
+    # 能力边界：torch.export 会把 forward 里的 torch.no_grad() 这类区域包成子模块
+    # （submod_N），图里留下 get_attr/call_module。它们不是张量：空根模块构造
+    # GraphModule 会当场 AttributeError；就算把子模块挂回去跑通了，那个 get_attr
+    # 也会被 node_kind 标成 param，让「权重 1」变成「权重 2」（实测）。宁可 exit 5
+    # 说清楚，也不写一份权重数不对的 trace。纯张量图不受影响。
+    artifacts = [n for n in graph.nodes if n.op in ("get_attr", "call_module")]
+    if artifacts:
+        raise TraceUnsupported(
+            "torch.export 把部分区域包成了子模块（图里有 get_attr/call_module："
+            + "、".join(n.name for n in artifacts)
+            + "），常见于 forward 里的 torch.no_grad()；本切片只追纯张量图，"
+            "不把非张量节点冒充成权重，按约定不写 trace（把 no_grad 移到 forward 外可绕过）"
+        )
     module_types = collect_module_types(graph)
     tree, module_ids = module_nodes(module, module_id, module_types)
     root_loc = f"{type(module).__module__}.{type(module).__name__}"
@@ -134,11 +147,12 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
             "按约定不写 trace 冒充结果：" + observe_error
         )
     op_nodes, by_name, all_shapes = build_op_nodes(
-        graph, module_id, module_ids, root_loc, observed=observed, plan=classified
+        graph, module_id, module_ids, root_loc, observed=observed, plan=classified,
+        exported=exported,
     )
     edges = build_edges(graph, by_name, op_nodes, all_shapes, observed=observed)
     nodes = list(tree) + op_nodes
-    counts = finish_nodes(nodes, edges)
+    counts = finish_nodes(nodes, edges, outputs=output_node_ids(graph, by_name))
     runtime = runtime_meta(module, torch_mod, example_inputs)
     runtime["counts"] = counts
     # 走到这里说明第二遍真实执行成功了；失败已在上面转成 TraceUnsupported

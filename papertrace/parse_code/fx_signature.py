@@ -10,16 +10,26 @@ PARAMETER / BUFFER / USER_INPUT / CONSTANT_TENSOR，`spec.target` 是参数的�
 """
 
 from papertrace.exceptions import BuildError, TraceUnsupported
-from papertrace.parse_code.fx_contract import check_contract
+from papertrace.parse_code.fx_contract import check_contract, check_plan_source
 
-# InputKind 的名字 → 我们 trace.json 里的 kind
+# InputKind 的名字 → 我们 trace.json 里的 kind。
+# CUSTOM_OBJ 是 exported.constants 里的 ScriptObject 常量（torch/_export/converter.py
+# 只把 ScriptObject 建成这一类），**不是数据输入**：映射成 input 会让合法模型多出一个
+# 「数据输入」，随后 example_inputs 数量对不上而 exit 5（第十一轮 I-1）。
 KIND_MAP = {
     "PARAMETER": "param",
     "BUFFER": "param",
     "CONSTANT_TENSOR": "const",
+    "CUSTOM_OBJ": "const",
     "USER_INPUT": "input",
-    "TOKEN": "input",
-    "CUSTOM_OBJ": "input",
+}
+
+#: 认识但**明确不支持**的 InputKind：宁可 exit 2 让人来看，也不按张量猜着喂。
+REFUSED_KINDS = {
+    "TOKEN": (
+        "TOKEN 是 TokenArgument（副作用/控制流的令牌），不是张量数据输入，"
+        "也不该按张量塞进 example_inputs"
+    ),
 }
 
 
@@ -33,12 +43,18 @@ def _spec_kind(spec) -> str:
     """不认识的 InputKind 一律拒绝，**不默认成 input**。
 
     默认成 input 会把一个权重/缓冲悄悄标成数据输入：名字覆盖齐全、schema 也过，
-    整份 trace 的 kind 却是反的（第九轮 I-2）。torch 2.15 的 InputKind 只有
-    PARAMETER/BUFFER/CONSTANT_TENSOR/USER_INPUT/TOKEN/CUSTOM_OBJ，全在 KIND_MAP 里；
-    将来 torch 加了新种类，宁可 exit 2 让人来补映射，也不要静默猜。
+    整份 trace 的 kind 却是反的（第九轮 I-2）。torch 2.15 的 InputKind 有
+    PARAMETER/BUFFER/CONSTANT_TENSOR/USER_INPUT/CUSTOM_OBJ（映射见 KIND_MAP）
+    与 TOKEN（明确拒绝，见 REFUSED_KINDS）；将来 torch 加了新种类，宁可 exit 2
+    让人来补映射，也不要静默猜。
     """
     kind = getattr(spec, "kind", None)
     text = str(getattr(kind, "name", None) or kind).upper()
+    if text in REFUSED_KINDS:
+        raise BuildError(
+            f"input_specs 里有 {text}：{REFUSED_KINDS[text]}；"
+            "本切片不支持，按约定拒绝出图（不把它当数据输入猜）"
+        )
     if text not in KIND_MAP:
         raise BuildError(
             f"input_specs 里有不认识的 InputKind：{text!r}；"
@@ -117,6 +133,9 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
     spec_by_name = {item["name"]: item for item in plan}
     placeholders = [n.name for n in exported.graph.nodes if n.op == "placeholder"]
     check_contract(placeholders, plan, params, buffers)
+    # 名字/顺序/认领都对，也不代表 kind 对：调用方可以把权重与输入**互换**标。
+    # 唯一的地面真相是导出器自己的 input_specs，逐项核一遍（第十一轮 C1）。
+    check_plan_source(plan, input_plan(exported))
     user_names = [item["name"] for item in plan if item.get("kind") == "input"]
     if len(user_names) != len(example_inputs):
         raise TraceUnsupported(
@@ -141,13 +160,19 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
             if target in constants:
                 args.append(constants[target])
                 continue
-            if target in buffers:
-                args.append(buffers[target])
-                continue
             if target in params:
                 raise BuildError(
                     f"input_specs 说 {node.name} 是常量（target={target}），"
                     "但模块里它是可训练参数；常量与权重不能混，按约定拒绝出图"
+                )
+            if target in buffers:
+                # 缓冲是**可变状态**（BUFFER 在 KIND_MAP 里映射成 param），不是导出常量。
+                # 以前这里兜底取 buffers[target]，等于给 const 开了第二套语义：
+                # 手改 plan 把缓冲标成常量也能出图（第十一轮 I-1 的 BufferOnly 反例）。
+                raise BuildError(
+                    f"input_specs 说 {node.name} 是常量（target={target}），"
+                    "但模块里它是缓冲（可变状态，应当是 param）；"
+                    "常量的值只能来自 exported.constants，按约定拒绝出图"
                 )
             raise BuildError(
                 f"input_specs 说 {node.name} 是常量（target={target}），但拿不到它的值"
