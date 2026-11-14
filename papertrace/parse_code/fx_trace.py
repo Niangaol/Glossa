@@ -116,7 +116,12 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     """追踪一个 nn.Module，返回 `{"nodes", "edges", "runtime"}`。"""
     torch_mod = _require_torch()
     _ensure_export_cache()
-    module.eval()
+    try:
+        module.eval()
+    except Exception as exc:  # noqa: BLE001 - 用户重写的 eval 也可能炸
+        raise TraceUnsupported(
+            f"调用 {type(module).__name__}.eval() 失败：{_short_error(exc)}"
+        ) from exc
     try:
         exported = torch_mod.export.export(module, tuple(example_inputs))
     except Exception as exc:  # noqa: BLE001 - 统一翻译成我们能解释的错

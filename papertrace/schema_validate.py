@@ -32,8 +32,23 @@ def _structural_errors(doc: dict) -> list[str]:
     用后一个节点覆盖前一个（id 撞车），或者画出一条指向空气的边。
     """
     errors: list[str] = []
-    nodes = doc.get("nodes") or []
-    edges = doc.get("edges") or []
+    # 用户手改的 trace 可能连根都不是对象、nodes 是字符串。这类输入要报成
+    # TraceSchemaError（CLI exit 2），不能让 .get() 抛 AttributeError 变 traceback。
+    if not isinstance(doc, dict):
+        return [f"(root): trace 根必须是 JSON 对象，实际是 {type(doc).__name__}"]
+    nodes = doc.get("nodes")
+    if not isinstance(nodes, list):
+        errors.append(f"nodes: 必须是数组，实际是 {type(nodes).__name__}")
+        nodes = []
+    edges = doc.get("edges")
+    if not isinstance(edges, list):
+        errors.append(f"edges: 必须是数组，实际是 {type(edges).__name__}")
+        edges = []
+    for index, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            errors.append(f"nodes[{index}]: 必须是对象，实际是 {type(node).__name__}")
+    nodes = [node for node in nodes if isinstance(node, dict)]
+    edges = [edge for edge in edges if isinstance(edge, dict)]
     ids: set[str] = set()
     for node in nodes:
         node_id = node.get("id")

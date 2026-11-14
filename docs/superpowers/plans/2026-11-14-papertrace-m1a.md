@@ -5,10 +5,11 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**164 passed**，第三轮评审的必修项已修完（C1/I1/I2/I3 + M2/M3/M5），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123`。
+**状态（2026-11-14）**：Task 7–11 全部落地，**174 passed**，第三轮与第四轮评审的必修项都已修完
+（第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
-逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮记录）。
+逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
 **依赖**：CPU 版 torch（PyPI `torch-2.15.0-cp313-cp313-win_amd64.whl`，120.9 MB）
 装在 `pydeps/`（gitignore）。装法：
@@ -167,7 +168,7 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 | --- | --- | --- |
 | C1 | observe 失败仍照常写 trace，算子照样 `source="runtime"`、`runtime.ok=true`，摘要还写「真实追踪」——与 README 承诺的「追不动就退出码 5、不写 trace」相反 | observe 一失败就 `raise TraceUnsupported`，**exit 5 且不写/不覆盖 trace.json**（含 `--force`）；删掉「real_execution 不 ok 也放行」的死分支 |
 | I1 | 工厂函数/example_inputs/模块顶层抛异常 → 裸 traceback + exit 1；畸形 JSON 做 dump 也 exit 1 | 全部翻成 `BuildError`（exit 2）或 `TraceUnsupported`（exit 5）；dump 捕 `OSError/ValueError` → exit 2，不出 traceback |
-| I2 | `inputs` 里塞着权重，param-only 算子把权重冒充 `shape_in` | `inputs` 只放数据入参：按参数位置跳过 `param_names` 里的名字；param-only → `inputs=[]`、`shape_in=[]`，dump 打 `(?)` |
+| I2 | `inputs` 里塞着权重，param-only 算子把权重冒充 `shape_in` | `inputs` 只放数据入参：按参数位置跳过 `param_names` 里的名字；param-only → `inputs=[]`、`shape_in=[]`，dump 打 `-` |
 | I3 | 结构校验允许 module→op、op→module、自环 | 边两端必须 `level=="op"`，禁 `src==dst`，补四条反例 |
 | M5 | getitem 的多生产者容器把同一索引套到每个生产者 | 只有 `args[0]` 本身就是一个生产者节点时才按索引取项，否则 `checked=false` |
 | M2 | `FUSED_OPS` 有死键（`multi_head_attention_forward` 在 `torch.ops.aten` 不存在） | 删死键；参数化测试逐个 `hasattr(torch.ops.aten, name)`，前缀兜底单独测 |
@@ -177,12 +178,28 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 守门测试：`tests/test_third_review.py`（24 条，含真实自定义算子 `boom` 的 exit 5、
 工厂/example_inputs 异常的 exit 2、畸形 JSON 的 exit 2、param-only 的 `inputs=[]`）。
 
+### 第四轮评审（基线 fc1ca48，164 passed）指出了什么
+
+无 Critical，但两个必修项都是「文档说了、代码没做」那类：
+
+| 编号 | 问题 | 修法 |
+| --- | --- | --- |
+| I-1 | 权重藏在**容器**里（`torch.cat([self.w, x])`）时，整段 `tree_shapes` 都被塞进 `inputs`，`shape_in` 变权重形状 | 新增 `_data_shapes(raw, tree, is_param, out)`，按原始参数树与观察到形状树**递归**配对，任一深度的 param 叶子整个跳过 |
+| I-2 | trace 根或字段类型不对（`[1,2,3]`、`nodes: "x"`）时 `_structural_errors` 仍无条件跑，`list.get` → AttributeError + exit 1 | 先判根是否 dict、`nodes/edges` 是否数组、每项是否对象，报「必须是 JSON 对象/数组/对象」并继续收集其它错误 |
+| M-1 | `--ops` 把「确实没有数据入参」（`slice` 只有 buffer 入边）和「输入未知」都打 `(?)` | `inputs==[]` → `-`；只有缺 `inputs` 字段的老格式才 `(?)`；三态互不混淆 |
+| M-3 | 计划文档提交链缺 `fc1ca48`；`fx_observe`/`fx_nodes` 的 docstring 还写「失败退回 meta」 | 文档与注释同步；`module.eval()` 的异常也翻成 `TraceUnsupported`（M-4） |
+
+守门测试：`tests/test_fourth_review.py`（10 条：`cat([w,x])`/`cat([x,w])` 的 `shape_in` 必须是数据的、
+`stack([w])` 的 `inputs==[]`、四种畸形 JSON 都 exit 2 且无 traceback、`slice` 打 `-` 不打 `(?)`、
+`eval()` 抛错变 `TraceUnsupported`）。
+
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
    现在不但测试钉死四个算子同时存在，还加了 `FUSED_OPS` 表：真的遇到融合算子时
    **标 degraded + stderr 警告**，绝不安静通过。
-2. **假形状**：`shape_in/shape_out` 全部来自 `node.meta["val"]`，没有写死的列表。
+2. **假形状**：`shape_in/shape_out` 来自导出图**再跑一遍**时观察到的真实张量（`fx_observe`），
+   只有 `get_attr`/权重才回落到 `node.meta["val"]`；没有写死的列表。
 3. **静默降级**：没有 torch 时退出码 4；export 追不动或导出图不能再真实执行时退出码 5；两者都不写 trace。`--ops` 里 degraded 一定带原因。
 4. **形状链断裂**：多输出按 `getitem` 索引取那一项；边的两端分别来自**同一次真实执行**的
    消费者入参与生产者输出，未核实记 `checked=false`（`?`），不拿「有形状」冒充「一致」。
@@ -212,6 +229,8 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 | `inputs` 含权重位置 | 只放数据入参，`shape_in = inputs[0]` | 否则 embedding 的输入是权重 `(64,32)`，形状链从第一跳就假 |
 | 边可以接模块节点 | 边两端必须都是算子，且禁自环 | 模块不是算子，接上只会制造「看起来有形状链」的错觉 |
 | `cli.py` 堆下所有打印 | 拆出 `papertrace/report.py` | 275 行违反 ≤200 行；参数/退出码与排版混在一起难审 |
+| 只有顶层参数查 param | 递归到任意容器深度 | `cat([w, x])` 里的权重在 list 里，只看顶层就把权重当输入 |
+| `(?)` 表示「没有输入」 | `-` 表示确实没有数据入参，`(?)` 只给缺字段的老格式 | 两者语义不同，混在一起就看不出是「没有」还是「没看到」 |
 
 ### 提交锚点
 
@@ -228,3 +247,4 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 | `cca2a1a` | 第二遍真实执行判定边形状；`fx_shapes` 拆出；`requested`/`real_execution`；模块路径禁 `@` |
 | `8b710ee` | 第三轮前的文档与账本 |
 | `f58b123` | 第三轮必修：observe 失败即 exit 5、异常翻成 2/5、inputs 只含数据、边两端必须算子且禁自环 |
+| `fc1ca48` | `report.py` 拆出、第三轮文档与账本 |

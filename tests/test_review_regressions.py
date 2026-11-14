@@ -216,8 +216,8 @@ def test_summary_counts_operators_separately_from_params():
     assert f"degraded=" in r.stdout and "shape_unchecked=" in r.stdout
 
 
-def test_dump_ops_marks_unknown_input_distinctly_from_scalar():
-    """M1：(?) 是「没观察到」，() 是 0 维标量，两者不能打成一个样子。"""
+def test_dump_ops_separates_no_data_input_from_unknown(capsys):
+    """M1/第四轮：(?) 只留给「没有 inputs 字段」的老格式，inputs=[] 是真的没有数据入参。"""
     from papertrace.schema_validate import minimal_trace
 
     doc = minimal_trace()
@@ -240,4 +240,14 @@ def test_dump_ops_marks_unknown_input_distinctly_from_scalar():
     path.write_text(json.dumps(doc), encoding="utf-8")
     r = _run_cli("dump", "--trace", str(path), "--ops")
     assert r.returncode == 0, r.stderr
-    assert "(?) -> ()" in r.stdout
+    assert "- -> ()" in r.stdout, r.stdout
+    assert "(?)" not in r.stdout, r.stdout
+
+    # 老格式（没有 inputs 键）才是「输入未知」；schema 不给这种 trace 过闸，
+    # 所以直接测排版函数，避免为了打一行 (?) 去放宽校验。
+    from papertrace.report import print_ops
+
+    capsys.readouterr()
+    old = {k: v for k, v in doc["nodes"][1].items() if k != "inputs"}
+    print_ops({"nodes": [doc["nodes"][0], old]})
+    assert "(?) -> ()" in capsys.readouterr().out

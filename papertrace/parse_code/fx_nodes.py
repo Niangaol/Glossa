@@ -18,7 +18,32 @@ from papertrace.parse_code.fx_graph import (
     stack_paths,
     val_dtype,
 )
-from papertrace.parse_code.fx_shapes import tree_shapes
+from papertrace.parse_code.fx_shapes import tree_leaf, tree_shapes
+
+def _data_shapes(raw, tree, is_param, out: list[list[int]]) -> None:
+    """按「原始参数树」与「观察到的形状树」递归配对，跳过**任意深度**的权重叶子。
+
+    torch.cat([self.w, x]) 的权重藏在列表里：只看顶层参数名会把它当成数据输入，
+    shape_in 就变成权重形状（README 承诺过绝不这样）。
+    """
+    if raw is None or tree is None:
+        return
+    if getattr(raw, "name", None) is not None and is_param(raw):
+        return
+    leaf = tree_leaf(tree)
+    if leaf is not None:
+        out.append(leaf)
+        return
+    if isinstance(tree, dict) and isinstance(tree.get("l"), list):
+        items = raw if isinstance(raw, (list, tuple)) else ()
+        for sub_raw, sub_tree in zip(items, tree["l"]):
+            _data_shapes(sub_raw, sub_tree, is_param, out)
+        return
+    if isinstance(tree, dict) and isinstance(tree.get("d"), dict):
+        mapping = raw if isinstance(raw, dict) else {}
+        for key, sub_tree in tree["d"].items():
+            _data_shapes(mapping.get(key), sub_tree, is_param, out)
+
 
 def _module_entry(module, *, entry_id, parent_id, op, label, loc) -> dict:
     return {
@@ -83,7 +108,8 @@ def build_op_nodes(
 ) -> tuple[list[dict], dict[str, str], dict[str, list[list[int]]]]:
     """算子/输入/权重节点。id 用 `模块id/@序号`，与模块 id（`/` 路径）互不撞车。
 
-    形状优先取真实执行观察到的值（`observed`）；没跑成的那部分退回 `node.meta["val"]`。
+    形状只取真实执行观察到的值（`observed`）；观察失败时上层已 exit 5，不会走到这里。
+    只有 interpreter 不经过的节点（get_attr/权重）才用 `node.meta["val"]`，那是它们的值本身。
     """
     owner = owned_paths(module)
     observed = observed or {}
@@ -109,22 +135,16 @@ def build_op_nodes(
             # inputs 只放**数据**输入：权重（param）位置整个跳过。
             # 否则 linear 的 shape_in 会变成权重形状，param-only 算子更会把
             # 权重冒充成数据输入（README 早就这么写，代码必须一致）。
+            def is_param(value) -> bool:
+                return getattr(value, "name", None) in param_names
+
             for position, arg in enumerate(seen.get("args") or []):
                 source = node.args[position] if position < len(node.args) else None
-                if getattr(source, "name", None) in param_names:
-                    continue
-                shapes_here = tree_shapes(arg)
-                inputs.extend(shapes_here)
-                if data_input is None and shapes_here:
-                    data_input = shapes_here[0]
+                _data_shapes(source, arg, is_param, inputs)
             for key, arg in (seen.get("kwargs") or {}).items():
-                source = node.kwargs.get(key)
-                if getattr(source, "name", None) in param_names:
-                    continue
-                shapes_here = tree_shapes(arg)
-                inputs.extend(shapes_here)
-                if data_input is None and shapes_here:
-                    data_input = shapes_here[0]
+                _data_shapes(node.kwargs.get(key), arg, is_param, inputs)
+            if inputs:
+                data_input = inputs[0]
         else:
             shapes = all_val_shapes(value)
             inputs = []

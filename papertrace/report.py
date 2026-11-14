@@ -140,11 +140,14 @@ def print_ops(doc: dict) -> None:
         known_out = bool(node.get("outputs")) or bool(node["shape_out"])
         shown_out = fmt_shape(node["shape_out"]) if known_out else "(?)"
         # 形参/权重没有「输入形状」，画 - 别让人误读成 0 维标量；
-        # 算子没观察到入参时画 (?)：空 [] 是 0 维标量，不能混用
+        # 算子 inputs 为空表示「确实没有数据输入」（只用权重/缓冲，如 slice），也画 -；
+        # (?) 只留给 trace 里**根本没有 inputs 字段**的老格式——那是真·未知。
         if node.get("kind") != "op":
             shown_in = "-"
         elif node.get("inputs"):
             shown_in = fmt_shape(node["shape_in"])
+        elif "inputs" in node:
+            shown_in = "-"
         else:
             shown_in = "(?)"
         print(
