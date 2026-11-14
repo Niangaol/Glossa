@@ -65,17 +65,25 @@ def _swapped(plan):
 
 # ---------------------------------------------------------------- C1 kind 互换
 
-def test_swapped_kinds_pass_every_older_check():
-    """先证明这个坏 plan 真能骗过旧关卡，否则后面的拒绝断言可能是恒真。"""
+def test_swapped_kinds_fool_names_and_counts_but_break_the_ordering():
+    """坏 plan 骗得过名字/顺序/认领/数量，但骗不过 torch 的「权重在前」不变量。
+
+    第十二轮之前这里断言 check_contract **不抛**（证明旧关卡不足）；现在顺序不变量
+    已经是 check_contract 的一部分，所以改成断言它抛。数量校验仍然被骗过这一点
+    保留下来——它说明为什么不能只靠 example_inputs 的个数兜底。
+    """
     module, exported = _exported(Shadowed(), (torch.zeros(2, 4),))
     bad = _swapped(input_plan(exported))
     placeholders = [n.name for n in exported.graph.nodes if n.op == "placeholder"]
     params = dict(module.named_parameters(remove_duplicate=False))
     buffers = dict(module.named_buffers(remove_duplicate=False))
-    check_contract(placeholders, bad, params, buffers)  # 不抛：名字/顺序/认领全对
     users = [i["name"] for i in bad if i["kind"] == "input"]
     assert users == ["p_x"], users
     assert len(users) == 1, "example_inputs 给一项就够，数量校验也被骗过"
+    with pytest.raises(BuildError) as info:
+        check_contract(placeholders, bad, params, buffers)
+    text = str(info.value)
+    assert "顺序约定" in text and "标反" in text, text
 
 
 def test_swapped_kinds_are_refused_against_the_exporter():
@@ -84,8 +92,8 @@ def test_swapped_kinds_are_refused_against_the_exporter():
     with pytest.raises(BuildError) as info:
         placeholder_args(module, exported, bad, (torch.zeros(2, 4),))
     text = str(info.value)
-    assert "与 torch.export 自己给的不一致" in text, text
-    assert "p_x" in text and "kind" in text, text
+    # 第十二轮之后顺序不变量先命中（它也是导出器的约定）；逐项核对仍是第二道。
+    assert "顺序约定" in text and "标反" in text, text
 
 
 def test_real_plan_still_puts_the_parameter_first():
@@ -125,7 +133,7 @@ def build_model():
     monkeypatch.setattr(fx_trace, "input_plan", lambda exported: _swapped(real_plan(exported)))
     code = cli.main(["build", "--repo", str(repo), "--entry", ENTRY, "--out", str(out_dir)])
     assert code == 2, code
-    assert "与 torch.export 自己给的不一致" in capsys.readouterr().err
+    assert "顺序约定" in capsys.readouterr().err
     assert not (out_dir / "trace.json").exists(), "拒绝出图时不能留下 trace"
 
 
@@ -208,17 +216,35 @@ def test_token_is_refused_not_consumed_as_a_tensor():
     assert "拒绝出图" in text, text
 
 
+class _ConstAttr(nn.Module):
+    """普通张量属性：导出器抬成 CONSTANT_TENSOR，值在 exported.constants 里。"""
+
+    def __init__(self):
+        super().__init__()
+        self.w = torch.ones(2, 4)
+
+    def forward(self, x):
+        return x + self.w
+
+
 def test_custom_obj_is_a_constant_taken_from_exported_constants():
-    """CUSTOM_OBJ 的值在 exported.constants 里，不该向 example_inputs 要一项。"""
-    sentinel = object()
-    exported = _fake_exported("CUSTOM_OBJ", target="obj", name="n_obj")
-    exported.constants = {"obj": sentinel}
-    exported.graph = SimpleNamespace(nodes=[SimpleNamespace(op="placeholder", name="n_obj")])
+    """CUSTOM_OBJ 的值在 exported.constants 里，不该向 example_inputs 要一项。
+
+    第十二轮之后 placeholder_args 只接受真 ExportedProgram，所以拿真导出产物就地
+    把 CONSTANT_TENSOR 改成 CUSTOM_OBJ（两者都映射成 const，值同样取自 constants），
+    不再用 SimpleNamespace 拼一个只有三个属性的替身。
+    """
+    module, exported = _exported(_ConstAttr(), (torch.zeros(2, 4),))
+    for spec in exported.graph_signature.input_specs:
+        if spec.kind == InputKind.CONSTANT_TENSOR:
+            spec.kind = InputKind.CUSTOM_OBJ
     plan = input_plan(exported)
     table = classify(plan)
-    assert table["consts"] == {"n_obj"} and table["inputs"] == [], table
-    args = placeholder_args(nn.Module(), exported, plan, ())
-    assert args == [sentinel], args
+    assert table["consts"] == {"c_w"} and table["inputs"] == ["x"], table
+    data = torch.zeros(2, 4)
+    args = placeholder_args(module, exported, plan, (data,))
+    assert args[0] is exported.constants["w"], args
+    assert args[1] is data, args
 
 
 # ---------------------------------------------------------------- I-2 输出边界
@@ -447,3 +473,62 @@ def test_check_plan_table_catches_each_table_drift(field):
     with pytest.raises(BuildError) as info:
         check_plan_table(bad, expected)
     assert field in str(info.value), str(info.value)
+
+# 这两道关在**真实 CLI 路径**里的牙齿来自「每一级用自己的 import 绑定重算」：
+# fx_trace 用 fx_trace.classify / fx_trace.input_plan，而关里的 expected 走
+# fx_nodes.classify / fx_signature.input_plan，所以某一级漂移时另一级抓得住。
+# 诚实的边界（output/probes/probe12d.py 实测）：
+# ① 什么都不动时 plan 与 expected 是同一个纯函数算两遍，这两道关不会触发——它们防的是
+#    **管线漂移**与**直接 API 传伪造 plan**，不是独立的第三方神谕；
+# ② 把三处 input_plan 引用全换掉就能绕过（monkeypatch 权威本身不在威胁模型内）；
+# ③ KIND_MAP 自己映射错了这两道关也抓不到（两边一起错），那靠钉死每个值的测试与 zoo 把。
+class _Drift(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.w = nn.Parameter(torch.ones(2, 4))
+
+    def forward(self, x):
+        return x + self.w
+
+
+def test_classify_drift_in_the_pipeline_is_caught_at_the_entry(monkeypatch):
+    """fx_trace.classify 把权重塞进 inputs（权威 input_plan 不动）→ 入口拒绝。"""
+    module = _Drift().eval()
+    _ensure_export_cache()
+    real = fx_trace.classify
+
+    def drifted(plan):
+        table = real(plan)
+        table["inputs"] = sorted(table["params"]) + table["inputs"]
+        return table
+
+    monkeypatch.setattr(fx_trace, "classify", drifted)
+    with pytest.raises(BuildError) as info:
+        trace_module(module, (torch.zeros(2, 4),))
+    text = str(info.value)
+    assert "与 torch.export 自己的 input_specs 不一致" in text, text
+    assert "inputs" in text and "p_w" in text, text
+
+
+def test_classify_dropping_a_weight_is_caught_at_the_entry(monkeypatch):
+    """fx_trace.classify 丢掉权重表 → 入口拒绝，而不是安静少一个权重节点。"""
+    module = _Drift().eval()
+    _ensure_export_cache()
+    real = fx_trace.classify
+
+    def drifted(plan):
+        table = real(plan)
+        table["params"] = set()
+        return table
+
+    monkeypatch.setattr(fx_trace, "classify", drifted)
+    with pytest.raises(BuildError) as info:
+        trace_module(module, (torch.zeros(2, 4),))
+    assert "params" in str(info.value), str(info.value)
+
+
+def test_unmodified_pipeline_still_labels_kinds_correctly():
+    """反向对照：不动任何东西时 kind 是对的（上面两条不是恒真拒绝）。"""
+    traced = trace_module(_Drift().eval(), (torch.zeros(2, 4),))
+    kinds = [n["kind"] for n in traced["nodes"] if n.get("level") == "op"]
+    assert sorted(kinds) == ["input", "op", "param"], kinds

@@ -21,7 +21,7 @@ from papertrace.parse_code.fx_inputs import (
     data_shapes,
     param_derived,
 )
-from papertrace.parse_code.fx_contract import check_plan_table
+from papertrace.parse_code.fx_contract import check_plan_table, require_real_export
 from papertrace.parse_code.fx_shapes import tree_shapes
 from papertrace.parse_code.fx_signature import classify, input_plan
 
@@ -46,10 +46,12 @@ def build_op_nodes(
 
     **内部 API**：本函数只按 plan 分表，自己判断不了 kind 对不对（它拿不到 module）。
     外部调用请给 `exported`，入口会把 plan 与导出器自己的 input_specs 逐项核对；
-    不给 exported 就等于声明「这份 plan 已经核过契约」（只有 fx_trace 该这么用）。
+    不给 exported 就等于声明「这份 plan 已经核过契约」——只有已经跑过
+    `placeholder_args` 的调用方才该这么用。`fx_trace` 自己是传 exported 的。
     """
     plan = plan or {}
     if exported is not None:
+        require_real_export(exported)
         check_plan_table(plan, classify(input_plan(exported)))
     spec_inputs = set(plan.get("inputs") or ())
     spec_consts = set(plan.get("consts") or ())

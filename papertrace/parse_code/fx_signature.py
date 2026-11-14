@@ -10,7 +10,11 @@ PARAMETER / BUFFER / USER_INPUT / CONSTANT_TENSOR，`spec.target` 是参数的�
 """
 
 from papertrace.exceptions import BuildError, TraceUnsupported
-from papertrace.parse_code.fx_contract import check_contract, check_plan_source
+from papertrace.parse_code.fx_contract import (
+    check_contract,
+    check_plan_source,
+    require_real_export,
+)
 
 # InputKind 的名字 → 我们 trace.json 里的 kind。
 # CUSTOM_OBJ 是 exported.constants 里的 ScriptObject 常量（torch/_export/converter.py
@@ -126,6 +130,8 @@ def placeholder_args(module, exported, plan: list[dict], example_inputs) -> list
     target 名（`sub_x`、`sub_x_1`），和 `exported.graph` 的名字对不上，参数节点连
     观察值都拿不到。这里用原图 + input_specs 指到的真实张量，键就是图里的名字。
     """
+    # 权威必须来自 torch.export：替身对象会让下面两道「与导出器核对」的关一起失效。
+    require_real_export(exported)
     params = dict(module.named_parameters(remove_duplicate=False))
     buffers = dict(module.named_buffers(remove_duplicate=False))
     named: dict = {**params, **buffers}

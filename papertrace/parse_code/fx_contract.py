@@ -14,7 +14,33 @@
 全部抛 BuildError（exit 2）：spec 与图/模块对不上属于**契约错误**，不是「torch 追不动」。
 """
 
+from collections import Counter
+
 from papertrace.exceptions import BuildError
+
+
+def require_real_export(exported) -> None:
+    """exported 必须是 torch.export 真的产物，不接受鸭子类型的替身。
+
+    为什么：kind 的权威是导出器，而 check_plan_source / check_plan_table 的 expected
+    都是从**调用方传进来的** exported 重生的。传一个 SimpleNamespace 就能让 plan 与
+    expected 一起错、两道关全过（第十二轮 I-1 实测）。类型守卫把「权威必须来自
+    torch.export」钉死在入口。
+
+    诚实的边界：就地改一个**真** ExportedProgram 的 graph_signature.input_specs 仍能
+    伪造（实测），那属于篡改权威本身，与 monkeypatch 掉全部 input_plan 引用同一类，
+    不在本切片的威胁模型内；下面的顺序不变量与「恰好认领一次」抓住其中最常见的两种改法。
+
+    torch 在函数内 import：本模块与 fx_signature 都要能在没装 torch 的机器上被 import。
+    """
+    import torch
+
+    if not isinstance(exported, torch.export.ExportedProgram):
+        raise BuildError(
+            "exported 必须是 torch.export.export() 的产物（ExportedProgram），收到的是 "
+            + type(exported).__name__
+            + "；kind 的权威只能是导出器，不接受手工拼的替身，按约定拒绝出图"
+        )
 
 
 def check_contract(placeholders: list[str], plan: list[dict], params: dict, buffers: dict) -> None:
@@ -43,11 +69,34 @@ def check_contract(placeholders: list[str], plan: list[dict], params: dict, buff
             + "、".join(ordered) + " ≠ " + "、".join(placeholders)
             + "；按约定拒绝出图（不猜哪个对应哪个）"
         )
-    claimed = {
+    # torch.export 自己写死的顺序约定（torch/export/graph_signature.py 里
+    # ExportGraphSignature 的 docstring）：Inputs = [*parameters_buffers_constant_tensors,
+    # *flattened_user_inputs]。这不是我们发明的启发式：它抓得住「权重标成 input、
+    # 输入标成 param」的互换——互换后名字全覆盖、顺序与图一致、认领也齐，只有这条
+    # 不变量会破（第十二轮 I-1，在**真的** ExportedProgram 上就地改 input_specs 也复现）。
+    kinds = [item["kind"] for item in plan]
+    first_input = kinds.index("input") if "input" in kinds else len(kinds)
+    late = [plan[i]["name"] for i in range(first_input, len(kinds)) if kinds[i] != "input"]
+    if late:
+        raise BuildError(
+            "input_specs 违反 torch.export 的顺序约定（权重/缓冲/常量必须全部排在数据输入之前）："
+            + "、".join(late)
+            + " 出现在数据输入之后；这通常意味着 kind 被标反了"
+            "（权重标成 input、输入标成 param），按约定拒绝出图"
+        )
+    targets = [
         item["target"] for item in plan
         if item["kind"] in ("param", "const") and item.get("target")
-    }
-    unclaimed = sorted((set(params) | set(buffers)) - claimed)
+    ]
+    # 恰好认领一次：set 会把「两个 placeholder 都指向同一个参数」压成一个，
+    # 于是重复认领静默通过、图里多出个一模一样的权重节点（第十二轮 I-1 的 dup 反例）。
+    twice = sorted(t for t, n in Counter(targets).items() if n > 1)
+    if twice:
+        raise BuildError(
+            "同一个参数/常量被 input_specs 认领了多次：" + "、".join(twice)
+            + "；一个权重只该有一个 placeholder，重复认领意味着 spec 被改过，按约定拒绝出图"
+        )
+    unclaimed = sorted((set(params) | set(buffers)) - set(targets))
     if unclaimed:
         raise BuildError(
             "模块里有参数/缓冲没被任何 param|const 的 input_specs 认领："

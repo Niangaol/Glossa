@@ -6,7 +6,8 @@ output/probes/probe11b.py 对导出器 plan 的实测，不是从被测代码反
 
 覆盖的写法：同名遮蔽、没用到的参数/缓冲、子模块、tied weights（参数与缓冲）、
 常量折叠、普通 list 装 Parameter、requires_grad=False、ParameterList/Dict、
-None 缓冲、非持久缓冲、training 分支、普通张量属性、没用到的子模块。
+None 缓冲、非持久缓冲、training 分支、普通张量属性、没用到的子模块、
+原地写缓冲（mutation）、死算子、标量属性。
 no_grad 单独一条：契约过得去，但追踪阶段明确拒绝（见文件末尾），不算误杀。
 """
 
@@ -187,26 +188,67 @@ class UnusedSub(nn.Module):
         return x + self.w
 
 
+class InPlaceBuf(nn.Module):
+    """原地写缓冲（mutation）：结果不在 output 里也算被用着，不该报孤点。"""
+
+    def __init__(self):
+        super().__init__()
+        self.register_buffer("acc", torch.zeros(2, 4))
+
+    def forward(self, x):
+        self.acc.add_(x)
+        return self.acc * 2
+
+
+class DeadOp(nn.Module):
+    """有入边却没人用的死算子：本切片不做死代码检测，orphan 仍是 0。"""
+
+    def __init__(self):
+        super().__init__()
+        self.w = nn.Parameter(torch.ones(2, 4))
+
+    def forward(self, x):
+        unused = x * 3  # noqa: F841 - 故意留着没人用
+        return x + self.w
+
+
+class ScalarAttr(nn.Module):
+    """标量属性被折进算子：既没有权重也没有常量节点，只有输入与算子。"""
+
+    def __init__(self):
+        super().__init__()
+        self.scale = 2.0
+
+    def forward(self, x):
+        return x * self.scale
+
+
 ONE = (torch.zeros(2, 4),)
 TWO = (torch.zeros(2, 4), torch.zeros(2, 4))
 
 #: (id, 模型, example_inputs, 精确的 kind 计数)
+#: 计数含 op：第十二轮评审指出「只查期望 kind」时多出一个 const 也不会红，
+#: 所以这里把每种 kind 都钉死，断言用集合相等（probe14 实测，不是从被测代码反推）。
 ZOO = [
-    ("shadowed", Shadowed, ONE, {"param": 1, "input": 1}),
-    ("unused", Unused, ONE, {"param": 3, "input": 1}),
-    ("nested", Nested, TWO, {"param": 2, "input": 2}),
-    ("tied", Tied, ONE, {"param": 2, "input": 1}),
-    ("tied-buffer", TiedBuffer, ONE, {"param": 2, "input": 1}),
-    ("folded", Folded, ONE, {"param": 1, "input": 1}),
-    ("plain-list", PlainList, ONE, {"const": 1, "input": 1}),
-    ("frozen", Frozen, ONE, {"param": 1, "input": 1}),
-    ("parameter-list", PList, ONE, {"param": 2, "input": 1}),
-    ("parameter-dict", PDict, ONE, {"param": 1, "input": 1}),
-    ("none-buffer", NoneBuffer, ONE, {"param": 1, "input": 1}),
-    ("non-persistent", NonPersistent, ONE, {"param": 1, "input": 1}),
-    ("branch-training", BranchTraining, ONE, {"param": 1, "input": 1}),
-    ("const-attr", ConstAttr, ONE, {"const": 1, "input": 1}),
-    ("unused-sub", UnusedSub, ONE, {"param": 2, "input": 1}),
+    ("shadowed", Shadowed, ONE, {"param": 1, "input": 1, "op": 1}),
+    ("unused", Unused, ONE, {"param": 3, "input": 1, "op": 1}),
+    ("nested", Nested, TWO, {"param": 2, "input": 2, "op": 3}),
+    ("tied", Tied, ONE, {"param": 2, "input": 1, "op": 2}),
+    ("tied-buffer", TiedBuffer, ONE, {"param": 2, "input": 1, "op": 2}),
+    ("folded", Folded, ONE, {"param": 1, "input": 1, "op": 2}),
+    ("plain-list", PlainList, ONE, {"const": 1, "input": 1, "op": 1}),
+    ("frozen", Frozen, ONE, {"param": 1, "input": 1, "op": 1}),
+    ("parameter-list", PList, ONE, {"param": 2, "input": 1, "op": 2}),
+    ("parameter-dict", PDict, ONE, {"param": 1, "input": 1, "op": 1}),
+    ("none-buffer", NoneBuffer, ONE, {"param": 1, "input": 1, "op": 1}),
+    ("non-persistent", NonPersistent, ONE, {"param": 1, "input": 1, "op": 1}),
+    ("branch-training", BranchTraining, ONE, {"param": 1, "input": 1, "op": 1}),
+    ("const-attr", ConstAttr, ONE, {"const": 1, "input": 1, "op": 1}),
+    ("unused-sub", UnusedSub, ONE, {"param": 2, "input": 1, "op": 1}),
+    ("in-place-buffer", InPlaceBuf, ONE, {"param": 1, "input": 1, "op": 2}),
+    ("dead-op", DeadOp, ONE, {"param": 1, "input": 1, "op": 2}),
+    # 标量属性被折进算子：根本没有 param/const 节点（不是「有但数量为 0」）。
+    ("scalar-attr", ScalarAttr, ONE, {"input": 1, "op": 1}),
 ]
 
 
@@ -218,8 +260,10 @@ def test_zoo_models_are_traced_with_exact_kinds(name, cls, example, expected):
         if node.get("level") != "op":
             continue
         kinds[node["kind"]] = kinds.get(node["kind"], 0) + 1
+    # 集合相等：多出一类（比如凭空多一个 const）也要红，不只是数量对不上才红。
+    assert set(kinds) == set(expected), (name, kinds, expected)
     for kind, count in expected.items():
-        assert kinds.get(kind, 0) == count, (name, kind, kinds)
+        assert kinds[kind] == count, (name, kind, kinds)
     assert traced["runtime"]["real_execution"] == {"ok": True, "reason": None}
     assert traced["runtime"]["counts"]["shape_broken"] == 0, traced["runtime"]["counts"]
 
@@ -244,3 +288,17 @@ def test_no_grad_region_is_refused_with_a_precise_reason():
     text = str(info.value)
     assert "子模块" in text and "no_grad" in text, text
     assert "权重" in text, text
+
+
+@pytest.mark.parametrize("cls", [InPlaceBuf, DeadOp], ids=["in-place-buffer", "dead-op"])
+def test_mutation_and_dead_code_do_not_inflate_orphan(cls):
+    """端到端钉住 orphan 的语义边界（评审 Q3 与 M-1）。
+
+    mutation：算子的结果写进缓冲、不在 graph.output 里，仍然不是孤点。
+    死算子：有入边没人用，本切片**不**做死代码检测，orphan 也是 0——
+    这不是漏检被当成通过，而是写死的取舍（README 明说 orphan==0 不等于没有死代码）。
+    """
+    traced = trace_module(cls().eval(), ONE)
+    counts = traced["runtime"]["counts"]
+    assert counts["orphan"] == 0, counts
+    assert counts["shape_broken"] == 0, counts

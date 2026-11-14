@@ -5,7 +5,6 @@
 这里钉死反向判据，并证明它不会误杀合法模型（同名遮蔽、没用到的参数/缓冲、子模块、常量）。
 """
 
-from types import SimpleNamespace
 
 import pytest
 
@@ -133,14 +132,16 @@ def _const_plan_without_values():
 
     第十一轮之后 plan 必须与导出器逐项一致，所以不能再靠手改 kind 来走到 const 分支；
     这里用**导出器自己的** plan，只把值拿掉，让 const 分支去模块里找。
+
+    第十二轮之后 placeholder_args 只接受真 ExportedProgram（类型守卫），不能再拿
+    SimpleNamespace 拼替身：直接清真产物的 `_constants`（torch 2.15 的 `constants`
+    是只读 property，没有公开 setter）。
     """
     _, exported = _exported(ConstAttr(), (torch.zeros(2, 4),))
     plan = input_plan(exported)
     assert [i["kind"] for i in plan if i["target"] == "w"] == ["const"], plan
-    stripped = SimpleNamespace(
-        graph=exported.graph, graph_signature=exported.graph_signature, constants={}
-    )
-    return plan, stripped
+    exported._constants = {}
+    return plan, exported
 
 
 def test_const_label_on_a_trainable_parameter_is_refused():
