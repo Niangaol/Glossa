@@ -70,15 +70,20 @@ root/@043        transformer.h.0.attn               (2, 4, 8, 8) -> (2, 4, 8, 8)
 - **节点 id**：模块节点是路径（`root`、`root/transformer.h.0.attn`），算子/输入/权重节点一律
   `root/@037`——`@` 不会出现在模块路径里，所以两种 id 不可能撞车。真有子模块名里带 `@`，
   `build` 直接报 `BuildError` 要求改名，而不是生成一份 id 打架的 trace。
-- **`kind`**：`op` | `input` | `param`。`input` 是图入口，`param` 是权重/缓冲（torch.export
-  把权重抬成图输入，名字带 `p_`/`b_` 前缀），`parent_id` 指向它真正所属的模块。
-  认权重**只认 mangled 名**（`p_`/`b_` 形式）：参数全名（`self.x` → `x`）可能和形参同名，
-  拿全名去认会把真输入吞成权重（实测 `self.x` + `forward(x)` 曾被算成「输入 0」）。
+- **`kind`**：`op` | `input` | `param` | `const`。**谁是谁由 `graph_signature.input_specs` 说了算**：
+  `PARAMETER`/`BUFFER` → `param`，`CONSTANT_TENSOR` → `const`，`USER_INPUT` → `input`；
+  `parent_id` 用 `spec.target` 的点分路径（`transformer.h.0.attn`）定位所属模块，不靠名字猜。
+  常量（`torch.ones(...)`、`self.const = torch.ones(...)`）是权重一类，不是数据入参。
+  只有拿不到 `input_specs` 的老 torch 才退回 mangled 名（`p_`/`b_` 前缀）；那种情况下
+  `sub.x` 与根上的 `sub_x` 会压成同一个 `p_sub_x`，`build` 直接 `BuildError`（exit 2），
+  绝不静默取一个（压平名也绝不认参数全名：`self.x` 的 `x` 会和形参 `x` 撞车）。
 - **形状**：`shape_out` 是第 1 项输出；`outputs` 是全部输出（`[]` = 无张量输出，
   `[[]]` = 0 维标量）。`inputs` 是**数据**入参形状（按参数顺序，权重位置整个跳过），
   `shape_in` 就是 `inputs[0]`；权重边不会冒充输入（藏在 `cat([w, x])` 这类**容器**里的权重也照样
   整个跳过），只用权重的算子 `inputs` 为空、`shape_in` 也为空（`--ops` 打 `-`，绝不回退成
   权重形状）。权重本身的形状看 param 节点和它的入边。
+- **`dump --ops` 每行带 `kind`**（`kind=param`/`kind=input`/`kind=const`）：param 与 input 互换时
+  终端上直接看得出来，不用去翻 JSON。
 - **权重派生量不算数据输入**：`self.w[0]`、`self.w[:, :2]`、权重的转置/切片这类**只由权重算出来**
   的中间张量，和权重本身同等对待——它们不进 `inputs`，`shape_in` 仍是模型数据入参的形状。
   反过来 `x[0]` 这种从数据张量上取的切片仍是输入，不会被误伤。

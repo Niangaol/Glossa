@@ -1,4 +1,4 @@
-"""模块树与算子节点：`torch.export` 图 → trace.json 的 nodes。"""
+"""算子/输入/权重节点：`torch.export` 图 → trace.json 的 nodes（模块树在 fx_modules）。"""
 
 from __future__ import annotations
 
@@ -7,72 +7,18 @@ from typing import Any
 from papertrace.exceptions import BuildError
 from papertrace.parse_code.fx_graph import (
     RUNTIME,
-    STATIC,
     all_val_shapes,
     fmt_shape,
     fused_items,
+    mangled_collisions,
     node_kind,
     op_name,
     owned_paths,
-    simple_type,
     stack_paths,
     val_dtype,
 )
-from papertrace.parse_code.fx_inputs import data_shapes, param_derived
+from papertrace.parse_code.fx_inputs import constant_names, data_shapes, param_derived
 from papertrace.parse_code.fx_shapes import tree_shapes
-
-
-def _module_entry(module, *, entry_id, parent_id, op, label, loc) -> dict:
-    return {
-        "id": entry_id,
-        "parent_id": parent_id,
-        "level": "module",
-        "op": op,
-        "label": label,
-        "loc": loc,
-        "shape_in": [],
-        "shape_out": [],
-        "outputs": [],
-        "dtype": None,
-        "inplace": False,
-        "source": STATIC,
-        "degraded": False,
-        "degraded_reason": None,
-        "repeat": 1,
-        "stale": False,
-    }
-
-
-def module_nodes(module, module_id: str, module_types: dict[str, str]) -> tuple[list[dict], dict[str, str]]:
-    """建模块节点树：父在前、子在后，id 稳定可读（模块路径不含 @，与算子 id 不会撞）。"""
-    root_loc = f"{type(module).__module__}.{type(module).__name__}"
-    entries: dict[str, dict] = {
-        "": _module_entry(
-            module, entry_id=module_id, parent_id=None, op=type(module).__name__,
-            label=module_id, loc=root_loc,
-        )
-    }
-    for path in sorted(module_types, key=lambda p: (p.count("."), p)):
-        if not path:
-            continue
-        if "@" in path:
-            # 算子 id 形如 root/@007；模块路径里再出现 @ 就可能把两种 id 撞成一个
-            raise BuildError(
-                f"模块路径 {path!r} 含 '@'，会和算子 id（root/@序号）撞车；请重命名子模块。"
-            )
-        parent = path.rsplit(".", 1)[0] if "." in path else ""
-        entries[path] = _module_entry(
-            module,
-            entry_id=f"{module_id}/{path}",
-            parent_id=entries[parent]["id"] if parent in entries else module_id,
-            op=module_types[path],
-            label=path,
-            loc=root_loc,
-        )
-    ordered = [entries[""]] + [
-        entries[p] for p in sorted(entries, key=lambda p: (p.count("."), p)) if p
-    ]
-    return ordered, {path: info["id"] for path, info in entries.items()}
 
 
 def build_op_nodes(
@@ -82,6 +28,7 @@ def build_op_nodes(
     module_ids: dict[str, str],
     root_loc: str,
     observed: dict[str, dict[str, Any]] | None = None,
+    plan: dict | None = None,
 ) -> tuple[list[dict], dict[str, str], dict[str, list[list[int]]]]:
     """算子/输入/权重节点。id 用 `模块id/@序号`，与模块 id（`/` 路径）互不撞车。
 
@@ -89,17 +36,31 @@ def build_op_nodes(
     只有 interpreter 不经过的节点（get_attr/权重）才用 `node.meta["val"]`，那是它们的值本身。
     """
     owner, mangled_owner = owned_paths(module)
+    plan = plan or {}
+    spec_inputs = set(plan.get("inputs") or ())
+    spec_owner: dict[str, str] = dict(plan.get("owner") or ())
     observed = observed or {}
     nodes: list[dict] = []
     by_name: dict[str, str] = {}
     all_shapes: dict[str, list[list[int]]] = {}
-    # 权重在 export 图里也是 placeholder，得先认出它们，才能从「入参」里挑出真正的数据输入。
-    # placeholder 只认 mangled 名（p_/b_）：参数全名可能和形参名相同，拿全名认会把真输入吞掉。
-    param_names: set[str] = {
-        n.name for n in graph.nodes if node_kind(n) == "param"
-    } | {n.name for n in graph.nodes if n.name in mangled_owner}
-    # 只由权重算出来的中间量（self.w[0]、self.w[:, :2]）同样是权重，不是数据输入
-    derived = param_derived(graph, param_names)
+    # 权重/缓冲/常量在 export 图里也是 placeholder，得先认出它们，才能从「入参」里
+    # 挑出真正的数据输入。优先用 input_specs（权威：sub.x 与根上的 sub_x 不会互相覆盖）；
+    # 拿不到 spec 时才退回 mangled 名（p_/b_）；那条路一旦发现压平撞名就报错，不静默取一个。
+    if plan:
+        param_names: set[str] = set(plan.get("params") or ()) | set(plan.get("consts") or ())
+    else:
+        clashes = mangled_collisions(module)
+        if clashes:
+            flat, first, second = clashes[0]
+            raise BuildError(
+                f"参数名压平后撞车：{first} 与 {second} 都会变成 {flat}；"
+                "这个 torch 版本没有 graph_signature.input_specs，无法区分，拒绝出图"
+            )
+        param_names = {
+            n.name for n in graph.nodes if node_kind(n) == "param"
+        } | {n.name for n in graph.nodes if n.name in mangled_owner}
+    # 只由权重/常量算出来的中间量（self.w[0]、torch.ones(...)）同样不是数据输入
+    derived = param_derived(graph, param_names | constant_names(graph, op_name))
 
     for index, node in enumerate(graph.nodes):
         if node.op == "output":
@@ -139,10 +100,16 @@ def build_op_nodes(
 
         paths = stack_paths(node)
         parent_key = paths[-1] if paths else ""
-        # torch.export 把权重抬成图输入（placeholder），名字就是参数全名 wte.weight
-        if kind == "param" or (kind == "input" and node.name in param_names):
+        # torch.export 把权重抬成图输入（placeholder）；kind 以 input_specs 为准，
+        # 父模块也用它给的 target（参数全名），不再拿会被压平的名字猜。
+        if kind == "param" or node.name in param_names:
             kind = "param"
-            parent_key = mangled_owner.get(node.name) or owner.get(node.name) or parent_key
+            if node.name in spec_owner:
+                parent_key = spec_owner[node.name]
+            else:
+                parent_key = mangled_owner.get(node.name) or owner.get(node.name) or parent_key
+        elif node.name in spec_inputs:
+            kind = "input"
         parent_id = module_ids.get(parent_key, module_id)
 
         reasons: list[str] = []

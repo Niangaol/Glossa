@@ -28,8 +28,15 @@ from papertrace.parse_code.fx_graph import (
     val_dtype,
     val_shape,
 )
-from papertrace.parse_code.fx_nodes import build_op_nodes, module_nodes
+from papertrace.parse_code.fx_modules import module_nodes
+from papertrace.parse_code.fx_nodes import build_op_nodes
 from papertrace.parse_code.fx_observe import observe
+from papertrace.parse_code.fx_signature import (
+    classify,
+    input_plan,
+    placeholder_args,
+    runtime_meta,
+)
 
 __all__ = [
     "FUSED_OPS",
@@ -88,30 +95,6 @@ def _short_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {first}"
 
 
-def _runtime_meta(module, torch_mod, example_inputs) -> dict:
-    """把「这次追踪到底怎么跑的」记进 trace，不然结果无法复现也无法解释。"""
-    inputs = []
-    for item in example_inputs:
-        if isinstance(item, (list, tuple)):
-            inputs.extend(all_val_shapes(item))
-        else:
-            shape = val_shape(item)
-            if shape is not None:
-                inputs.append(shape)
-    dtype = val_dtype(example_inputs[0]) if example_inputs else None
-    return {
-        "ok": True,
-        "reason": None,
-        "device": "cpu",
-        "torch_version": str(getattr(torch_mod, "__version__", "")),
-        "dtype": dtype,
-        "batch": inputs[0][0] if inputs and inputs[0] else None,
-        "seq_len": inputs[0][1] if inputs and len(inputs[0]) > 1 else None,
-        "entry": f"{type(module).__module__}.{type(module).__name__}",
-        "example_inputs": inputs,
-    }
-
-
 def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     """追踪一个 nn.Module，返回 `{"nodes", "edges", "runtime"}`。"""
     torch_mod = _require_torch()
@@ -136,8 +119,20 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
     # 真实执行一遍导出图：边的两端形状从这里拿，不再靠 SSA 推断。
     # 跑不起来就**不能**冒充「真实追踪」：没有第二遍执行，形状只是 torch.export
     # 的推断，节点 source 也不再是 runtime。宁可 exit 5 不写 trace。
+    plan = input_plan(exported)
+    classified = classify(plan) if plan else {}
     try:
-        observed, observe_error = observe(exported.module(), example_inputs)
+        if plan:
+            # 用原图 + 真实张量跑：node.name 和 exported.graph 完全一致，
+            # 参数/输入的内外名不会再错位（exported.module() 会换成 target 名）
+            runnable = torch_mod.fx.GraphModule(torch_mod.nn.Module(), exported.graph)
+            observed, observe_error = observe(
+                runnable, placeholder_args(module, exported, plan, example_inputs)
+            )
+        else:  # pragma: no cover - 老版本 torch 没有 input_specs
+            observed, observe_error = observe(exported.module(), example_inputs)
+    except TraceUnsupported:
+        raise
     except Exception as exc:  # noqa: BLE001 - 统一翻译成可读原因
         observed, observe_error = {}, _short_error(exc)
     if observe_error is not None:
@@ -146,12 +141,12 @@ def trace_module(module, example_inputs, *, module_id: str = "root") -> dict:
             "按约定不写 trace 冒充结果：" + observe_error
         )
     op_nodes, by_name, all_shapes = build_op_nodes(
-        module, graph, module_id, module_ids, root_loc, observed=observed
+        module, graph, module_id, module_ids, root_loc, observed=observed, plan=classified
     )
     edges = build_edges(graph, by_name, op_nodes, all_shapes, observed=observed)
     nodes = list(tree) + op_nodes
     counts = finish_nodes(nodes, edges)
-    runtime = _runtime_meta(module, torch_mod, example_inputs)
+    runtime = runtime_meta(module, torch_mod, example_inputs)
     runtime["counts"] = counts
     # 走到这里说明第二遍真实执行成功了；失败已在上面转成 TraceUnsupported
     runtime["real_execution"] = {"ok": True, "reason": None}

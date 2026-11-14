@@ -162,6 +162,26 @@ def owned_paths(module) -> tuple[dict[str, str], dict[str, str]]:
 
 
 
+def mangled_collisions(module) -> list[tuple[str, str, str]]:
+    """(压平名, 全名A, 全名B)：`sub.x` 与根上的 `sub_x` 都会变成 `p_sub_x`。
+
+    这是 mangled 名唯一的致命缺陷。有 input_specs 时不走这条路；没有 spec 的老
+    torch 上必须显式报错——静默取后者会把权重和真输入整个换位（第五轮 C1）。
+    """
+    seen: dict[str, str] = {}
+    clashes: list[tuple[str, str, str]] = []
+    for mod_name, mod in module.named_modules():
+        prefix = f"{mod_name}." if mod_name else ""
+        for attr in list(getattr(mod, "_parameters", {}) or {}) + list(getattr(mod, "_buffers", {}) or {}):
+            full = f"{prefix}{attr}"
+            flat = full.replace(".", "_")
+            if flat in seen and seen[flat] != full:
+                clashes.append((flat, seen[flat], full))
+            else:
+                seen[flat] = full
+    return clashes
+
+
 def fmt_shape(shape) -> str:
     """() 表示 0 维标量；(?) 表示形状未知。"""
     if shape is None:
@@ -169,4 +189,3 @@ def fmt_shape(shape) -> str:
     if not shape:
         return "()"
     return "(" + ", ".join(str(d) for d in shape) + ")"
-

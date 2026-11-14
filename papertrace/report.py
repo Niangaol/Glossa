@@ -150,8 +150,12 @@ def print_ops(doc: dict) -> None:
             shown_in = "-"
         else:
             shown_in = "(?)"
+        # kind 必须打出来：param/input 互换时形状和 op 都可能仍然「看着合理」，
+        # 只有标签能让人一眼看出哪个才是数据输入（评审 Minor）。
+        kind = node.get("kind") or "op"
+        kind_note = "" if kind == "op" else f"  kind={kind}"
         print(
             f"{node['id']:<16} {where:<34} "
             f"{shown_in} -> {shown_out} "
-            f"{node['op']}{flag}"
+            f"{node['op']}{kind_note}{flag}"
         )

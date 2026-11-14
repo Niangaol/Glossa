@@ -5,9 +5,10 @@
 > 是 4 个独立算子（matmul / mul / masked_fill / softmax），不是 1 个融合 SDPA。
 > 铁律：所有节点 `source="runtime"`，禁止示例节点、禁止 mock 形状。
 
-**状态（2026-11-14）**：Task 7–11 全部落地，**184 passed**，第三、四、五轮评审的必修项都已修完
-（第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d`。
+**状态（2026-11-14）**：Task 7–11 全部落地，**195 passed**，第三至第六轮评审的必修项都已修完
+（第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2；
+第六轮 C1/I2/I3 + 兜底撞名守卫），
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `（本次）`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -58,10 +59,14 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
      `TraceError: symbolically traced variables cannot be used as inputs to control flow`。
    - `make_fx` 能跑，但 aten 图被拆碎（unsafe_view/expand/clone）且 `nn_module_stack` 为 None，做不了层级。
    - `torch.export` 是真实（fake-tensor）执行：切片/断言都能过，节点自带
-     `meta["val"]`（真实静态形状）和 `meta["nn_module_stack"]`（模块路径），一举解决形状与层级。
+     `meta["val"]`（静态形状）和 `meta["nn_module_stack"]`（模块路径）。
+     注意：**形状最终不以 `meta["val"]` 为准**（见第 3 条与第四轮记录），它只用于
+     `get_attr`/权重这类不进入真实执行的节点；模块层级仍用 `nn_module_stack`。
 2. `_ensure_export_cache()`：本机 `TORCHINDUCTOR_CACHE_DIR` 指向 Unsloth 的不可写目录，
    `export` 拉起 inductor 就 `WinError 5`。先探测可写，不可写才退到临时目录，不改用户配置。
-3. 形状只从 `node.meta["val"]` 取，**没有任何写死的形状列表**。
+3. 形状来自**第二遍真实执行**：`fx_observe` 用真实张量把导出图再跑一遍，逐节点记下
+   消费者实际入参与生产者实际输出（`torch.export` 的 `meta["val"]` 是第一遍 fake-tensor
+   的静态值，只给 `get_attr`/权重这类节点兜底）。**没有任何写死的形状列表**。
 4. 多输出算子（`split_with_sizes`）保留全部输出形状，`shape_out` 记第 1 项并标 degraded，
    reason 里把每一项形状都写出来。
 5. `getitem` 消费多输出节点时，按 `args[1]` 的常量索引取**那一项**的形状（见 Task 8 补充）。
@@ -211,6 +216,35 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 `derived = set()` → I2 两条红（`select` 混进 `inputs`）；删掉 `_check_key_types` 调用 → I1 五条红
 （`TypeError: unhashable type: 'list'`）。
 
+### 第五轮复审（基线 fce6b2d，184 passed）：压平名（mangled）还是撞
+
+第五轮把「裸全名」从判定里摘掉了，但**压平名本身就会撞**：`sub.x` 与根上的 `sub_x`
+都变成 `p_sub_x`，谁后写谁赢。评审给出的复现是必现的：
+
+| 编号 | 问题 | 修法 |
+| --- | --- | --- |
+| C1 | `sub_x`（根参数）与 `sub.x`（子模块参数）压成同一个 `p_sub_x`，后者覆盖前者；`forward(p_x)` 与 `self.x` 的 `p_x`/`p_x_1` 也会整对调换 | 参数判定改由 `graph_signature.input_specs` 接管（`fx_signature.input_plan/classify`）：`spec.kind` 定 kind，`spec.target` 定所属模块。mangled 名只作没有 spec 时的兜底，且兜底一旦发现压平撞名就 `BuildError`（exit 2），不猜 |
+| I2 | 常量：`torch.cat([torch.ones(2,4), x])` 的 `cat inputs=[[2,4],[1,4]]`；`self.const` 被标成 `input` | `CONSTANT_TENSOR` → 新 kind `const`，与权重同等对待（不进 `inputs`）；`fx_inputs.constant_names()` 把无入参的 `ones/zeros/full/empty/arange/linspace/eye` 也并进派生集合 |
+| I3 | 只有参数、没有算子的子模块（`Sub`）不进 `nn_module_stack`，权重的 `parent_id` 掉回 `root` | `fx_modules.``_all_module_types()`：先按 `named_modules()` 收全树（root 用类名），再拿图里的类型补，模块节点与 `module_ids` 因此完整 |
+| I4 | README/计划写着「第五轮已修完」、提交链止于 `6a87f7d`、`meta["val"]` 取形状 | 本节与上两处已改回事实 |
+
+observe 也跟着改了：`exported.module()` 的 placeholder 被换成 target 名（`sub_x`、`sub_x_1`），
+拿它去 observe 和图里的 `p_sub_x` 对不上，连参数值都取不到。现在直接用
+`torch.fx.GraphModule(nn.Module(), exported.graph)` 包住**原图**，再按 `input_specs` 把
+权重/缓冲/常量/数据的真实张量按 placeholder 顺序排好（`fx_signature.placeholder_args`）。
+
+守卫测试：`tests/test_sixth_review.py`（11 条：`sub.x`+`sub_x` 权重 2/输入 1 且 parent 分别是
+`root`/`root/sub`、`forward(p_x)` 的 data 入参不被吞、字面常量与 `self.const` 都不算输入、
+`--ops` 显示 kind、`edge.dst` 是 int 与 nodes 混字符串都 exit 2 且无 traceback、
+无 spec 时压平撞名必 `BuildError`）。
+
+变异探针（均已还原）：`plan = []` → 6 条红；`types = dict(module_types)` → parent 用例红；
+去掉 kind 标注 → `--ops` 用例红；`mangled_collisions` 返回空 → 兜底用例
+`DID NOT RAISE BuildError`。
+
+拆分（都因为 ≤200 行）：`fx_modules.py`（模块树）、`fx_signature.py`（input_specs 与真实张量）、
+`schema_structure.py`（结构校验），`fx_nodes` 147 行、`fx_graph` 175 行、`schema_validate` 96 行。
+
 ## Review Focus
 
 1. **融合漏检**：`flash=False` 若没生效，图上只会出现一个 SDPA 算子。
@@ -270,4 +304,5 @@ observe 失败必须 `exit 5` 且不覆盖已有 trace。
 | `fc1ca48` | `report.py` 拆出、第三轮文档与账本 |
 | `2de86a2` | 第四轮必修：容器里的权重不当输入、畸形 trace 根 exit 2、`-`/`(?)` 三态、`eval()` 异常翻译 |
 | `6a87f7d` | 第四轮文档与账本（README/计划/执行账本同步） |
-| （本轮） | 第五轮必修：mangled 名认权重、权重派生量不算输入、id/端点类型守卫 |
+| `fce6b2d` | 第五轮必修：mangled 名认权重、权重派生量不算输入、id/端点类型守卫 |
+| （本轮） | 第六轮必修：input_specs 定 kind/层级、常量不算输入、参数-only 子模块的 parent、兜底撞名守卫；三个模块拆分 |

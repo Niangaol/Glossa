@@ -1,10 +1,10 @@
 """算子输入的判定：哪些张量算「数据输入」，哪些是权重及其派生量。
 
 两条规则都是被评审打出来的：
-  1. 参数全名可能和形参名相同（\`self.x\` + \`forward(self, x)\`），所以 placeholder
-     只按 export 的 mangled 名（\`p_x\` / \`b_x\`）认权重，绝不能拿全名猜。
-  2. 权重派生量（\`self.w[0]\`、\`self.w[:, :2]\`）是算子节点而不是 param 叶子，
-     只看叶子会把它们当成数据输入，\`shape_in\` 于是变成权重形状。
+  1. 权重/缓冲/常量由 `torch.export` 的 `input_specs` 说了算（见 fx_signature），
+     不靠名字猜：`sub.x` 与根上的 `sub_x` 会被压成同一个 mangled 名。
+  2. 权重派生量（`self.w[0]`、`self.w[:, :2]`）与常量派生量（`torch.ones(...)`）是算子
+     节点而不是 param 叶子，只看叶子会把它们当成数据输入，`shape_in` 于是变成权重/常量形状。
 """
 
 from papertrace.parse_code.fx_shapes import tree_leaf, tree_shapes
@@ -29,9 +29,30 @@ def _collect(value, found: list) -> None:
             _collect(item, found)
 
 
-def param_derived(graph, param_names: set[str]) -> set[str]:
-    """只由权重/缓冲算出来的节点（含 getitem/slice/转置等）——也算权重，不是数据输入。"""
-    derived: set[str] = set(param_names)
+# 不带张量实参的常量构造算子：它们的输出是常量，不是模型数据输入。
+# ones_like/zeros_like 这类带实参的不算（形状取决于输入，语义上仍是数据派生）。
+CONSTANT_OPS = frozenset({"ones", "zeros", "full", "empty", "arange", "linspace", "eye"})
+
+
+def constant_names(graph, op_of) -> set[str]:
+    """找出「无实参的常量构造」节点名（`torch.ones(2, 4)` 这类）。
+
+    `op_of` 由调用方传入（fx_graph.op_name），这里不 import torch 也不必知道 aten 命名。
+    """
+    names: set[str] = set()
+    for node in graph.nodes:
+        if getattr(node, "op", None) in ("placeholder", "get_attr", "output"):
+            continue
+        if arg_nodes(node):
+            continue
+        if op_of(node) in CONSTANT_OPS:
+            names.add(node.name)
+    return names
+
+
+def param_derived(graph, seed: set[str]) -> set[str]:
+    """只由权重/缓冲/常量算出来的节点（含 getitem/slice/转置等）——都不是数据输入。"""
+    derived: set[str] = set(seed)
     for node in graph.nodes:
         if getattr(node, "op", None) in ("placeholder", "get_attr", "output"):
             continue
