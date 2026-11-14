@@ -7,6 +7,8 @@
   序号是本文件全部方程里的 1 基位置（有 marker 的也占号）——改 marker 不会
   让别的方程改 ID。
 - latex 是剔除全部 \\label{...} 之后的公式体，内部换行保留。
+- 注释与逐字环境不产出单元（C1/R14 修复）：未转义 % 到行尾是注释，verbatim /
+  lstlisting 里印出来的 \\begin{equation} 不是公式；marker 只认方程前的注释区。
 - 读不了的论文抛 IngestError（不是 NotImplementedError），原因写在消息里：
   S9 靠这句话填 trace.json 的 unresolved，CLI 不该因为论文读不了就吐 traceback。
 """
@@ -155,3 +157,82 @@ def test_paper_bundle_units_defaults_empty():
     """既有四字段构造点不受影响：第五字段 units 带默认值。"""
     bundle = PaperBundle("src", "tex", 0, None)
     assert bundle.units == []
+
+
+def test_commented_out_equation_is_not_a_unit():
+    """C1 触发器 1/2：注释里的 equation 不是单元，也不许吞掉后面的真公式。"""
+    commented = (
+        "% \\begin{equation}\n"
+        "% a = b\n"
+        "% \\end{equation}\n"
+        "\\begin{equation}\nc = d\n\\end{equation}\n"
+    )
+    units = extract_units(commented)
+    assert [u.unit_id for u in units] == ["eq-1"]
+    assert [u.latex for u in units] == ["c = d"]
+
+    mention = (
+        "% TODO: rewrite \\begin{equation} below\n"
+        "\\begin{equation}\na = b\n\\end{equation}\n"
+    )
+    mentioned = extract_units(mention)
+    assert len(mentioned) == 1
+    assert mentioned[0].unit_id == "eq-1"
+    assert mentioned[0].latex == "a = b"
+
+
+def test_trailing_comment_inside_body_is_dropped():
+    """C1 触发器 3：公式体内的行尾 % 注释不许活进 latex（内部换行仍保留）。"""
+    tex = "\\begin{equation}\na = b % 行尾注释\nc = d\n\\end{equation}\n"
+    units = extract_units(tex)
+    assert len(units) == 1
+    assert units[0].latex.startswith("a = b")
+    assert units[0].latex.endswith("c = d")
+    assert "\\n" in repr(units[0].latex)
+    assert "%" not in units[0].latex
+    assert "行尾注释" not in units[0].latex
+
+
+def test_verbatim_equation_is_not_a_unit():
+    """C1 触发器 4：verbatim 里印出来的 \\begin{equation} 不是公式。"""
+    tex = (
+        "\\begin{verbatim}\n"
+        "\\begin{equation}\n"
+        "a = b\n"
+        "\\end{equation}\n"
+        "\\end{verbatim}\n"
+        "\\begin{equation}\n"
+        "c = d\n"
+        "\\end{equation}\n"
+    )
+    units = extract_units(tex)
+    assert [u.unit_id for u in units] == ["eq-1"]
+    assert [u.latex for u in units] == ["c = d"]
+
+
+def test_marker_inside_body_is_ignored():
+    """R14：marker 只认上一个 \\end 之后、本 \\begin 之前的注释区。
+
+    写在公式体里的 marker 一律忽略，该公式回落 eq-<序号>——宁可退回位置编号，
+    也不要把 A 公式的 ID 静默安到 B 公式头上。
+    """
+    tex = (
+        "\\begin{equation}\n"
+        "a = b\n"
+        "% papertrace-id: second\n"
+        "\\end{equation}\n"
+        "\\begin{equation}\n"
+        "c = d\n"
+        "\\end{equation}\n"
+    )
+    assert [u.unit_id for u in extract_units(tex)] == ["eq-1", "eq-2"]
+
+
+def test_escaped_percent_is_not_a_comment():
+    """\\% 是转义百分号：它自己是 latex 的一部分，它后面才是真注释。"""
+    tex = "\\begin{equation}\na = b \\% c % 真注释\n\\end{equation}\n"
+    units = extract_units(tex)
+    assert len(units) == 1
+    assert "\\%" in units[0].latex
+    assert "真注释" not in units[0].latex
+    assert "%" not in units[0].latex.replace("\\%", "")
