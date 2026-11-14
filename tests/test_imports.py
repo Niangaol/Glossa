@@ -67,6 +67,21 @@ def test_unimplemented_stubs_raise_not_implemented():
         trace_module(object(), ())
 
 
+def test_align_stubs_raise_not_implemented():
+    """对齐三件套也必须真报错：judge 若写成 `return JudgeResult(True, "")`
+    就会制造假绿线，这是本切片最该防的失败模式。"""
+    from papertrace.align.embed import embed_texts
+    from papertrace.align.judge import judge
+    from papertrace.align.retrieve import retrieve_bidirectional
+
+    with pytest.raises(NotImplementedError):
+        judge("x", "y")
+    with pytest.raises(NotImplementedError):
+        retrieve_bidirectional([], [])
+    with pytest.raises(NotImplementedError):
+        embed_texts(["x"])
+
+
 def test_constants_freeze_weights():
     from papertrace.constants import W_JUDGE, W_RETR, W_STRUCT
 
@@ -84,15 +99,49 @@ def test_confidence_thresholds():
 
 
 def test_naive_sigmoid_could_never_reach_green():
-    """守着这条：规格书原式 sigmoid(w·s) 的上限 0.731 达不到 0.75 绿线。
+    """规格书原式 sigmoid(w·s) 的上限 0.731 达不到 0.75 绿线——这是改公式的理由。
 
-    这条测试存在的意义是防止有人"简化"回去——那会让绿线永远不出现。
+    注意：这只是**考古**，它证明的是规格书自相矛盾，不约束我们的实现。
+    真正约束实现的是下面 test_gain_and_center_are_pinned 与边界测试。
     """
     import math
 
     from papertrace.constants import CONF_GREEN
 
     assert 1.0 / (1.0 + math.exp(-1.0)) < CONF_GREEN
+
+
+def test_gain_and_center_are_pinned():
+    """增益/中心是产品语义所在，必须钉死：gain 调大就会让两个门槛同时饱和失效。"""
+    from papertrace.constants import SIGMOID_CENTER, SIGMOID_GAIN
+
+    assert SIGMOID_GAIN == 4.0
+    assert SIGMOID_CENTER == 0.5
+
+
+def test_confidence_boundaries_straddle_both_thresholds():
+    """绿线/黄线两侧各给一个点：公式随便改都会在这里露馅。"""
+    from papertrace.align.score import confidence
+    from papertrace.constants import CONF_GREEN, CONF_YELLOW
+
+    # 三项都 1.0 → 绿；三项都 0.75 → 黄（低于绿线，说明绿线不是随便就能到）
+    assert confidence(1.0, 1.0, 1.0) > CONF_GREEN
+    assert confidence(0.75, 0.75, 0.75) < CONF_GREEN
+    # 刚好跨过绿线的位置：a=0.775 → 绿；a=0.77 → 不绿
+    assert confidence(0.775, 0.775, 0.775) > CONF_GREEN
+    assert confidence(0.77, 0.77, 0.77) < CONF_GREEN
+    # 黄线两侧
+    assert confidence(0.52, 0.52, 0.52) > CONF_YELLOW
+    assert confidence(0.44, 0.44, 0.44) < CONF_YELLOW
+
+
+def test_confidence_matches_documented_values():
+    """docstring 里写的那三个数必须是真的（实测 0.881 / 0.500 / 0.231）。"""
+    from papertrace.align.score import confidence
+
+    assert abs(confidence(1.0, 1.0, 1.0) - 0.881) < 5e-4
+    assert abs(confidence(0.5, 0.5, 0.5) - 0.500) < 5e-4
+    assert abs(confidence(0.2, 0.2, 0.2) - 0.231) < 5e-4
 
 
 def test_confidence_midpoint_is_half():

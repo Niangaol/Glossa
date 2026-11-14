@@ -30,6 +30,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_build.add_argument("--paper", default="none", help="arxiv:ID、本地 .tex/.pdf，或 none")
     p_build.add_argument("--out", default="output", help="输出目录")
     p_build.add_argument("--skeleton", action="store_true", help="只写合法的空 trace.json")
+    p_build.add_argument(
+        "--force", action="store_true", help="允许覆盖已存在的 trace.json"
+    )
 
     p_dump = sub.add_parser("dump", help="打印 trace.json 的规模计数")
     p_dump.add_argument("--trace", default="output/trace.json", help="trace.json 路径")
@@ -64,7 +67,11 @@ def _cmd_build(args: argparse.Namespace) -> int:
         return 1
 
     out_path = Path(args.out) / "trace.json"
-    dump_trace(doc, out_path)
+    try:
+        dump_trace(doc, out_path, overwrite=args.force)
+    except FileExistsError as exc:
+        print(f"papertrace build：{exc}", file=sys.stderr)
+        return 3
     print(f"已写出 {out_path}（nodes=0 edges=0 anchors=0，骨架）")
     return 0
 

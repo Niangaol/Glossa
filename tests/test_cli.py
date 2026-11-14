@@ -54,6 +54,8 @@ def test_skeleton_build_writes_valid_empty_trace():
     assert doc["meta"]["paper"]["ingest_mode"] == "none"
     assert doc["meta"]["paper"]["unit_count"] == 0
     assert doc["meta"]["model"]["name"] == "offline"
+    # 夹具是 PaperTrace 仓库的子目录，不能把外层仓库的 HEAD 冒充成它的提交
+    assert doc["meta"]["repo"]["commit"] == "dirty-subdir"
 
 
 def test_build_without_skeleton_refuses():
@@ -97,6 +99,29 @@ def test_dump_prints_counts():
     assert "nodes=0" in r.stdout
     assert "edges=0" in r.stdout
     assert "anchors=0" in r.stdout
+
+
+def test_second_build_refuses_to_clobber_without_force():
+    """默认不覆盖已有的 trace.json——那可能是算了几十分钟的结果。"""
+    out_dir = scratch_dir("no-clobber")
+    args = (
+        "build",
+        "--repo", "tests/fixtures/nanogpt",
+        "--paper", "none",
+        "--out", str(out_dir),
+        "--skeleton",
+    )
+    assert run_cli(*args).returncode == 0
+    (out_dir / "trace.json").write_text('{"sentinel": true}', encoding="utf-8")
+
+    second = run_cli(*args)
+    assert second.returncode == 3
+    assert "--force" in second.stderr
+    assert (out_dir / "trace.json").read_text(encoding="utf-8") == '{"sentinel": true}'
+
+    forced = run_cli(*args, "--force")
+    assert forced.returncode == 0, forced.stderr
+    assert '"sentinel"' not in (out_dir / "trace.json").read_text(encoding="utf-8")
 
 
 def test_serve_and_eval_report_unimplemented():

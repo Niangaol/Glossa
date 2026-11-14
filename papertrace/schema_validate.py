@@ -82,9 +82,16 @@ def load_trace(path: str | Path) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
-def dump_trace(doc: dict, path: str | Path) -> None:
-    """写盘。禁止静默覆盖一个已存在的 trace.json（那是别人算过的结果）。"""
+def dump_trace(doc: dict, path: str | Path, *, overwrite: bool = False) -> None:
+    """写盘。默认**不覆盖**已存在的 trace.json——那可能是别人算了几十分钟的结果。
+
+    确实要覆盖时显式传 overwrite=True（CLI 上是 --force）。
+    """
     target = Path(path)
+    if target.exists() and not overwrite:
+        raise FileExistsError(
+            f"{target} 已存在；要覆盖请显式加 --force（或 overwrite=True）。"
+        )
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"

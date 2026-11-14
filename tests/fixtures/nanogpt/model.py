@@ -1,9 +1,7 @@
 """nanoGPT 精简夹具（源自 karpathy/nanoGPT 的 model.py，MIT）。
 
 只保留结构，不含训练循环。唯一有意的改动是 CausalSelfAttention 的 flash 开关：
-
-    # PaperTrace fixture: keep QK^T/scale/mask/softmax as separate ops
-    self.flash = False
+把它从「按 hasattr 自动探测」改成常量 False，并在 forward 里写死分开的算子。
 
 上游默认是 hasattr(F, "scaled_dot_product_attention")（PyTorch 2+ 为 True），
 会把 QK^T / scale / mask / softmax 融成一个 SDPA 算子；那样算子级对账就没东西可对了。

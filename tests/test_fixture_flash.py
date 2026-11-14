@@ -19,13 +19,27 @@ def test_nanogpt_fixture_exists():
     assert ATTENTION_TEX.is_file(), "缺少 Vaswani Attention 夹具"
 
 
+def _init_body() -> str:
+    """只取 CausalSelfAttention.__init__ 的方法体。
+
+    早期版本在整份源码里找 "self.flash = False"，结果 docstring 里那句说明
+    就能让断言通过——守卫被打穿。这里限定到 __init__ 之后、def forward 之前。
+    """
+    text = NANOGPT_MODEL.read_text(encoding="utf-8")
+    start = text.index("class CausalSelfAttention")
+    init = text.index("def __init__", start)
+    end = text.index("def forward", init)
+    return text[init:end]
+
+
 def test_fixture_disables_flash_at_source_level():
     """不装 torch 也要能守住这条——所以查源码字面量。"""
-    text = NANOGPT_MODEL.read_text(encoding="utf-8")
+    body = _init_body()
     # 只看赋值本身：上游的自动探测写法 by_name 各种引号都要挡住。
-    assert "self.flash = False" in text
-    assert "self.flash = hasattr" not in text
-    assert "self.flash = True" not in text
+    assert "self.flash = False" in body
+    assert "self.flash = hasattr" not in body
+    assert "self.flash = True" not in body
+    assert "getattr(F," not in body
 
 
 def test_attention_tex_has_four_splittable_terms():

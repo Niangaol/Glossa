@@ -1,0 +1,13 @@
+# 框架切片测试依赖（钉版本，装法见 docs/ENVIRONMENT.md 第 0 节）
+# 用法：python tmpinstall\fetch_deps.py pydeps wheels -r tmpinstall\requirements-framework.txt
+# 手动展开（fetch_deps.py 按名字递归取 requires_dist）：
+pytest==9.2.0
+jsonschema==4.26.0
+# 传递依赖实测版本（2026-11-14）
+pluggy==1.7.0
+iniconfig==2.3.0
+packaging==25.0
+pygments==2.19.2
+attrs==25.4.0
+referencing==0.37.0
+rpds-py==0.28.0

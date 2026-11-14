@@ -23,7 +23,7 @@
 - v1 只支持 Python + PyTorch 仓库。本切片对非 Python 只把拒绝接口留成桩。
 - 任何结论必须带 `source ∈ {runtime, static, model}`。拿不到数据就空态 + 原因，禁止 mock 填界面。
 - 对齐禁止自由生成对应。本切片的 `align/` 只放文件桩 + grep 守卫，不接模型。
-- 置信度写死：`w_retr=0.30, w_judge=0.50, w_struct=0.20`（实现对齐时才用，本切片只写进常量）。
+- 置信度写死：`w_retr=0.30, w_judge=0.50, w_struct=0.20`，`SIGMOID_GAIN=4.0`、`SIGMOID_CENTER=0.5`（S14：原式 `sigmoid(a)` 上限 0.731 达不到 0.75 绿线）。本切片只写进常量 + 边界测试，不接模型。
 - 单源文件不超过 200 行。
 - 本切片结束时：`pytest` 全绿、`python -m papertrace --help` 退出 0、`build --skeleton` 写出通过 schema 的 `trace.json`。
 - 本切片 **允许** 在 Python 3.13 上跑测试。**禁止** 把「装 3.11 / 装 Ollama / pull 7B」写成本切片步骤。

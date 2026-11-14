@@ -35,24 +35,35 @@ class LLMBackend(Protocol):
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
-_OFFLINE_HINT = (
-    "LLM backend=offline。当前既没有安装本地模型，也没有配置云端中转；"
-    "如果只是想跑框架，这是预期行为。要接模型请设置 "
-    "PAPERTRACE_LLM_BACKEND=openai（OpenAI 兼容中转）或 =ollama（本地），"
-    "这两条在框架切片里尚未实现，因此仍然会报这个错。"
-)
+def _offline_hint(configured: str) -> str:
+    """报错要如实说明「你配了什么、为什么还是不能用」。"""
+    if configured == "offline":
+        return (
+            "LLM backend=offline。当前既没有安装本地模型，也没有配置云端中转；"
+            "如果只是想跑框架，这是预期行为。要接模型请设置 "
+            "PAPERTRACE_LLM_BACKEND=openai（OpenAI 兼容中转）或 =ollama（本地），"
+            "这两条在框架切片里尚未实现，因此仍然会报这个错。"
+        )
+    return (
+        f"LLM backend={configured} 尚未实现（本切片只有 offline）。"
+        f"你已经设置了 PAPERTRACE_LLM_BACKEND={configured}，但这条路径还没有代码；"
+        "先改回 offline 或等 M3。"
+    )
 
 
 class OfflineBackend:
     """没有模型时的唯一后端：什么都不做，只诚实报错。"""
 
-    name = "offline"
+    def __init__(self, configured: str = "offline") -> None:
+        self.name = "offline"
+        self.configured = configured
+        self._hint = _offline_hint(configured)
 
     def chat(self, prompt: str, *, system: str | None = None) -> ChatResult:
-        raise LLMUnavailable(_OFFLINE_HINT)
+        raise LLMUnavailable(self._hint)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        raise LLMUnavailable(_OFFLINE_HINT)
+        raise LLMUnavailable(self._hint)
 
 
 def configured_backend() -> str:
@@ -74,5 +85,5 @@ def get_llm() -> LLMBackend:
     配置了 ollama / openai 也返回 offline：那两条路径还没实现，
     假装能用比直接报错更危险。
     """
-    configured_backend()  # 非法值在这里就以 ValueError 暴露
-    return OfflineBackend()
+    configured = configured_backend()  # 非法值在这里就以 ValueError 暴露
+    return OfflineBackend(configured)

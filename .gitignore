@@ -9,8 +9,9 @@ node_modules/
 .superpowers/
 pydeps/
 wheels/
-tmpinstall/
 .tmp/
 pip.log
 _spec_extract.txt
+.pytest-tmp/
+pytest-cache-files-*/
 

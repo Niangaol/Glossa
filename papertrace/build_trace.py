@@ -25,7 +25,18 @@ def repo_commit(repo: str | Path) -> str:
                 timeout=10,
             )
             if out.returncode == 0 and out.stdout.strip():
-                return out.stdout.strip()
+                head = out.stdout.strip()
+                # 只认「path 本身就是仓库根」：否则会把外层仓库的 HEAD 记成目标仓库的提交
+                top = subprocess.run(
+                    ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                if top.returncode == 0 and top.stdout.strip():
+                    if Path(top.stdout.strip()).resolve() == path.resolve():
+                        return head
+                return "dirty-subdir"
         except (OSError, subprocess.SubprocessError):
             pass
     return "dirty-skeleton"

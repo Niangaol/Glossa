@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-import numpy as np
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # 只在类型检查时借 numpy，运行时不需要它
+    import numpy as np
 
 
 def embed_texts(texts: list[str]) -> "np.ndarray":

@@ -41,9 +41,9 @@
           "type": "object",
           "required": ["name", "prompt_version", "embed_model"],
           "properties": {
-            "name": { "type": "string", "default": "qwen2.5-coder:7b" },
+            "name": { "type": "string", "default": "offline" },
             "prompt_version": { "type": "string" },
-            "embed_model": { "type": "string", "default": "nomic-embed-text" }
+            "embed_model": { "type": "string", "default": "none" }
           }
         },
         "created_at": { "type": "string" },

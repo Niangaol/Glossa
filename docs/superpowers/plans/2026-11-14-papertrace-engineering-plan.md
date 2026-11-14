@@ -24,7 +24,8 @@
 - 任何结论必须带 `source ∈ {runtime, static, model}` 与 `confidence`。拿不到数据就空态 + 原因，禁止 mock 填界面。
 - 对齐禁止自由生成对应。判断题依据必填、≤40 字（schema 限制 80 字符含标点）。
 - `nodes[].detail` 只追加不覆盖；父节点与子结论矛盾时写 `conflicts` 且父 `stale:true`，禁止静默覆盖。
-- 置信度：`w_retr=0.30, w_judge=0.50, w_struct=0.20`，`c = sigmoid(w·s)`。`c≥0.75` 绿实线；`0.45≤c<0.75` 黄虚线 + 1–2 备选；`c<0.45` 不连线，进 `unresolved`。
+- 置信度：`w_retr=0.30, w_judge=0.50, w_struct=0.20`，`a = w·s`，**`c = sigmoid(4·(a-0.5))`**（S14；原式 `sigmoid(a)` 上限 0.731 永远达不到 0.75，见第 3 章）。`c≥0.75` 绿实线；`0.45≤c<0.75` 黄虚线 + 1–2 备选；`c<0.45` 不连线，进 `unresolved`。
+- 置信度的已知副作用（**待你拍板 U1**）：`s_struct=0` 不影响进绿线（`judge=retr=1, struct=0` → 0.769 绿）；`s_judge=0` 仍可能落黄区给出备选。可选修法：绿线加 `s_struct≥0.5` 门；`s_judge==0` 直接判 `<0.45`。
 - 黄金主路径：`tests/fixtures/nanogpt`（关 flash）+ Vaswani 2017（arXiv:1706.03762）Attention 公式。GPT-2 报告（Radford 2019）只作反向对账辅样例。
 - 运行时探针默认 **CPU**；与 Ollama 分时使用 GPU，禁止 7B 与 `model.forward` 同时占满 12GB。
 - 单源文件不超过 200 行；按目录拆模块。
@@ -61,6 +62,7 @@
 | S10 | FastAPI 作为后端框架 | FastAPI **只跑 localhost 深钻流式**；主路径是 CLI `python -m papertrace build ...` | 单文件 HTML 必须断网可开。把生成做成「必须起服务」会破坏 A6/A12。 |
 | S11 | 运行时采集用 GPU hook + profiler | 探针默认 **CPU**；profiler 可选。GPU 探针与 LLM **互斥** | 见 S1。另外 nanoGPT 随机输入 forward 在 CPU 上毫秒级，没必要上 GPU。 |
 | S12′ | 「第一个可用版本 2–3 周」 | 工期不管，**不排日历**。那句话只作为 **MVP-M3lite** 的范围定义（砍播放器动画、L3、批量深钻），不作为承诺 | 用户明确拍板工期不用管。保留范围定义是为了万一要提前交差时有话说，不是为了逼节奏。 |
+| **S14** | `c = sigmoid(w·s)`（上限 0.731 < 0.75 绿线） | `c = sigmoid(4·(a-0.5))`：a=1→0.88 绿、a=0.5→0.50 黄、a=0.2→0.23 不连 | 规格书第 8 章自相矛盾：按原式**永远连不出绿实线**，产品最核心的视觉语义直接失效。保留用户可见的 0.75/0.45 门槛，改公式。 |
 | **S13** | （规格未定义） | `PAPERTRACE_LLM_BACKEND ∈ {offline, openai, ollama}`，**默认 `offline`**；offline 下 chat/embed 必须抛 `LLMUnavailable`，禁止编造结果。框架阶段不装 Ollama、不拉权重 | 用户拍板不装本地模型。让「没有模型」成为可测试的一等状态，比留一条随时会假装成功的路径安全。 |
 
 不改、必须守住的规格硬规则：
@@ -190,7 +192,7 @@ papertrace/
 
 | 里程碑 | 日历 | 必须能看到的东西 |
 |---|---|---|
-| M0 环境与夹具 | D1–D2 | venv 3.11、Ollama 7B、`pytest tests/test_env.py` 绿 |
+| M0 骨架与夹具 | D1–D2 | 系统 Python 3.13 能跑 `pytest -q` 全绿；nanoGPT flash-off 夹具 + Vaswani attention.tex 就位（**不装 Ollama**） |
 | M1a 算子追踪 | D3–D8 | `output/trace.json` 仅 nodes/edges，nanoGPT 算子可数、shape 链不断 |
 | M1b 符号 | D9–D12 | `n_embd=768 ↔ D`，每个维度有 `defined_at` |
 | M2 图+播放器 | D13–D19 | 中栏+右栏，200 step 连播不卡 |
@@ -209,10 +211,10 @@ papertrace/
 **Files:**
 - Create: `pyproject.toml`, `README.md`, `.python-version` (`3.11`), `.gitignore`
 - Create: `papertrace/__init__.py`, `papertrace/cli.py`
-- Create: `tests/test_env.py`
+- Create: `tests/test_imports.py`（导入全模块 + 桩必须抛 NotImplementedError，取代原定的 test_env.py）
 - Create: `tests/fixtures/nanogpt/`（从 karpathy/nanoGPT 复制 `model.py` + 最小 `config`，**改 `self.flash = False`**）
 - Create: `scripts/check_vram.py`
-- Create: `docs/ENVIRONMENT.md`（安装 Ollama、拉 7B、装 Python 3.11 的可复制命令）
+- Create: `docs/ENVIRONMENT.md`（可复制的 Python 侧安装命令；Ollama / 7B 移到附录，**不是 M0 步骤**）
 
 **Interfaces:**
 - Consumes: 无

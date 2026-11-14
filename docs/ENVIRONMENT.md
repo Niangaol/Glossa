@@ -23,20 +23,20 @@ python -m pytest -q
 `fetch_deps.py` 直接查 PyPI JSON、下载 wheel、用 zipfile 解到 `pydeps/`，绕开 pip 的临时目录。
 `pydeps/` 与 `wheels/` 都在 .gitignore 里。
 
-## 1. 安装 Python 3.11 与 Ollama
+## 1. 安装 Python 3.11（可选）
+
+**框架切片不需要这一步**，系统 3.13.15 就能跑测试。等你真要跑 fx / 探针时再装。
 
 在「以管理员身份」的终端执行（可复制）：
 
 ```bat
 winget install Python.Python.3.11 --accept-package-agreements --accept-source-agreements
-winget install Ollama.Ollama --accept-package-agreements --accept-source-agreements
 ```
 
 装完**新开**一个终端，确认：
 
 ```bat
 py -3.11 --version
-ollama --version
 ```
 
 若 `py` 仍不可用，用 `C:\Users\niangao\AppData\Local\Programs\Python\Python311\python.exe` 代替下文的 `py -3.11`。
@@ -57,7 +57,9 @@ CUDA wheel 以能装上为准：5070 Ti 走 cu128；若官方索引报错，改 
 .venv\Scripts\python.exe -c "import torch; print(torch.__version__, torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0).total_mem//1024**2, 'MiB')"
 ```
 
-## 3. 拉本地模型（默认 7B，不要默认 14B）
+## 3. 拉本地模型（**框架阶段不要做**；等 M3 接对齐时再回来）
+
+先装 Ollama：`winget install Ollama.Ollama`。默认 7B，不要默认 14B。
 
 ```bat
 ollama pull qwen2.5-coder:7b
@@ -69,8 +71,19 @@ ollama list
 
 ## 4. 自检
 
+框架切片（不需要 venv、不需要 Ollama、不需要 torch）：
+
 ```bat
-.venv\Scripts\python.exe -m pytest tests/test_env.py -v
+cd /d D:\AgentPrograms\PaperTrace
+set PYTHONPATH=D:\AgentPrograms\PaperTrace\pydeps
+python -m pytest -q
 ```
 
-`test_env.py` 在 Task 0 落地。在那之前，至少要能 `import torch` 且 Ollama `curl http://127.0.0.1:11434/api/tags` 有 7B。
+预期全绿（当前 93 passed、2 skipped；skip 的两条要 torch，装了就自动跑）。装上 torch 后：
+
+```bat
+.venv\Scripts\python.exe -c "import torch; print(torch.__version__)"
+.venv\Scripts\python.exe -m pytest -q
+```
+
+Ollama 的 `curl http://127.0.0.1:11434/api/tags` **不再是自检项**（S13：默认 backend=offline）。
