@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "papertrace"
+version = "0.1.0"
+description = "PaperTrace：算子级数据流图与论文公式项的对账工具"
+requires-python = ">=3.11"
+dependencies = ["jsonschema>=4.20"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["papertrace*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
