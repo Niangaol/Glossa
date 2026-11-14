@@ -427,3 +427,132 @@ def test_ingest_error_does_not_depend_on_model():
     assert any(
         u["kind"] == "paper_unit" and u["ref"] == "arxiv:1706.03762" for u in doc["unresolved"]
     )
+
+# ------------------------------------------- S9 fix round 1：I-1（逐项 s_retr）/ I-2（meta.model）
+
+
+class _PerTermVectorsBackend:
+    """逐项正交向量的假后端：兄弟项命中 1.0 时，本项仍可能是 0.0。
+
+    形状照抄控制器复现 I-1 的探针（output/controller-probes/s9_i1_verify2.py）：
+    论文项 t0/t1/t2/t3 各占一个正交方向；算子节点只有 matmul / softmax 与对应
+    论文项同向，其余一律零向量（cosine 对零向量返回 0.0）。上一版自错正是
+    「给所有非 QK 项与所有非 matmul 算子同一个向量」，结果全员 cosine 1.0，
+    根本构造不出「兄弟项命中、本项零检索」。
+    """
+
+    name = "fake-per-term"
+
+    def __init__(self) -> None:
+        self.chat_calls = 0
+        self.embed_calls = 0
+
+    def chat(self, prompt, *, system=None):
+        self.chat_calls += 1
+        return ChatResult(text="Verdict: yes\nEvidence: 第 68 行的矩乘",
+                          model="fake-per-term", backend="fake-per-term")
+
+    def embed(self, texts):
+        self.embed_calls += 1
+        return [_per_term_vector(t) for t in texts]
+
+
+def _per_term_vector(text: str) -> list[float]:
+    r"""逐项正交：t0 QK^{T} / t1 \sqrt{d_k} / t2 \mathrm{softmax} / t3 V。"""
+    lowered = text.lower()
+    if "qk" in lowered:
+        return [1.0, 0.0, 0.0, 0.0]
+    if "sqrt" in lowered:
+        return [0.0, 1.0, 0.0, 0.0]
+    if "softmax" in lowered:
+        return [0.0, 0.0, 1.0, 0.0]
+    if text.strip() == "V":
+        return [0.0, 0.0, 0.0, 1.0]
+    if "matmul" in lowered:
+        return [1.0, 0.0, 0.0, 0.0]
+    return [0.0, 0.0, 0.0, 0.0]
+
+
+def test_retrieval_is_scored_per_formula_term(monkeypatch):
+    """I-1：s_retr 必须逐项算——兄弟项命中不能把零检索的项抬上绿线。
+
+    控制器复现用的可达路径：s_struct=0.8、s_judge=1、t0/t2 逐项 s_retr=1.0、
+    t1/t3 逐项 s_retr=0.0。应有的结果是 t0/t2 green c=0.862949、t1/t3 yellow
+    c=0.654753；注水版会把 4 条全写成 green c=0.862949（被注水 2/4 条，
+    而 validate_trace 仍 errors=None——schema 只校验 signals 自洽，
+    抓不到「自洽但来源错」）。
+    """
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    backend = _PerTermVectorsBackend()
+    monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
+    monkeypatch.setattr(embed_module, "get_llm", lambda: backend)
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    # 注入的假后端必须真的被走到（否则测的是 offline 兜底路径，结论是假的）
+    assert backend.chat_calls >= 1
+    assert backend.embed_calls >= 1
+    by_index = {a["formula_term_index"]: a for a in doc["anchors"]}
+    assert set(by_index) == {0, 1, 2, 3}
+    for index in (0, 2):  # 逐项检索真命中的两项：保持绿线，证明不是把所有人压黄
+        anchor = by_index[index]
+        assert anchor["signals"]["s_retr"] == 1.0
+        assert anchor["tier"] == "green", index
+        assert anchor["confidence"] == pytest.approx(0.862949, abs=1e-6)
+    for index in (1, 3):  # 逐项检索零命中的两项：必须掉回黄线
+        anchor = by_index[index]
+        assert anchor["signals"]["s_retr"] == 0.0, index
+        assert anchor["tier"] == "yellow", index
+        assert 0.45 <= anchor["confidence"] < 0.75
+        assert anchor["confidence"] == pytest.approx(0.654753, abs=1e-6)
+    validate_trace(doc)
+
+
+def test_missing_forward_key_does_not_inherit_unit_scalar(monkeypatch):
+    """I-1：forward 缺该 term_id 键 → s_retr=0.0，绝不回落到单元级标量。
+
+    构造一个 retrieval dict：单元级 s_retr=1.0（S6 契约：forward+backward 全条目
+    最大值），而 forward 只给 t0 一项且分数 0.0，其余三个 term_id 的键整个缺失。
+    若实现仍读单元级标量，4 条会全成 green c=0.862949。
+    """
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    backend = _YesBackend()
+    monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
+
+    def _unit_scalar_only(code_units, paper_terms, k=5):
+        return {"forward": {"S3.2-eq-attn-t0": [{"code_id": "root/@037", "score": 0.0}]},
+                "backward": {}, "s_retr": 1.0, "conflicts": [], "reason": None}
+
+    monkeypatch.setattr("papertrace.spine.retrieve_bidirectional", _unit_scalar_only)
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    assert backend.calls == 4  # 判定的桩确实被走到（t0 命中第一个 yes 就早退）
+    for anchor in doc["anchors"]:
+        assert anchor["signals"]["s_retr"] == 0.0
+        assert anchor["tier"] == "yellow"
+        assert anchor["confidence"] == pytest.approx(0.654753, abs=1e-6)
+    validate_trace(doc)
+
+
+def test_ingest_failure_records_backend_meta_not_default_zero(monkeypatch):
+    """I-2：ingest 失败早退也要写 meta.model，不能留 minimal_trace 的 prompt_version='0'。
+
+    配了 openai 而 --paper 路径错时，旧行为让 trace.json 谎称 offline 后端——
+    与 R76 判过的「解释与实际配置矛盾」同族。
+    """
+    monkeypatch.setenv("PAPERTRACE_LLM_BACKEND", "openai:deepseek")
+    monkeypatch.setenv("PAPERTRACE_LLM", "deepseek-chat")
+    missing = str(Path(PAPER).with_name("no-such-paper-for-i2.tex"))
+    doc, model = _fresh_doc()
+    returned = attach_paper(doc, missing, model)
+    assert returned is doc
+    entries = [u for u in doc["unresolved"] if u["kind"] == "paper_unit"]
+    assert entries and entries[0]["ref"] == missing
+    model_meta = doc["meta"]["model"]
+    assert model_meta["name"] == "openai"
+    assert model_meta["prompt_version"] == JUDGE_PROMPT_VERSION
+    assert model_meta["prompt_version"] != "0"
+    assert doc["meta"]["paper"]["ingest_mode"] == "none"
+    validate_trace(doc)
+    assert len(doc["nodes"]) == GC8_NODES

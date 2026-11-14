@@ -1,24 +1,17 @@
 """论文脊柱（S9）：把论文侧产物接进 build_trace 产出的 trace dict。
 
-链条：S2 ingest → S3 拆项 → S4 符号表 → S5 结构信号 → S6 双向检索 → S7
-判断题 → 分档，按 schema 落进 meta / symbols / anchors / unresolved。
-**宁可报「对不上」也绝不编造对齐**：拿不到依据就写 unresolved，不凑 anchor。
-其余裁决逐字照录在 task-S9-report.md，这里只记会改签名的三条。
+链条：S2 ingest → S3 拆项 → S4 符号表 → S5 结构信号 → S6 双向检索 → S7 判断题 → 分档，
+落进 meta/symbols/anchors/unresolved。**宁可报「对不上」也绝不编造对齐**：拿不到依据就写
+unresolved，不凑 anchor。裁决正文逐字照录在 task-S9-report.md，这里只记一句话结论。
 
-R79（model 从哪来）：`model` 必须是**模块实例**（build_code_symbols 要
-mod.config 的值与 `inspect.getsourcefile` 定位定义点；struct_signal 要
-mod.config 的四个超参名），而 `build_trace()` 只返回 dict 不返回模块、
-且 build_trace.py 一行不许改。取舍：CLI 在 build_trace 成功后用
-`load_entry(repo, entry)` **再取一次**模块实例传进来（实测 0.003s，相对
-2.760s 可忽略），**绝不重新追踪**——nodes/edges 仍来自第一次 build_trace。
-R67（anchor.source）：s_judge>0 → "model"；只有结构/检索依据 → "static"；
-绝不用 "runtime"（anchor 不是实测出来的，标 runtime 就是造假来源）。
-R68（code_expr_range）：填 pairs 的 node_id 区间（"root/@037" 或
-"root/@037..root/@045"）；M1a 的 loc 全是 'model.GPT'，没有逐算子行号，
-绝不编 file:line——逐算子源码定位属 M1b，届时换真实 file:line。
-R78/R69/R70/R21/R56/R37/R2：拆项的门是 `split_formula(...) == []`；三个 signal
-同一份 dict 既喂 confidence() 又写进 signals；prompt_version 写 JUDGE_PROMPT_VERSION；
-符号差集记 unresolved；只捕预期不可用；judge 只对 pairs 里的配对调用——见报告。
+R79 model 从哪来：build_trace 只返回 dict，CLI 成功后用 load_entry **再取一次**模块
+实例（0.003s vs 2.760s，绝不重新追踪）；R67 source 只 model/static，绝不用 runtime；
+R68 code_expr_range 填 pairs 的 node_id 首尾区间，逐算子行号属 M1b。R85 逐项 s_retr
+只取本项 forward 的最大分，缺键/空表 → 0.0，绝不用单元级 retrieval["s_retr"]——
+兄弟项命中会把零检索的项抬上绿线。R78/R69/R70/R21/R56/R37/R2：拆项门是
+split_formula(...)==[]，三个 signal 同一份 dict 既喂 confidence() 又写进 signals，
+prompt_version 写 JUDGE_PROMPT_VERSION，符号差集记 unresolved，只捕预期不可用，
+judge 只对 pairs 里的配对调用。
 """
 
 from __future__ import annotations
@@ -66,6 +59,8 @@ def attach_paper(doc: dict, paper_src: str, model) -> dict:
             "reason": f"论文 ingest 失败：{exc}（不猜论文内容）"})
         doc["meta"].setdefault(
             "paper", {"source": "none", "unit_count": 0, "ingest_mode": "none"})
+        # R86：早退也写 meta.model，别留 schema 默认的 prompt_version="0"（那会谎称 offline）
+        doc["meta"]["model"] = _model_meta()
         return doc
     paper_meta = {"source": str(bundle.source), "unit_count": int(bundle.unit_count),
                   "ingest_mode": bundle.ingest_mode}
@@ -116,7 +111,12 @@ def _attach_unit(doc: dict, unit, model, by_id: dict) -> None:
 def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id: dict) -> None:
     """一个公式项：三个信号 → confidence → tier → anchor 或 unresolved。"""
     term_id = f"{unit.unit_id}-t{term.index}"
-    s_retr = float(retrieval.get("s_retr") or 0.0)
+    # R85：逐项 s_retr 只取本项 forward 的最大分；缺键/空表 → 0.0（保守方向），
+    # 绝不用单元级 retrieval["s_retr"]——兄弟项命中会把零检索的项抬上绿线
+    s_retr = min(1.0, max(0.0, max(
+        ((h.get("score") or 0.0)
+         for h in (retrieval.get("forward") or {}).get(term_id) or []),
+        default=0.0)))
     s_struct = float(signal.score)
     if not node_ids:
         # R37：judge 只对 StructSignal.pairs 里的配对调用。pairs 空就一个都不问——
