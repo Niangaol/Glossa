@@ -25,7 +25,7 @@ placeholder 的**名字**在图上、`target` 在 spec 里，是两个独立字�
 第十二轮 I-1 同源 expected → 类型守卫 + 顺序不变量 + 恰好认领一次、I-3 补 CLI 级退出码用例、Minor zoo 集合相等/dict 输出/mutation CLI；
 第十三轮 I-1 target 互换 → 形状核对（第七道关）、M-1 pytree 措辞改准、M-3 TOKEN 归类说明、M-5 `cond`/`while_loop` 点名、M-6 补 target 互换回归；
 第十四轮 I-1 同形状跨模块互换 → 名字↔target 核对（第八道关）、M-1 「不可观测」用例按事实改写、M-3 拆出 `fx_kinds`、M-5 提交链与端到端路径补齐），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` →（本次）。
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692` → `7dc55f2` → `0e9e608` → `e10d9d3` → `df7a8eb` → `d7d16f0` → `9ec97b3` → `967d664` → `c6b6bec` → `b9ea76a` → `a7311fc` → `fb00b9b` → `870d614` → `aeea7e6` → `0ca6837` → `81581a1`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -761,4 +761,4 @@ torch），再 `shape_prop.py`（推不出的边置 `shape_consistent=False`，*
 | `fb00b9b` | 第十三轮条件项：第七道关——取到的张量形状与 `node.meta["val"]` 核对（target 互换），16 条新回归，345 passed |
 | `870d614` | 第十三轮文档：七道关与残余边界、TOKEN 归类说明、`cond`/`while_loop` 点名、pytree 措辞改准、M-2 留 M1b 的理由 |
 | `aeea7e6` | 钉第十三轮提交链 |
-| （本次） | 第十四轮必修：第八道关 `fx_names.check_name_target`（名字↔target，反推唯一才比）、拆出 `fx_kinds`、「不可观测」用例按事实改写、残余洞钉成 trace 级证据、29 条新回归，375 passed |
+| `0ca6837` | 第十四轮必修：第八道关 `fx_names.check_name_target`（名字↔target，反推唯一才比）、拆出 `fx_kinds`、「不可观测」用例按事实改写、残余洞钉成 trace 级证据、29 条新回归，375 passed |
