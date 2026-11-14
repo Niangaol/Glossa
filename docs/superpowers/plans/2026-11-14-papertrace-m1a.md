@@ -113,7 +113,9 @@ dtype / inplace / source="runtime" / degraded / degraded_reason / repeat=1 / sta
       → 93 个算子节点 + 模块层级，matmul `(2,4,8,8)`、softmax 同形、split 标 degraded。
 - [x] `python -m papertrace dump --trace output/m1a/trace.json --ops` 人工核对。
 - [x] 独立评审（m1a-reviewer）第一轮结果归档：C1/C2/C3 + I1–I9 + M1–M8，结论「需要修」。
-- [x] 必修项全部落地（提交 `d722f13`），第二轮复审进行中。
+- [x] 必修项全部落地（提交 `d722f13`、`262eb69`、`58dc5c7`）。
+- [x] 复审期间自查补的三处：边 id 重复、父子链成环、parent 指向算子——都改成
+      `TraceSchemaError` 并配反例测试；130 passed。
 - [x] 更新 `docs/ENVIRONMENT.md` 与 `README.md`（torch 装法、入口契约、退出码表、trace 字段约定）。
 
 ### 这一轮评审指出了什么（值得记住的）
