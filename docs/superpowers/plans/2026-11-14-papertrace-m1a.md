@@ -9,7 +9,7 @@
 （第三轮 C1/I1/I2/I3 + M2/M3/M5；第四轮 I-1/I-2 + M-1/M-3/M-4；第五轮 C1/I1/I2；
 第六轮 C1/I2/I3；第七轮 C1 fail-closed + I1 `*_like` + I2 spec 契约校验；
 第八轮 I-1 退出码统一 + I-2 守卫改判覆盖 + M-1…M-5；第九轮 I-1 orphan 双向语义 + I-2 未知/错位 kind fail-closed + M-1…M-3），
-提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `（本次）`。
+提交链 `73bb224` → `bc472d6` → `9fbb56b` → `d722f13` → `262eb69` → `58dc5c7` → `82228eb` → `cca2a1a` → `8b710ee` → `f58b123` → `fc1ca48` → `2de86a2` → `6a87f7d` → `fce6b2d` → `5fd9b7c` → `b48f361` → `f9e3546` → `94c2b28` → `66f2efd` → `feb6fc8` → `b8d39d2` → `d4c84a2` → `500c692`。
 本轮最大的结构变化：形状不再靠 SSA 推断自证，而是把导出图**再用真实张量跑一遍**（`fx_observe`），
 逐节点观察消费者真实入参和生产者真实输出，两边独立比较（见文末第三轮、第四轮记录）。
 
@@ -442,4 +442,4 @@ CLI 一条（monkeypatch `fx_trace.input_plan` 把权重标成 input → exit 2�
 | `feb6fc8` | 第八轮文档：钉住提交哈希、记录端到端复核 |
 | `b8d39d2` | 第九轮必修：orphan 改判双向、未知/重叠/幽灵 kind 一律拒绝、runtime_meta 拆出 fx_runtime、行数口径改 python splitlines |
 | `d4c84a2` | 第九轮文档：钉住提交哈希与行数口径 |
-| `（本次）` | 第十轮自查：反向认领判据（模块地面真相）、常量不许顶替参数、spec↔模块契约统一 exit 2、拆出 fx_contract |
+| `500c692` | 第十轮自查：反向认领判据（模块地面真相）、常量不许顶替参数、spec↔模块契约统一 exit 2、拆出 fx_contract |
