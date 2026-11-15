@@ -252,3 +252,29 @@ def test_code_group_is_declared_in_schema(...):
 - Step 2 演示重生成没有复用 regen_demo2.py / regen_demo3.py 两个脚本，而是写一个 output/controller-probes/l5_regen_demo.py 一次覆盖三场景（code-only / with-paper / fallback-yellow），口径与两脚本一致；三场景落盘后重新读回 trace.json 跑 validate_trace 全过。
 - Step 3 的期望测试数写的是 801，实际 804（计划成文时 L3b 尚未发生）。
 
+
+---
+
+## 波次 6：四份评审与一轮修复（结案）
+
+上一轮按四份切分派了独立评审（L1+L2 / L3+L3b / L4 / L5），Critical 全 0：L1+L2 与 L3+L3b **Approved**（分别 0 / 0 与 0 / 0），L4 与 L5 **Needs fixes**（各 2 / 4 条 Important）。控制器逐条复核后确认六条 Important 全部成立，裁决 R174–R180，交一个 fixer 带完整清单修：
+
+| 轮次 | 提交 | 范围 | 全量 |
+|---|---|---|---|
+| 波次 6 修复 | `fdf94a4` | 13 files +158/−30（render_terms / spine.html.j2 / tests / README / plan / design / 三份旧规格 / schema_structure / spine_anchor） | **807 passed** |
+
+修复要点（对应六条 Important）：
+
+- **F1 / R174+R176**：`_layer_of` 从「取 `code_group` 末段」改成「去掉顶层模块前缀后的组路径」。末段口径在 `root/transformer.h.0.attn` 上得到 `attn`，两层完全相同、层列零信息；`root/a/b` 这类嵌套 id 更会塌成 `b`。真实渲染现在是 `transformer.h.0.attn` / `transformer.h.1.attn`。
+- **F2 / R175+R177**：层列守门改成正则抓表格每行的 (term_id, 层) 两个 `mono` 单元格逐字比。旧断言是整页子串 `"h.0.attn" in block`，被 terms 段说明散文满足——层列恒 `—` 时测试仍全绿，等于没有守门；模板散文里的具体层名同时删掉。
+- **F3 / R178**：judge 调用数按路径分开写。结构路径每个「公式项 × 同构组」只有 1 个候选节点 → 恰好 1 次（夹具 4×2=8）；回退路径候选由 `align/candidates.py` 产出（`per_term_limit=3`、`total_limit=12`），每项 1..3 次、全局最多 12 次。
+- **F4 / R179**：「层数 >2 有单测覆盖」是假话（全仓 `h.2`/`n_layer=3` 零命中）。补一条三组同构的合成用例，文案改成「只有结构信号层的合成用例覆盖，端到端与 HTML 仍未覆盖」。
+- **F5 / R173+R180**：`schema_structure.py:129` 的过期注释改成 R171 秩比较；plan 里「变异探针必红」的假 `[x]` 改写成如实记录；三份旧规格补「M4a 已落地」注记；design 验收第 7 条改成真实值（8 条连线只在测试路径，演示产物 with-paper offline 两子图 0 条）。
+- **F6**：`spine_anchor.py` 恢复两个空行；新增 `test_anchor_schema_declares_code_group`（schema 里删掉 `code_group` 声明原本没人报警）。
+
+**定向复审（恰好一次，`layers-rer6`）**：六条 Important 全部 ADDRESSED，新破损 Critical/Important/Minor 全 0；评审自己复跑一次层列变异，RED 原文 `AssertionError: S3.2-eq-attn-t0 的两行层值不是逐层组路径：['—', '—']`，还原后 sha256 `faa6aae6…b716ccf` 一致、`git status` 干净。禁改清单（`spine.py`、`align/*`、`spine_claims.py`、`spine_fallback.py`、`paths.py`、`cli.py`、`test_spine_end_to_end.py`、`test_spine_tier.py` 既有断言）一字未动。
+
+评审留两条先存在备案（本波不动）：`tests/test_spine_html.py` 的 `offline_doc` docstring 仍写「unresolved=4」（实际 8，L3 前遗留）；本文件 R173 行的行号括注「134→135」不精确（实际 `schema_structure.py:129-130`）。
+
+**验收现状（波次 6 后）**：全量 **807 passed**；真夹具 + 假 yes 后端 → 8 条 anchor / judge 8 次 / HTML 8 行、层列 `transformer.h.0.attn` 与 `transformer.h.1.attn`；回退路径 4 条、层列全 `—`；真 offline → 0 anchor / 8 条 unresolved；GC8 不变（nodes=128 算子 75/权重 18/输入 1、edges=101、degraded=2、fused/orphan/shape_broken/shape_unchecked 全 0）；census 无 >200 行；三份演示产物已用当前代码重生成（`code-only` 128/101/0/0、`with-paper` 128/101/0/**8**、`fallback-yellow` 128/101/**4**/0，全部 `validate_trace` 通过、盘符 0 条）。
+
