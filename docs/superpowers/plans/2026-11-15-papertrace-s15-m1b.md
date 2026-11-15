@@ -328,3 +328,47 @@ def cap_tier(level: str, fallback: bool) -> str
 只是拿不到 yes，所以诚实的原因变成 `回退候选没拿到判断题 yes（结构同构未命中，候选来自
 算子类型+词法排序）`。实际断言：仍含「结构同构未命中」，另含「回退候选没拿到判断题 yes」
 与 `s_struct=0.60`。改对了方向（多报一层不确定性），没有放宽任何断言。
+
+---
+
+## 波次3（四份独立评审）与波次4（一次修复 + 一次定向复审）
+
+四份评审**并行 fan-out**（各一个全新只读 agent，互不共享上下文）：
+`s15-reviewer`(A)、`m1b-reviewer`(B)、`docs-reviewer`(C)、`spine-d-reviewer`(D)。
+
+| 评审 | 结论 | 计数 |
+|---|---|---|
+| A：S15 候选生成器 | Approved | Critical 0 / Important 0 / Minor 3 |
+| B：M1b 逐算子行号 | Approved | Critical 0 / Important 0 / Minor 3 |
+| C：三处文档真话 | Approved | Critical 0 / Important 0 / Minor 5 |
+| D：控制器集成（Task D） | With fixes | Critical 0 / **Important 1** / Minor 4 |
+
+D 的 Important 是真问题：符号表 `where` 列把 5 条绝对路径写进 `index.html` 正文（`_symbol_rows` 未
+basename 化、模板无 `title`），顶掉了本计划的「正文无绝对路径」验收。虽然非本轮引入，但在本轮允许
+改的文件里、且无任何测试覆盖。D 还给出 R117 的**可达性证明**（回退路径 s_struct 上限 0.6、s_retr 封顶
+1.0 → score=sigmoid(−0.32)=0.4207 < 0.45 必落 unresolved，故回退 anchor 只可能由 s_judge>0 产出，
+而 `_judge_pairs` 只在 judge_score>0 时返回 confirmed → 永远只写一个节点，不是运气）。
+
+按 fix-loop 派**一个** fix agent 带完整九条清单（不是每条一个），提交 **`621ccfc`**（10 文件 +187/−18，
+全量 **757 passed**，GC8 七项逐字不变，四条变异探针各 RED 并 sha256 逐字节还原）：
+
+1. F1 符号表正文只显 `basename:line`、完整路径进 `<td title>`（同一 `_where_texts` 口径）。
+2. F2 `test_module_rows_do_not_show_module_path_as_a_line` 从空转改成真承重（钉 SVG 算子行数/集合 == level=="op" 的 94）。
+3. F3 e2e 的 R117 断言从 `":" not in range` 改成单节点三句断言（无 `..`、∈ node_ids、等于期望首候选）。
+4. F4 `_attach_term` 补回 `node_ids: list` / `by_id: dict` / `fallback: bool`，spine.py 仍 200 行。
+5. F5 限流默认值 3/12 与行为双重钉住。
+6. F6 零候选 miss 文案拆「kind 无映射」/「有映射但无节点」两因。
+7. F7 README 过期行号 `:82 → :98`（FIX-1 新增 3 行把目标行推后，照抄 `:95` 会更错）。
+8. F8 `loc.py` docstring 补「绝对路径/机器相关/相对化归 M4」。
+9. F9 `lexical_rank` docstring 注明与 `node[...]` 的等价条件。
+
+**定向复审（恰好一次）`s15-rereviewer`：All addressed，9/9，残留 0；新破损 Critical 0 / Important 0 / Minor 1。**
+它独立判定修复者两处改判**均成立**（`:95` 会当天过期；`--repo` 传相对路径时 `meta.repo.url` 本就相对，
+「两条都保持绝对路径」是事实错误）。
+
+**R134（复审后的一条文档 Minor，控制器自修）**：复审指出 README「分享 `trace.json` 会一并带上本机目录」
+在传相对路径时不成立，建议改「可能」。改成「**可能**一并带上（`--repo`/`--paper` 传相对路径时记的就是
+相对路径）」送进 `469e9b2`（`docs:` 单行 2+/1−，纯文档、零行为、无测试读取 README 内容）。
+这条不进第二波复审：一行措辞、控制器自己 grep 验证、且改完重跑全量仍 757 passed。
+错了的代价：若措辞仍不准，下一个人读到会多问一句——远小于再开一轮派发+复审的成本。
+
