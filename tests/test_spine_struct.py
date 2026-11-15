@@ -13,7 +13,7 @@
   中间）。只配第一层（h.0.attn），逐层对齐是 M4。
 - R37：pairs 是 judge 的唯一候选来源；同构不命中 → pairs == [] → s_judge=0。
 - R38：hits/misses 是给人看的短中文句子，会作为 evidence 展示在 HTML 报告里。
-- loc 不是行号（夹具里是 'model.GPT'）：判据只看算子名与组内顺序，配对回传 node_id。
+- loc 是 file:line（M1b 后）或模块路径（回落时）；判据只看算子名与组内顺序，配对回传 node_id。
 """
 
 import pathlib

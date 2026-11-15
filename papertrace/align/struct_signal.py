@@ -25,11 +25,12 @@
 - R25a：只配第一层。h.0.attn 与 h.1.attn 完全同构且都能匹配，首匹配规则选
   h.0.attn。这是本切片的已知局限（逐层对齐是 M4）：签名不变，也不返回多个组。
 - R37：pairs 是判断题（S7）唯一的候选来源。同构不命中 → pairs == [] → s_judge=0。
-  绝不为了给 judge 凑候选而编造 pairs：不做全配对，不引入词法候选生成器（S15 未批）。
-- R38：hits / misses 是给人看的短中文句子，会作为 evidence 展示在 HTML 报告里；
+  绝不为了给 judge 凑候选而编造 pairs：不做全配对。S15 已批：非结构候选由
+  papertrace.align.candidates 产出，pairs 仍是本模块唯一产出。
+- R38：hits / misses 是给人看的短中文句子，供测试与调试；spine 只消费 score 与 pairs。
   每条都点名规则、说清为什么中或为什么不中。
-- loc 不是行号（夹具里是 'model.GPT'）：判据只看算子名与组内顺序，配对回传 node_id，
-  不依赖 loc。
+- loc 是 file:line（M1b 后）或模块路径（回落时）；判据只看算子名与组内顺序，
+  配对回传 node_id，不依赖 loc。
 
 产出 StructSignal(score, hits, misses, pairs)；pairs 是 [(term.index, node_id)]。
 """
