@@ -13,6 +13,7 @@ split_formula(...)==[]，三个 signal 同一份 dict 既喂 confidence() 又写
 prompt_version 写 JUDGE_PROMPT_VERSION，符号差集记 unresolved，只捕预期不可用，
 judge 只对 pairs 里的配对调用。S15：结构未命中时退到算子类型候选（R112 回退产的线最高
 到黄、R117 只指认 judge 确认的一个节点、R118 confirmed id），见 spine_fallback.py。
+单公式项落盘（anchor 与 unresolved 写盘）在 spine_anchor.py（R165 拆出，行为零变化）。
 """
 
 from __future__ import annotations
@@ -30,24 +31,15 @@ from papertrace.parse_paper.split_terms import split_formula
 from papertrace.symbols.code_table import _FROZEN_SYMBOLS, build_code_symbols
 from papertrace.symbols.mapping import map_symbols
 from papertrace.symbols.paper_table import build_paper_symbols
-from papertrace.spine_claims import (
-    CLAIMED_REASON,
-    duplicate_claims,
-    judge_first_yes,
-    node_text,
-    unclaimed,
-)
-from papertrace.spine_fallback import (
-    cap_tier, claimed_nodes, none_cause, pairs_or_fallback, resolve_code_range)
+from papertrace.spine_anchor import (
+    ALTERNATIVE_LIMIT, EVIDENCE_LIMIT, FALLBACK_EVIDENCE, FALLBACK_PAIR_NOTE,
+    NO_CANDIDATE_REASON, attach_term, record_unresolved)
+from papertrace.spine_claims import duplicate_claims, node_text
+from papertrace.spine_fallback import pairs_or_fallback
 
 #: 本模块用到的字面量与预算（裁决编号见模块 docstring）
 UNSPLITTABLE_REASON = "公式拆不出项（超出白名单文法），不猜项"   # R78
-NO_CANDIDATE_REASON = "结构同构未命中，没有可判断的候选对"       # R37
 UNKNOWN_BACKEND = "unknown"                                   # R70
-FALLBACK_PAIR_NOTE = "候选来自算子类型+词法排序（结构同构未命中），最高黄线"  # R112
-FALLBACK_EVIDENCE = "判断题没有给出 yes：只凭结构/检索信号出线，需人工复核"
-ALTERNATIVE_LIMIT = 2   # schema alternatives maxItems
-EVIDENCE_LIMIT = 80     # schema anchor.evidence maxLength
 
 
 def attach_paper(doc: dict, paper_src: str, model) -> dict:
@@ -114,77 +106,8 @@ def _attach_unit(doc: dict, unit, model, by_id: dict) -> None:
         raise BuildError(f"结构配对出现重复节点，一个算子只归一个公式项：{dups}")
     claimed: set[str] = set()  # R135/R147：同单元独占，跨单元共享
     for term in terms:
-        _attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []),
+        attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []),
                      by_id, fallback, claimed)
-
-
-def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id: dict,
-                 fallback: bool, claimed: set[str]) -> None:
-    """一个公式项：三个信号 → confidence → tier → anchor 或 unresolved。"""
-    term_id = f"{unit.unit_id}-t{term.index}"
-    # R85：逐项 s_retr 只取本项 forward 的最大分；缺键/空表 → 0.0（保守方向），
-    # 绝不用单元级 retrieval["s_retr"]——兄弟项命中会把零检索的项抬上绿线
-    s_retr = min(1.0, max(0.0, max(
-        ((h.get("score") or 0.0)
-         for h in (retrieval.get("forward") or {}).get(term_id) or []),
-        default=0.0)))
-    s_struct = float(signal.score)
-    if not node_ids:
-        # R37：judge 只对 StructSignal.pairs 里的配对调用。pairs 空就一个都不问——
-        # 拿检索 top1 当候选会让「结构同构没命中」的项靠 embedding 相似度混上绿线
-        _record_unresolved(doc, term_id, NO_CANDIDATE_REASON, retrieval,
-                           {"s_retr": s_retr, "s_judge": 0.0, "s_struct": s_struct})
-        return
-    available = unclaimed(node_ids, claimed)  # R135：跳过已被别的项认领的节点
-    if not available:  # R137/R146：成因是「被占了」不是「没有候选」，文案分开
-        doc["unresolved"].append({"kind": "paper_unit", "ref": term_id,
-                                  "reason": CLAIMED_REASON})  # R146：不走 _record_unresolved
-        return
-    s_judge, verdict, confirmed = judge_first_yes(term.latex, available, by_id, claimed)
-    # R69：同一份 signals 既喂 confidence() 又写进 anchor.signals，不分别算、不取整
-    signals = {"s_retr": s_retr, "s_judge": s_judge, "s_struct": s_struct}
-    score = confidence(signals["s_retr"], signals["s_judge"], signals["s_struct"])
-    level = cap_tier(tier(score, s_struct), fallback)  # R112
-    if level == "none":
-        _record_unresolved(doc, term_id, none_cause(fallback), retrieval, signals)
-        return
-    # R68/R117：结构路径填首尾区间；回退路径只填 judge 确认的那一个节点
-    code_range = resolve_code_range(available, confirmed, fallback)
-    evidence = "；".join(p.strip() for p in (verdict, tier_reason(score, s_struct))
-                        if p and p.strip())
-    if fallback:  # R112：候选不是结构对上的，必须写在用户看得见的地方
-        evidence = f"{FALLBACK_PAIR_NOTE}；{evidence}" if evidence else FALLBACK_PAIR_NOTE
-    if s_judge <= 0:  # 判断题没说 yes：挂兜底证据，说明只凭结构/检索出线
-        evidence = f"{evidence}；{FALLBACK_EVIDENCE}" if evidence else FALLBACK_EVIDENCE
-    anchor = {"paper_unit_id": unit.unit_id, "formula_term_index": term.index,
-              "code_expr_range": code_range,
-              "aten_ops": [by_id[n]["op"] for n in available if n in by_id and by_id[n].get("op")],
-              "confidence": score, "tier": level, "signals": signals,
-              "source": "model" if s_judge > 0 else "static",  # R67
-              "evidence": evidence[:EVIDENCE_LIMIT] or FALLBACK_EVIDENCE,
-              "direction": "paper_to_code"}
-    if level == "yellow":  # brief：黄线必须带备选（schema maxItems 2）
-        picks = [h for h in (retrieval.get("forward") or {}).get(term_id) or []
-                 if h.get("code_id") not in available
-                 and h.get("code_id") not in claimed][:ALTERNATIVE_LIMIT]  # R151
-        anchor["alternatives"] = [
-            {"code_id": h["code_id"], "op": (by_id.get(h["code_id"]) or {}).get("op", ""),
-             "score": h.get("score")} for h in picks]
-    doc["anchors"].append(anchor)
-    claimed.update(claimed_nodes(available, confirmed, fallback))  # R147：占住已产出的节点
-
-
-def _record_unresolved(doc: dict, term_id: str, cause: str, retrieval: dict, signals: dict) -> None:
-    """tier=='none' → 不产 anchor，把为什么说不清写进 unresolved。"""
-    score = confidence(signals["s_retr"], signals["s_judge"], signals["s_struct"])
-    parts = [f"置信度 {score:.4f} < {CONF_YELLOW:.2f}：{cause}"]
-    detail = (retrieval.get("reason") or "").strip()
-    if detail:
-        parts.append(detail)
-    parts.append("（s_retr=%.2f s_judge=%.2f s_struct=%.2f）" % (
-        signals["s_retr"], signals["s_judge"], signals["s_struct"]))
-    doc["unresolved"].append({"kind": "paper_unit", "ref": term_id,
-                              "reason": "；".join(parts)})
 
 
 def _model_meta() -> dict:

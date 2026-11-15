@@ -166,7 +166,7 @@ def test_green_struct_min_is_the_u1_gate():
 
 def test_unresolved_confidence_rendering_avoids_self_contradiction():
     """Important-3 (FIX-3): c ∈ [0.445, 0.45) 时，不许渲染出「置信度 0.45 < 0.45」自相矛盾。"""
-    from papertrace.spine import _record_unresolved
+    from papertrace.spine_anchor import record_unresolved
 
     doc = {"unresolved": []}
     s_retr, s_judge, s_struct = 0.95, 0.0, 0.8
@@ -174,7 +174,7 @@ def test_unresolved_confidence_rendering_avoids_self_contradiction():
     assert 0.445 <= c < CONF_YELLOW, f"前置条件：c 必须落在 [0.445, {CONF_YELLOW})，实际 {c}"
 
     signals = {"s_retr": s_retr, "s_judge": s_judge, "s_struct": s_struct}
-    _record_unresolved(doc, "t0", "未连线", {}, signals)
+    record_unresolved(doc, "t0", "未连线", {}, signals)
     reason = doc["unresolved"][0]["reason"]
     # 提取渲染出的置信度与门槛字符串，断言不得相同
     match = re.search(r"置信度\s+([\d\.]+)\s+<\s+([\d\.]+)", reason)
