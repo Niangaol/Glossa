@@ -41,7 +41,7 @@ def _line_value(text: str, keys: tuple[str, ...]) -> str:
 
 
 def _first_token(value: str) -> str:
-    """取赋值的首 token，剥掉尾随标点后转小写（R51）。"""
+    """取赋值的首 token，剥掉首尾标点（`_TRIM` 两端都含）后转小写（R51）。"""
     words = value.split()
     if not words:
         return ""

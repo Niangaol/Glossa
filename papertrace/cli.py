@@ -18,6 +18,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import jinja2
+
 from papertrace.build_trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
 from papertrace.render_html import write_html
@@ -62,7 +64,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--skeleton", action="store_true", help="只写合法的空 trace.json（不追踪）"
     )
     p_build.add_argument(
-        "--force", action="store_true", help="允许覆盖已存在的 trace.json"
+        "--force", action="store_true", help="允许覆盖已存在的 trace.json（index.html 是派生产物每次覆盖不受此约束）"
     )
 
     p_dump = sub.add_parser("dump", help="打印 trace.json 的规模计数")
@@ -143,7 +145,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     # 影响 trace.json 已写出的事实，只报 exit 2。
     try:
         html_path = write_html(doc, Path(args.out))
-    except BuildError as exc:
+    except (BuildError, jinja2.TemplateError) as exc:
         print(
             f"papertrace build：trace.json 已写出，HTML 渲染失败：{exc}",
             file=sys.stderr,

@@ -26,7 +26,7 @@ pytest.importorskip("torch", reason="本切片要真实例化模型，CPU 版 to
 
 from papertrace.build_trace import build_trace, load_entry  # noqa: E402
 from papertrace.ingest.paper import ingest_paper  # noqa: E402
-from papertrace.symbols.code_table import build_code_symbols  # noqa: E402
+from papertrace.symbols.code_table import _locate_head_dim, build_code_symbols  # noqa: E402
 from papertrace.symbols.mapping import map_symbols  # noqa: E402
 from papertrace.symbols.paper_table import build_paper_symbols  # noqa: E402
 from tests._tmp import scratch_dir  # noqa: E402
@@ -297,4 +297,143 @@ def test_config_field_definition_is_not_guessed_from_the_model_file():
         f"那一行必须是 n_embd 的声明，实际：{a_lines[line_no - 1]!r}"
     )
     assert "s4_model_b.py" not in row["defined_at"], "绝不指向模型文件里的诱饵行"
+
+
+_MODEL_WITH_COMMENT_SOURCE = '''\
+"""R101 场景：注释行在真算式之前。"""
+
+from dataclasses import dataclass
+
+
+@dataclass
+class Cfg:
+    block_size: int = 16
+    n_head: int = 4
+    n_embd: int = 32
+
+
+class ModelWithComment:
+    def __init__(self):
+        self.config = Cfg()
+        self.n_head = self.config.n_head
+
+    def forward(self, x):
+        # head dim = C // self.n_head (see docs)
+        return x.view(2, 16, self.n_head, 32 // self.n_head)
+
+
+def build_model():
+    return ModelWithComment()
+'''
+
+_MODEL_SINGLE_HIT_SOURCE = '''\
+"""R101 场景：只有单处命中。"""
+
+from dataclasses import dataclass
+
+
+@dataclass
+class Cfg:
+    block_size: int = 16
+    n_head: int = 4
+    n_embd: int = 32
+
+
+class ModelSingleHit:
+    def __init__(self):
+        self.config = Cfg()
+        self.n_head = self.config.n_head
+
+    def forward(self, x):
+        return x.view(2, 16, self.n_head, 32 // self.n_head)
+
+
+def build_model():
+    return ModelSingleHit()
+'''
+
+
+def test_head_dim_definition_requires_uniqueness_and_avoids_comments():
+    """Important-2 (FIX-2 / R101): head_dim 必须全文件唯一命中才使用，否则返回 None。
+
+    同文件里注释行 `# head dim = C // self.n_head` 在真算式之前时，
+    _locate_head_dim 绝不返回注释行号，而是返回 None（省略该符号）；
+    只有单处命中时正常返回真定义行。
+    """
+    repo = scratch_dir("s4-head-dim-uniqueness")
+    (repo / "model_comment.py").write_text(_MODEL_WITH_COMMENT_SOURCE, encoding="utf-8")
+    (repo / "model_single.py").write_text(_MODEL_SINGLE_HIT_SOURCE, encoding="utf-8")
+    try:
+        mod_comment = load_entry(repo, entry="model_comment:build_model")
+        loc_comment = _locate_head_dim(mod_comment)
+        # 注释与真算式共存（非唯一）→ 必须返回 None，不能误指注释行
+        assert loc_comment is None, f"非唯一命中必须返回 None，实际指了: {loc_comment}"
+
+        rows_comment = build_code_symbols(mod_comment, {"meta": {"runtime": {"batch": 2}}})
+        # R21: 定位不到的符号省略，不编造行号，S9 会落进 unresolved{kind:'symbol'}
+        symbols_comment = {r["symbol"] for r in rows_comment}
+        assert "Dh" not in symbols_comment, "定位非唯一的 Dh 必须被省略，不得出现在 code_symbols 中"
+
+        # 黄金对照组：单处命中正常返回
+        mod_single = load_entry(repo, entry="model_single:build_model")
+        loc_single = _locate_head_dim(mod_single)
+        assert loc_single is not None
+        assert loc_single.endswith(":19")
+        rows_single = build_code_symbols(mod_single, {"meta": {"runtime": {"batch": 2}}})
+        assert "Dh" in {r["symbol"] for r in rows_single}
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        sys.modules.pop("model_comment", None)
+        sys.modules.pop("model_single", None)
+
+
+#: R108 场景：同文件两处**非相邻**的真命中（被别的行隔开）。
+_MODEL_TWO_DISTANT_HITS_SOURCE = '''\
+"""R108 场景：同文件两处非相邻的真命中。"""
+
+from dataclasses import dataclass
+
+
+@dataclass
+class Cfg:
+    block_size: int = 16
+    n_head: int = 4
+    n_embd: int = 32
+
+
+class ModelTwoHits:
+    def __init__(self):
+        self.config = Cfg()
+        self.n_head = self.config.n_head
+
+    def forward(self, x):
+        y = x.view(2, 16, self.n_head, 32 // self.n_head)
+        y = y + 1
+        return y.reshape(2, 16, 32 // self.n_head, 1)
+
+
+def build_model():
+    return ModelTwoHits()
+'''
+
+
+def test_head_dim_two_distant_hits_are_still_none():
+    """R108: 同文件两处「非相邻」的真命中 → 仍然返回 None（唯一性继续执法）。
+
+    相邻折叠只吞「同文件相邻的非注释命中」（夹具 model.py 的 k/q/v 三行 view
+    本就连续命中），不是把任意多命中都并成一个：两处被别的行隔开的真算式
+    必须让 Dh 被省略（R21），否则唯一性判据就被折叠悄悄废掉了。
+    """
+    repo = scratch_dir("s4-head-dim-two-distant")
+    (repo / "model_two_hits.py").write_text(_MODEL_TWO_DISTANT_HITS_SOURCE, encoding="utf-8")
+    try:
+        mod = load_entry(repo, entry="model_two_hits:build_model")
+        assert _locate_head_dim(mod) is None, "两处非相邻命中必须返回 None，不许被折叠吞掉"
+        rows = build_code_symbols(mod, {"meta": {"runtime": {"batch": 2}}})
+        assert "Dh" not in {r["symbol"] for r in rows}, "非唯一定位的 Dh 必须被省略（R21）"
+    finally:
+        shutil.rmtree(repo, ignore_errors=True)
+        sys.modules.pop("model_two_hits", None)
+
+
 

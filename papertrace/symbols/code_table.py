@@ -100,12 +100,25 @@ def _locate_config_field(mod, field):
 
 
 def _locate_head_dim(mod):
-    """Dh 的声明点：真正把 C 切成多头的那一行 `C // self.n_head`（RF4）。"""
+    """Dh 的声明点：真正把 C 切成多头的那一行 `C // self.n_head`（RF4/R101）。
+
+    判据：收集全部命中 → 同文件内相邻的非注释命中折叠成一个 site（夹具 model.py
+    的 k/q/v 三行 view 本就连续命中）→ 只剩一个且非注释才用，否则 None（R21 省略）。
+    """
+    sites: list[tuple[str, int, bool]] = []
     for path in _candidate_files(mod):
-        lines = _read_lines(path)
-        for index, text in enumerate(lines):
+        last_line = -999
+        for index, text in enumerate(_read_lines(path)):
             if _HEAD_DIM_LINE.search(text):
-                return f"{path}:{index + 1}"
+                is_comment = text.lstrip().startswith("#")
+                line_no = index + 1
+                if not is_comment and line_no == last_line + 1 and sites and not sites[-1][2]:
+                    last_line = line_no
+                    continue
+                sites.append((path, line_no, is_comment))
+                last_line = line_no
+    if len(sites) == 1 and not sites[0][2]:
+        return f"{sites[0][0]}:{sites[0][1]}"
     return None
 
 

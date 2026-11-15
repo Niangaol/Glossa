@@ -157,7 +157,7 @@ def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id
 def _record_unresolved(doc: dict, term_id: str, cause: str, retrieval: dict, signals: dict) -> None:
     """tier=='none' → 不产 anchor，把为什么说不清写进 unresolved。"""
     score = confidence(signals["s_retr"], signals["s_judge"], signals["s_struct"])
-    parts = [f"置信度 {score:.2f} < {CONF_YELLOW:.2f}：{cause}"]
+    parts = [f"置信度 {score:.4f} < {CONF_YELLOW:.2f}：{cause}"]
     detail = (retrieval.get("reason") or "").strip()
     if detail:
         parts.append(detail)

@@ -5,15 +5,19 @@
 1 基位置，所以事后增删 marker 也不会让别的方程改 ID。
 
 匹配前先把原文过一遍「掩码」，生成等长的 code / comment 双视图：
-- code 视图里，未转义 % 到行尾的注释、以及 verbatim / lstlisting 逐字环境整体
-  换成等长空格——被注释掉的 \begin{equation} 和印在 verbatim 里的都不是公式，
-  公式体内的行尾 % 注释也活不进 latex；
-- comment 视图相反：代码换成等长空格，注释原文保留。
+- code 视图里，未转义 % 到行尾的注释和 verbatim / lstlisting 逐字环境整体
+  换成等长空格——被注释掉的 \begin{equation} 和印在 verbatim 里的都不是
+  公式，公式体内的行尾 % 注释也活不进 latex；
+- comment 视图保留注释原文；逐字环境与行内逐字段两个视图均挖空，避免 marker
+  从逐字内容里误匹配（代码字符虽未置空，但 _MARKER_RE 只认 % 注释，偏移完全对应）。
 _ENV_RE 只扫 code 视图（找公式），_MARKER_RE 只扫 comment 视图（找注释里的
 marker）；两个视图与原文偏移一一对应，区间可以互相套用。\\% 是转义百分号，
-尊重它。marker 只认「上一个 \\end{equation} 之后、本 \\begin{equation} 之前」那段
-注释区（裁决 R14）：写在公式体里的 marker 会被上一条公式偷走，造成两条公式的
-ID 互换错配，一律忽略。
+尊重它。行内逐字段（\\verb|...| 与 \\url{...}）里的 % 是字面内容不是注释
+起点，掩码时整段跳过——否则一个 \\verb|%| 就会把同行的 \\end{equation}
+一起吃掉，整条公式静默消失或和下一条缝合。marker 只认「上一个
+\\end{equation} 之后、本 \\begin{equation} 之前」那段注释区（裁决 R14）：
+写在公式体里的 marker 会被上一条公式偷走，造成两条公式的 ID 互换错配，
+一律忽略。
 """
 
 from __future__ import annotations
@@ -33,6 +37,43 @@ _VERBATIM_RE = re.compile(
     r"(?P<vbody>.*?)\\end\{\1\}",
     re.DOTALL,
 )
+#: 行内逐字：\verb\*? 后面任取一个非字母定界符（LaTeX 行内 verbatim；
+#: 定界符是字母时 \verb 已被读成控制词 \verbs，不算行内逐字）。
+_INLINE_VERB_RE = re.compile(r"\\verb\*?([^A-Za-z\n])")
+
+
+def _inline_span_end(text: str, i: int) -> int | None:
+    """行内逐字段（\\verb\\*?<d>...<d> 或 \\url{...}）的结束偏移（不含右边界之后）。
+
+    定界符必须在本行内配对、\\url 的花括号必须闭合；不完整返回 None，调用方
+    按普通转义对跳过——宁可少认一段行内逐字，也不把 \\url 之后整篇都当成
+    逐字内容。
+    """
+    head = _INLINE_VERB_RE.match(text, i)
+    if head is not None:
+        delim = head.group(1)
+        stop = text.find("\n", head.end())
+        close = text.find(delim, head.end(), len(text) if stop < 0 else stop)
+        if close < 0:
+            return None
+        return close + 1
+    if text.startswith("\\url{", i):
+        depth = 0
+        k = i + 4
+        n = len(text)
+        while k < n:
+            ch = text[k]
+            if ch == "\\":
+                k += 2
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return k + 1
+            k += 1
+    return None
 
 
 class PaperUnit(NamedTuple):
@@ -48,8 +89,11 @@ def _mask_views(text: str) -> tuple[str, str]:
 
     code 视图：注释（未转义 % 到行尾）与逐字环境换成等长空格；
     comment 视图：代码换成等长空格，注释原文保留。
-    逐字符扫：遇到 \\ 先试逐字环境，否则跳过这个转义对（于是 \\% 不会被当成
-    注释起点）；遇到未转义 % 就把到行尾整段挖空。
+    逐字符扫：遇到 \\ 先试逐字环境、再试行内逐字（\\verb|...| / \\url{...}），
+    都不中就跳过这个转义对（于是 \\% 不会被当成注释起点）；遇到未转义 %
+    就把到行尾整段挖空。行内逐字段整段跳过，段内的 % 是字面内容不是注释
+    起点；code 视图原样保留（latex 要完整），comment 视图置空——marker
+    不许从逐字内容里捡，与逐字环境分支同一套机制。
     """
     code = list(text)
     comment = list(text)
@@ -64,6 +108,12 @@ def _mask_views(text: str) -> tuple[str, str]:
                     code[k] = " "
                     comment[k] = " "
                 i = verbatim.end()
+                continue
+            span_end = _inline_span_end(text, i)
+            if span_end is not None:
+                for k in range(i, span_end):
+                    comment[k] = " "
+                i = span_end
                 continue
             i += 2
             continue

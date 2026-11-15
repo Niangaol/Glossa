@@ -33,5 +33,5 @@ def tier_reason(confidence: float, s_struct: float) -> str:
     否则每条黄线的 evidence 都会挂着一条误导人的结构原因。
     """
     if confidence >= CONF_GREEN and s_struct < GREEN_STRUCT_MIN:
-        return f"结构信号 {s_struct:.2f} 低于 {GREEN_STRUCT_MIN:.2f}，绿线降为黄线"
+        return f"结构信号 {s_struct:.4f} 低于 {GREEN_STRUCT_MIN:.2f}，绿线降为黄线"
     return ""

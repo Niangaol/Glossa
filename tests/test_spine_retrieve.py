@@ -300,3 +300,60 @@ def test_empty_inputs_are_zero_not_a_crash(monkeypatch):
     assert result["s_retr"] == 0.0
     assert result["conflicts"] == []
     assert isinstance(result["reason"], str) and result["reason"].strip()
+
+
+class _LongBackend:
+    """故意**多**返回一条向量的后端（m8：R54 的对称侧）。
+
+    与 _ShortBackend 镜像：少返回一条要拒，多返回一条同样要拒——数量对不上就是
+    对不上，静默 zip 截断会让某个单元被悄悄踢出计分，算出一个在没人验证过的
+    子集上的 s_retr。单实例跨调用记录 seen，用来断言 embed 路径真被走到。
+    """
+
+    name = "long"
+
+    def __init__(self, vectors: dict[str, list[float]], long_text: str):
+        self.vectors = vectors
+        self.long_text = long_text
+        self.seen: list[list[str]] = []
+
+    def chat(self, prompt: str, *, system: str | None = None):
+        raise AssertionError("检索路径不该调 chat")
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        self.seen.append(list(texts))
+        rows = [list(self.vectors[t]) for t in texts]
+        if self.long_text in texts:
+            rows = rows + [list(rows[0])]  # 多返回一条：数量与请求对不上
+        return rows
+
+
+def _patch_long(monkeypatch, vectors: dict[str, list[float]], long_text: str):
+    backend = _LongBackend(vectors, long_text)
+    monkeypatch.setattr(embed_module, "get_llm", lambda: backend)
+    return backend
+
+
+def test_term_vector_surplus_is_refused(monkeypatch):
+    """m8：后端多返回一条论文项向量 → ValueError，与少返回同标准（R54 对称侧）。"""
+    backend = _patch_long(monkeypatch, _MIRROR, long_text="qk")
+    with pytest.raises(ValueError, match=r"后端返回向量数与输入数不一致：3 != 2"):
+        retrieve_bidirectional(
+            [{"code_id": "root/@037", "text": "attn"}],
+            _CONFLICT_TERMS,
+            k=5,
+        )
+    # 被测路径真被走到：两次 embed 调用都发生了，不是空输入短路
+    assert backend.seen == [["attn"], ["matmul", "qk"]]
+
+
+def test_code_vector_surplus_is_refused(monkeypatch):
+    """m8：后端多返回一条代码向量 → ValueError（term 侧先过，code 侧后炸）。"""
+    backend = _patch_long(monkeypatch, _MIRROR, long_text="softmax")
+    with pytest.raises(ValueError, match=r"后端返回向量数与输入数不一致：3 != 2"):
+        retrieve_bidirectional(
+            _CONFLICT_UNITS,
+            [{"term_id": "S3.2-eq-attn-t0", "text": "matmul"}],
+            k=5,
+        )
+    assert backend.seen == [["attn", "softmax"], ["matmul"]]

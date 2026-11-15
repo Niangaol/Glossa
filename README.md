@@ -142,7 +142,7 @@ set PAPERTRACE_LLM=deepseek-chat
 
 精确门槛（用 `sigmoid(4·(0.30·s_retr+0.50·s_judge+0.20·s_struct−0.5))` 实测算过）：
 
-- `s_judge=1` 时要绿线需要 `s_retr ≥ 0.382177`（0.3822 → 0.750000 绿；0.3812 → 0.749775 黄）。
+- `s_judge=1` 时要绿线需要 `s_retr ≥ 0.382177`（0.3822 → 0.750005 绿；0.3812 → 0.749780 黄）。
 - `s_retr=0`（DeepSeek 没有 embeddings 端点）时天花板是 `c=0.654753` **黄线**：
   配 DeepSeek 中转永远出不了绿线。
 - `s_judge=0` 时即使检索满分也只到 `c=0.460085` **黄线**（judge 权重 0.50 是决定性的）。
@@ -392,6 +392,12 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
   KaTeX `\htmlId` 推迟到 M2 前端。这是对冻结规则（工程计划书 :75 / :611）的显式批准偏离，不是漏改。
 - **S16 修订（m03858 已批）**：`anchor` 增加可选 `tier` + `signals`，结构校验钉住三者自洽——
   所以手改 trace 把 tier 涂绿是过不了 schema 校验的（RF3）。
+- **equation 环境里未转义的 `%` 一律当注释**：这与 LaTeX 语义一致（`%` 到行尾就是注释），
+  行内逐字（`\verb`/`\url`）里的 `%` 已按定界符配对保护，但 `equation` 内裸写的 `%`
+  仍会吃掉其后直到行尾的内容。
+- **花括号下标暂不匹配**：`d_{kk}` 这类带花括号的下标抽不出来，论文侧只认 `d_k` 这种
+  单下标形式。
+- **`_read_title` 是启发式**：从 .tex 里猜论文标题，猜不到就留空，不联网查、不编一个。
 
 ## 退出码
 
@@ -407,6 +413,9 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 `TOKEN`/`CUSTOM_OBJ` 归 **2** 是**契约策略**而不是「你输入写错了」：spec 里出现本切片不支持的
 `InputKind` 就是契约错误（与未知 kind 同一类）；`no_grad`/`cond` 归 **5** 是**能力边界**（spec 完全合法，
 只是图里有非张量节点）。两者的分界线是「spec 合不合法」，不是「用户有没有写错」。
+
+`index.html` 是**派生产物**：每次 `build` 都重新生成并覆盖，**不受 `--force` 约束**（R74）；
+`--force` 只约束 `trace.json`（对应码 3）。HTML 渲染失败时报码 2，且 `trace.json` 早已写出、绝不回删。
 
 ## 文档
 

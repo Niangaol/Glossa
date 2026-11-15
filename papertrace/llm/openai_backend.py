@@ -50,7 +50,7 @@ def _urllib_transport(request):
         headers=request["headers"], method="POST",
     )
     with urllib.request.urlopen(req, timeout=request["timeout"]) as response:
-        return {"status": response.status, "text": response.read().decode("utf-8")}
+        return {"status": response.status, "text": response.read().decode("utf-8", "replace")}
 
 
 def _error_snippet(exc, limit=200):

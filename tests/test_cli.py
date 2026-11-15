@@ -243,3 +243,35 @@ def test_serve_and_eval_report_unimplemented():
         r = run_cli(cmd)
         assert r.returncode == 2
         assert "本切片未实现" in r.stderr
+
+
+def test_cli_html_render_failure_returns_exit_2_with_trace_written(monkeypatch, capsys):
+    """Important-4 (FIX-4 / E14): HTML 渲染抛 TemplateError 时 exit 2 + R83 话术 + trace.json 仍落盘。"""
+    import jinja2
+    from papertrace import cli
+
+    calls = 0
+
+    def fake_write_html(doc, out_dir):
+        nonlocal calls
+        calls += 1
+        raise jinja2.UndefinedError("fake template undefined error")
+
+    monkeypatch.setattr(cli, "write_html", fake_write_html)
+
+    out_dir = scratch_dir("cli-html-error")
+    parser = cli.build_parser()
+    args = parser.parse_args([
+        "build",
+        "--repo", FIXTURE,
+        "--paper", "none",
+        "--out", str(out_dir),
+        "--skeleton",
+    ])
+    ret = cli._cmd_build(args)
+    captured = capsys.readouterr()
+    assert ret == 2
+    assert calls == 1
+    assert "trace.json 已写出，HTML 渲染失败" in captured.err
+    assert (out_dir / "trace.json").is_file()
+

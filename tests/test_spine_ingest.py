@@ -236,3 +236,41 @@ def test_escaped_percent_is_not_a_comment():
     assert "\\%" in units[0].latex
     assert "真注释" not in units[0].latex
     assert "%" not in units[0].latex.replace("\\%", "")
+
+
+def test_inline_verbatim_and_url_percent_do_not_eat_equation_end():
+    """Important-1 (FIX-1): 行内 \\verb 与 \\url 里的 % 不能把同行的 \\end{equation} 当注释吃掉。
+
+    ① \\begin{equation} a = b \\verb|%| c \\end{equation} → 1 个单元且 latex 完整含 \\verb|%|
+    ② \\url{http://x/%20y} 在 equation 内 → 1 个单元
+    ③ \\verb|%| 后跟另一条 equation → 2 个单元，第二条 latex 是 z = w（不许缝合）
+    ④ 对照组：\\% 与真行尾注释行为不变
+    """
+    # ① \verb|%|
+    tex1 = "\\begin{equation} a = b \\verb|%| c \\end{equation}"
+    u1 = extract_units(tex1)
+    assert len(u1) == 1
+    assert "a = b \\verb|%| c" in u1[0].latex
+
+    # ② \url{http://x/%20y}
+    tex2 = "\\begin{equation} a = b \\url{http://x/%20y} c \\end{equation}"
+    u2 = extract_units(tex2)
+    assert len(u2) == 1
+    assert "\\url{http://x/%20y}" in u2[0].latex
+
+    # ③ \verb|%| 后跟另一条 equation（不能缝合成一条）
+    tex3 = (
+        "\\begin{equation} a = b \\verb|%| \\end{equation}\n"
+        "\\begin{equation} z = w \\end{equation}"
+    )
+    u3 = extract_units(tex3)
+    assert len(u3) == 2
+    assert u3[0].latex.endswith("\\verb|%|")
+    assert u3[1].latex == "z = w"
+
+    # ④ 对照组
+    tex4 = "\\begin{equation} a = b \\% c % 行尾真注释\n\\end{equation}"
+    u4 = extract_units(tex4)
+    assert len(u4) == 1
+    assert u4[0].latex == "a = b \\% c"
+

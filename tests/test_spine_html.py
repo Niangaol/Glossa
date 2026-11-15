@@ -418,3 +418,47 @@ def test_skeleton_with_paper_renders_unresolved_kinds():
     for entry in doc["unresolved"]:
         assert str(escape(entry["ref"])) in block
         assert str(escape(entry["reason"])) in block
+
+
+def test_schema_valid_trace_missing_runtime_renders_without_crash():
+    """Important-4 (FIX-4 / NB-1 & NB-2): meta.runtime 或 real_execution.ok 缺失时模板不抛 UndefinedError。"""
+    trace_path = ROOT / "output" / "deliver" / "1-code-only" / "trace.json"
+    if not trace_path.is_file():
+        from papertrace.schema_validate import minimal_trace
+
+        base_doc = minimal_trace()
+    else:
+        base_doc = load_trace(trace_path)
+
+    # 1. 缺 meta.runtime（NB-1）
+    d1 = copy.deepcopy(base_doc)
+    d1["meta"].pop("runtime", None)
+    assert validate_trace(d1) is None, "schema 校验必须通过（runtime 非必填）"
+    html1 = render_html(d1)
+    assert "骨架模式，没有真实执行" in html1
+
+    # 2. real_execution 存在但缺 ok（NB-2）
+    # R107（控制器裁决）：Jinja2 里空 dict 是 falsy，real_execution={} 会走
+    # {% if ... and ... %} 的 else 分支「骨架模式，没有真实执行」——与 :52/:53/:54
+    # 同风格守卫一致，模板不许为此改。要真正走到 .ok | default(false, true)
+    # 并渲染「未通过」，real_execution 必须**非空但缺 ok**。
+    d2 = copy.deepcopy(base_doc)
+    d2["meta"]["runtime"] = {
+        "torch_version": "2.0.0",
+        "device": "cpu",
+        "real_execution": {"reason": None},
+    }
+    assert validate_trace(d2) is None
+    html2 = render_html(d2)
+    assert "未通过" in html2
+
+    # 空 dict 的 real_execution 同样不许抛（falsy → 骨架文案，与 S10 既有语义一致）
+    d3 = copy.deepcopy(base_doc)
+    d3["meta"]["runtime"] = {
+        "torch_version": "2.0.0",
+        "device": "cpu",
+        "real_execution": {},
+    }
+    assert validate_trace(d3) is None
+    html3 = render_html(d3)
+    assert "骨架模式，没有真实执行" in html3
