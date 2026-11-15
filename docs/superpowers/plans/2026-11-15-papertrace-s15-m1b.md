@@ -110,7 +110,7 @@ def lexical_rank(text: str, node: dict) -> float   # 只排序，不过滤
 
 **Steps:**
 
-- [ ] **Step 1**: 写 RED 测试 `tests/test_spine_candidates.py`，十条具名测试（名字即契约，不许改名）:
+- [x] **Step 1**: 写 RED 测试 `tests/test_spine_candidates.py`，十条具名测试（名字即契约，不许改名）:
   1. `test_only_kind_compatible_operators_are_candidates`
   2. `test_softmax_term_ranks_real_softmax_first`（用真实夹具 terms：term2 kind=norm 必须排第一）
   3. `test_matmul_terms_share_the_same_candidate_set`（term0/term3 候选集相同 —— 诚实性）
@@ -121,13 +121,13 @@ def lexical_rank(text: str, node: dict) -> float   # 只排序，不过滤
   8. `test_every_split_kind_has_an_operator_mapping`（`set(split_terms.KINDS) <= set(KIND_TO_OPS)`，钉住两个名单同步）
   9. `test_weight_and_input_placeholders_are_never_candidates`（真实 trace 的 18 个 param + 1 个 input 一个都不出现）
   10. `test_empty_inputs_yield_empty_pairs_with_reason`
-- [ ] **Step 2**: 跑测试确认 RED（ImportError 也算，但**优先让断言级红**：先写一个最小 stub 抛 NotImplementedError 再填）。
-- [ ] **Step 3**: 实现 `candidates.py` 到全绿。**只 import `re` 与 `typing.NamedTuple` + KIND_TO_OPS**（AST 自检：不许出现 difflib / torch / numpy / requests）。
-- [ ] **Step 4**: 跑全量（基线 719，本 Task 新增 10 条 → 预期 729 passed，零回归）。
-- [ ] **Step 5**: 变异探针（锚串先验唯一，改前 grep 确认出现 1 次）:
+- [x] **Step 2**: 跑测试确认 RED（ImportError 也算，但**优先让断言级红**：先写一个最小 stub 抛 NotImplementedError 再填）。
+- [x] **Step 3**: 实现 `candidates.py` 到全绿。**只 import `re` 与 `typing.NamedTuple` + KIND_TO_OPS**（AST 自检：不许出现 difflib / torch / numpy / requests）。
+- [x] **Step 4**: 跑全量（基线 719，本 Task 新增 10 条 → 预期 729 passed，零回归）。
+- [x] **Step 5**: 变异探针（锚串先验唯一，改前 grep 确认出现 1 次）:
   - 把资格判据 `node["op"] in KIND_TO_OPS.get(term.kind, ())` 改成 `True`（不过滤）→ 测试 1 与 9 必红 → 还原 + sha256 逐字节比对。
   - 把同分规则 `node["id"]` 升序改成降序 → 测试 4 必红 → 还原 + sha256。
-- [ ] **Step 6**: 一次提交 `feat: propose kind-filtered judge candidates without any model`。
+- [x] **Step 6**: 一次提交 `feat: propose kind-filtered judge candidates without any model`。
 
 **Acceptance:** 十条测试全绿；全量 729 passed；行数 census 全 ≤200；GC8 七项不变（本 Task 不碰 parse_code，只需确认未触碰）；`git diff --stat` 只含四个授权文件。
 
@@ -158,7 +158,7 @@ def loc_from_stack_trace(stack_trace: str) -> str
 
 **Steps:**
 
-- [ ] **Step 1**: 写 RED 测试 `tests/test_m1b_loc.py`，十条具名测试:
+- [x] **Step 1**: 写 RED 测试 `tests/test_m1b_loc.py`，十条具名测试:
   1. `test_returns_first_user_frame_with_line`
   2. `test_skips_torch_internal_frames`（第一帧 pydeps/torch → 返回第二帧用户）
   3. `test_skips_site_packages_and_pydeps`
@@ -169,16 +169,16 @@ def loc_from_stack_trace(stack_trace: str) -> str
   8. `test_real_trace_gives_real_locations`（集成：`_ensure_export_cache()` + `build_trace(tests/fixtures/nanogpt, entry="model:build_model")` → **75 个 kind=='op' 节点全部** loc 含 `".py:"`、文件存在、行号在文件行范围内、该行非空；且 `"model.GPT"` 一个都不剩）
   9. `test_placeholder_nodes_fall_back_to_root_loc`（4 个 placeholder 无 stack_trace → loc == root_loc）
   10. `test_loc_module_does_not_import_torch`（**AST** 扫 loc.py 的 import，不许出现 torch —— 按 AST 不按全文正则，GC11）
-- [ ] **Step 2**: 确认 RED。
-- [ ] **Step 3**: 实现到全绿。
-- [ ] **Step 4**: 跑全量（基线 719 + 10 = 729 passed，**特别确认没有既有测试因 loc 变化而红** —— 已实测 grep loc 等值断言 = 0）。
-- [ ] **Step 5**: **GC8 逐项真跑**（这一 Task 唯一会动 trace 的地方）:
+- [x] **Step 2**: 确认 RED。
+- [x] **Step 3**: 实现到全绿。
+- [x] **Step 4**: 跑全量（基线 719 + 10 = 729 passed，**特别确认没有既有测试因 loc 变化而红** —— 已实测 grep loc 等值断言 = 0）。
+- [x] **Step 5**: **GC8 逐项真跑**（这一 Task 唯一会动 trace 的地方）:
   ```powershell
   & $py -m papertrace build --repo tests/fixtures/nanogpt --out output/m1b-gc8 --force
   ```
   核对 nodes=128（module34/param18/input1/op75）、edges=101、degraded=2、fused=0、orphan=0、shape_broken=0、shape_unchecked=0、EXIT=0。
-- [ ] **Step 6**: 变异探针：删掉黑名单判据（所有帧都接受）→ 测试 2 与 8 必红（会返回 torch 内部帧）→ 还原 + sha256。
-- [ ] **Step 7**: 一次提交 `feat: locate operators at their real source line`。
+- [x] **Step 6**: 变异探针：删掉黑名单判据（所有帧都接受）→ 测试 2 与 8 必红（会返回 torch 内部帧）→ 还原 + sha256。
+- [x] **Step 7**: 一次提交 `feat: locate operators at their real source line`。
 
 **Acceptance:** 十条测试全绿；全量 729 passed；GC8 七项逐字不变；loc.py ≤200 行（预期 ~60）；fx_nodes.py ≤200（现 144，**只许多 1-2 行**）；diff 只含三个授权文件。
 
@@ -207,11 +207,11 @@ def loc_from_stack_trace(stack_trace: str) -> str
 
 **Steps:**
 
-- [ ] **Step 1**: 逐句核现状（读 units.py:1-22、README:332-336、report §8），把「现在写什么 / 实际是什么」列进报告。
-- [ ] **Step 2**: 改三处。
-- [ ] **Step 3**: 跑全量，**必须仍是 719 passed**（文档改动不许影响任何测试；若红了说明误改了代码）。
-- [ ] **Step 4**: 自检：`git diff` 里出现任何 `def `/`return`/`if ` 的新增行都是越界，必须撤回。
-- [ ] **Step 5**: 一次提交 `docs: tell the truth about masking, loc, and code_expr_range`。
+- [x] **Step 1**: 逐句核现状（读 units.py:1-22、README:332-336、report §8），把「现在写什么 / 实际是什么」列进报告。
+- [x] **Step 2**: 改三处。
+- [x] **Step 3**: 跑全量，**必须仍是 719 passed**（文档改动不许影响任何测试；若红了说明误改了代码）。
+- [x] **Step 4**: 自检：`git diff` 里出现任何 `def `/`return`/`if ` 的新增行都是越界，必须撤回。
+- [x] **Step 5**: 一次提交 `docs: tell the truth about masking, loc, and code_expr_range`。
 
 **Acceptance:** 全量仍 719 passed；diff 只含三个授权文件；units.py 的类与函数体零改动（`git diff -U0 | grep '^[-+].*def '` 无输出）。
 
@@ -242,27 +242,27 @@ def cap_tier(level: str, fallback: bool) -> str
 
 **Steps:**
 
-- [ ] **Step 1（TDD 红）**: 写 `tests/test_spine_fallback.py` 五条:
+- [x] **Step 1（TDD 红）**: 写 `tests/test_spine_fallback.py` 五条:
   1. `test_pairs_win_over_fallback`（signal.pairs 非空 → 原样分组 + `fallback=False`，**候选池一次都不调用**：用打桩的 candidates 计数=0 证明）
   2. `test_empty_pairs_fall_back_to_kind_candidates`（pairs 空 → 分组来自 candidate_pairs，`fallback=True`）
   3. `test_resolve_range_uses_confirmed_node_on_fallback`（fallback + confirmed=`root/@043` → 返回 `root/@043` 单节点）
   4. `test_resolve_range_keeps_first_last_on_structure_path`（非 fallback → `root/@037..root/@045`，**既有行为逐字不变**）
   5. `test_cap_tier_turns_green_into_yellow_only_on_fallback`（fallback+green→yellow；fallback+yellow→yellow；fallback+none→none；非 fallback+green→green。**且断言 signals/confidence 未被改** —— R112 只封 tier）
-- [ ] **Step 2**: 写 `tests/test_spine_end_to_end.py` 的 **R115 改写**（名字与断言都是契约）:
+- [x] **Step 2**: 写 `tests/test_spine_end_to_end.py` 的 **R115 改写**（名字与断言都是契约）:
   - 改名 `test_structural_miss_falls_back_to_kind_candidates_but_never_green`。
   - 保留原注入（`_no_isomorphism` 返回 `StructSignal(0.6, [], [...], [])`）+ `_YesBackend` + `_SameVectorsBackend`（**单实例**，断言 `embedder.calls == 2`）。
   - **R112 守门断言**：`anchors` 非空（4 条）**且每条 `tier == "yellow"`**，**没有一条 green**；`confidence` 仍 ≥0.75（证明是 R112 压的黄，不是分数不够）。
   - `backend.calls >= 1`（证明 judge 真被问了 —— 这与原测试相反，是 S15 的目的）。
   - **另立** `test_offline_structural_miss_stays_honestly_empty`：offline（无注入后端）+ 结构不命中 → `anchors == []`、`backend.calls == 0`、4 条 unresolved 的 ref 恰为 `S3.2-eq-attn-t0..t3`、reason 仍含「结构同构未命中，没有可判断的候选对」且含 `s_struct=0.60`。**原测试的这几条断言一条不许丢，全部迁到这里。**
-- [ ] **Step 3**: 确认 RED（新文件/改写处未实现时必红）。
-- [ ] **Step 4**: 实现 `spine_fallback.py` + 改 `spine.py`:
+- [x] **Step 3**: 确认 RED（新文件/改写处未实现时必红）。
+- [x] **Step 4**: 实现 `spine_fallback.py` + 改 `spine.py`:
   - `spine.py:121-126` 的 `if not node_ids:` 分支 → `grouped, fallback = pairs_or_fallback(signal, terms, doc["nodes"])`（分组块搬进 helper），空则仍走 `_record_unresolved`。
   - `_judge_pairs` 返回三元组（R118）；回退路径把 confirmed id 传给 `resolve_code_range`，非回退路径传 `None`。
   - `level` 过一遍 `cap_tier(level, fallback)`，降级时把「结构同构未命中，候选来自算子类型回退，不出绿线」拼进 evidence。
   - **绝不改 signals / confidence / s_struct**。
-- [ ] **Step 5**: 改 `render_html.py` + 模板：算子行补 `<span class="loc" title="<完整路径>"><basename>:<line></span>`；`loc` 为空或不是 `file:line`（module 节点/回落 `model.GPT`）→ 不渲染该 span（**不编**）。
-- [ ] **Step 6**: `tests/test_imports.py` 的 MODULES 加两个模块。
-- [ ] **Step 7**: 全量 + GC8 + 四输入 + 行数 census:
+- [x] **Step 5**: 改 `render_html.py` + 模板：算子行补 `<span class="loc" title="<完整路径>"><basename>:<line></span>`；`loc` 为空或不是 `file:line`（module 节点/回落 `model.GPT`）→ 不渲染该 span（**不编**）。
+- [x] **Step 6**: `tests/test_imports.py` 的 MODULES 加两个模块。
+- [x] **Step 7**: 全量 + GC8 + 四输入 + 行数 census:
   ```powershell
   & $py -m papertrace build --repo tests/fixtures/nanogpt --out output/w2-a --force
   & $py -m papertrace build --repo tests/fixtures/nanogpt --paper tests/fixtures/papers/vaswani2017/attention.tex --out output/w2-b --force
@@ -270,11 +270,11 @@ def cap_tier(level: str, fallback: bool) -> str
   & $py -m papertrace build --repo tests/fixtures/nanogpt --skeleton --out output/w2-d --force
   ```
   四者 EXIT=0、无 Traceback、HTML 外链 0；GC8 七项逐字；**HTML 里能搜到 model.py:147**（M1b 收益可见）。
-- [ ] **Step 8**: 变异探针三组（锚串先验唯一）:
+- [x] **Step 8**: 变异探针三组（锚串先验唯一）:
   - `cap_tier` 直接 `return level` → R112 守门断言必红。
   - `resolve_code_range` 回退时仍返回 first..last → `test_resolve_range_uses_confirmed_node_on_fallback` 必红。
   - 模板里把 `loc` 用 `|` 拼成完整路径显示 → 「HTML 只显示 basename」测试必红。
-- [ ] **Step 9**: 一次提交 `feat: let a structural miss fall back to kind candidates without ever going green`。
+- [x] **Step 9**: 一次提交 `feat: let a structural miss fall back to kind candidates without ever going green`。
 
 **Acceptance:** 全量 ≥739 passed（719 + 10A + 10B + 5D + 改写净增 ≈ 4）；GC8 七项不变；四输入 EXIT=0；HTML 显示 `basename:line`；行数 census 全 ≤200；R112 守门断言可被变异打红。
 
@@ -311,3 +311,20 @@ def cap_tier(level: str, fallback: bool) -> str
 6. **两条既有测试的改写都点名了**：R37 那条（R115）与 tests/test_imports.py 的 MODULES（加两个模块）。没有第三条。
 7. **计划里没有一处要求写死 ollama / 本地模型**（用户 m00731 拍板不装本地模型）。
 8. **GC8 逐字抄了七项**，且 M1b 明确「loc 不在冻结项里但要真跑核对」。
+
+---
+
+## 施工结果（控制器记账，2026-11-15）
+
+| Task | 提交 | 结果 | 修循环 |
+|---|---|---|---|
+| 波次1 A（S15 候选） | `bd8aef7` | 10 测试，四组变异全 RED | 无 |
+| 波次1 B（M1b loc） | `6442b26` | 10 测试，75 个算子全部真实 `file:line`（7 个不同行） | 无 |
+| 波次1 C（文档修） | `02811bc` | 全量仍 719，纯文档 | 无 |
+| 波次2 D（控制器集成） | `e75260b` | 全量 **754 passed**；GC8 四输入 EXIT=0；四条变异全 RED | 无 |
+
+**R132（计划文本与实现的偏差，记账）**：本计划 Step 2 写「offline 的 reason 仍含『结构同构
+未命中，没有可判断的候选对』」——S15 落地后这句不再成立：offline 下**确实试过**回退候选，
+只是拿不到 yes，所以诚实的原因变成 `回退候选没拿到判断题 yes（结构同构未命中，候选来自
+算子类型+词法排序）`。实际断言：仍含「结构同构未命中」，另含「回退候选没拿到判断题 yes」
+与 `s_struct=0.60`。改对了方向（多报一层不确定性），没有放宽任何断言。
