@@ -47,12 +47,12 @@
   - 常量 `FALLBACK_EVIDENCE`、`ALTERNATIVE_LIMIT`、`EVIDENCE_LIMIT`
 - 保持：`spine.attach_paper(doc, paper_src, model) -> dict`、`spine._attach_unit`、`spine._model_meta`、`spine.UNSPLITTABLE_REASON`、`spine.NO_CANDIDATE_REASON`、`spine.FALLBACK_PAIR_NOTE`
 
-- [ ] **Step 1** 把 `_attach_term`（spine.py:121-174）、`_record_unresolved`（:177-187）与常量 `FALLBACK_EVIDENCE/ALTERNATIVE_LIMIT/EVIDENCE_LIMIT` 整体搬到新文件，去掉前导下划线，模块 docstring 写清「这是 S9 的单公式项落盘逻辑，逐层展开由调用方循环」。
-- [ ] **Step 2** `spine.py` 改成 `from papertrace.spine_anchor import (ALTERNATIVE_LIMIT, FALLBACK_EVIDENCE, EVIDENCE_LIMIT, attach_term, record_unresolved)`，调用点改名。
-- [ ] **Step 3** `tests/test_spine_tier.py:169` 的 import 改成 `from papertrace.spine_anchor import record_unresolved`，:177 的调用同步改名。**断言一字不改。**
-- [ ] **Step 4** 跑全量：**787 passed，零改动**；census 两个文件都 ≤200。
-- [ ] **Step 5** 变异探针：把 `record_unresolved` 里的 `< {CONF_YELLOW:.2f}` 改成 `<= {CONF_YELLOW:.2f}` → `tests/test_spine_tier.py` 的边界用例必红 → 还原 + sha256。
-- [ ] **Step 6** 提交 `refactor: split the single-term anchor writer out of spine`
+- [x] **Step 1** 把 `_attach_term`（spine.py:121-174）、`_record_unresolved`（:177-187）与常量 `FALLBACK_EVIDENCE/ALTERNATIVE_LIMIT/EVIDENCE_LIMIT` 整体搬到新文件，去掉前导下划线，模块 docstring 写清「这是 S9 的单公式项落盘逻辑，逐层展开由调用方循环」。
+- [x] **Step 2** `spine.py` 改成 `from papertrace.spine_anchor import (ALTERNATIVE_LIMIT, FALLBACK_EVIDENCE, EVIDENCE_LIMIT, attach_term, record_unresolved)`，调用点改名。
+- [x] **Step 3** `tests/test_spine_tier.py:169` 的 import 改成 `from papertrace.spine_anchor import record_unresolved`，:177 的调用同步改名。**断言一字不改。**
+- [x] **Step 4** 跑全量：**787 passed，零改动**；census 两个文件都 ≤200。
+- [x] **Step 5** 变异探针：把 `record_unresolved` 里的 `< {CONF_YELLOW:.2f}` 改成 `<= {CONF_YELLOW:.2f}` → `tests/test_spine_tier.py` 的边界用例必红 → 还原 + sha256。
+- [x] **Step 6** 提交 `refactor: split the single-term anchor writer out of spine`
 
 ---
 
@@ -79,7 +79,7 @@ class StructSignal(NamedTuple):
 - `struct_signal(nodes, terms, config) -> StructSignal` 签名不变。
 - **不变**：`pairs` 仍取第一个命中组；`score` 仍只加一次 +0.2；`hits`/`misses` 文案一字不改。
 
-- [ ] **Step 1 写失败测试**（`tests/test_spine_struct.py`，沿用夹具 `fixture`）：
+- [x] **Step 1 写失败测试**（`tests/test_spine_struct.py`，沿用夹具 `fixture`）：
 
 ```python
 def test_every_attention_layer_is_reported(fixture):
@@ -112,12 +112,12 @@ def test_single_group_reports_exactly_one():
     assert [nid for _, nid in sig.groups[0].pairs] == ["n0", "n1", "n2", "n3"]
 ```
 
-- [ ] **Step 2 跑测试确认失败**：`AttributeError: 'StructSignal' object has no attribute 'groups'`。
-- [ ] **Step 3 实现**：新增 `StructMatch`；`StructSignal` 末尾加 `groups: tuple[StructMatch, ...] = ()`；`_first_isomorphic_group` → `_isomorphic_groups(nodes, terms) -> list[StructMatch]`（现有循环收集所有命中组，不再 `return` 首个）；`struct_signal` 用 `matches = _isomorphic_groups(...)`，`pairs = matches[0].pairs if matches else []`，命中仍只加分一次，返回 `StructSignal(..., pairs, tuple(matches))`。
-- [ ] **Step 4 跑 `tests/test_spine_struct.py`**：17 passed（12 旧 + 5 新），且既有 `test_pairs_has_exactly_four_entries_for_vaswani` 一字未改仍然绿。
-- [ ] **Step 5** 全量 **792 passed**（787+5）。
-- [ ] **Step 6** 变异探针：把 `_isomorphic_groups` 的收集循环改回「命中就 return 一个」→ `test_every_attention_layer_is_reported` 必红（只报 1 组）→ 还原 + sha256。
-- [ ] **Step 7** 提交 `feat: report every isomorphic layer, keep pairs on the first`
+- [x] **Step 2 跑测试确认失败**：`AttributeError: 'StructSignal' object has no attribute 'groups'`。
+- [x] **Step 3 实现**：新增 `StructMatch`；`StructSignal` 末尾加 `groups: tuple[StructMatch, ...] = ()`；`_first_isomorphic_group` → `_isomorphic_groups(nodes, terms) -> list[StructMatch]`（现有循环收集所有命中组，不再 `return` 首个）；`struct_signal` 用 `matches = _isomorphic_groups(...)`，`pairs = matches[0].pairs if matches else []`，命中仍只加分一次，返回 `StructSignal(..., pairs, tuple(matches))`。
+- [x] **Step 4 跑 `tests/test_spine_struct.py`**：17 passed（12 旧 + 5 新），且既有 `test_pairs_has_exactly_four_entries_for_vaswani` 一字未改仍然绿。
+- [x] **Step 5** 全量 **792 passed**（787+5）。
+- [x] **Step 6** 变异探针：把 `_isomorphic_groups` 的收集循环改回「命中就 return 一个」→ `test_every_attention_layer_is_reported` 必红（只报 1 组）→ 还原 + sha256。
+- [x] **Step 7** 提交 `feat: report every isomorphic layer, keep pairs on the first`
 
 ---
 
@@ -134,7 +134,7 @@ def test_single_group_reports_exactly_one():
 - 结构路径：`for match in signal.groups:` 每组一个独立 `claimed: set[str] = set()`，`node_ids = [nid for i, nid in match.pairs if i == term.index]`，`dups = duplicate_claims({i: [n for i2, n in match.pairs if i2 == i] for i in ...})` 按组守门（R144 逐组）。
 - 回退路径：完全保持今天的行为（`pairs_or_fallback` → `fallback=True`），只产一条 anchor，`code_group=None`。
 
-- [ ] **Step 1 写失败测试**（`tests/test_spine_end_to_end.py`，复用已有假后端 `_YesBackend` 单实例）：
+- [x] **Step 1 写失败测试**（`tests/test_spine_end_to_end.py`，复用已有假后端 `_YesBackend` 单实例）：
 
 ```python
 def test_structural_path_anchors_cover_every_layer(...):
@@ -160,13 +160,13 @@ def test_code_group_is_declared_in_schema(...):
     # schema/trace.schema.json 的 $defs.anchor.properties 里有 code_group，且不在 required
 ```
 
-- [ ] **Step 2 跑测试确认失败**（anchor 只有 4 条 / 没有 code_group 键）。
-- [ ] **Step 3 实现**（`spine.py` 的 `_attach_unit` 结构路径改按 `signal.groups` 循环；`spine_anchor.attach_term` 加参数与新键；schema 加 `"code_group": {"type": "string"}`）。
-- [ ] **Step 4 按 R168 改既有期望**（`tests/test_spine_end_to_end.py`，逐处、只改值不求删）：
+- [x] **Step 2 跑测试确认失败**（anchor 只有 4 条 / 没有 code_group 键）。
+- [x] **Step 3 实现**（`spine.py` 的 `_attach_unit` 结构路径改按 `signal.groups` 循环；`spine_anchor.attach_term` 加参数与新键；schema 加 `"code_group": {"type": "string"}`）。
+- [x] **Step 4 按 R168 改既有期望**（`tests/test_spine_end_to_end.py`，逐处、只改值不求删）：
   `:294 len(yellow)==4` → 按层统计；`:302/:303/:332/:367/:652 backend.calls==4` → 8；`:321 len(doc["anchors"])==4` → 8；`:871 len(ranges)==4` → 8；`:478/:1053` 是回退路径 → **保持 4/2 不变**（跑一遍确认，如果变了说明 R161 被违反）。每处改动写进报告。
-- [ ] **Step 5** 全量 **798 passed**（792+6）；GC8 逐项重建比对。
-- [ ] **Step 6** 变异探针：删掉每组的 `claimed = set()` 让 claimed 跨组共享 → `test_claims_are_isolated_per_layer`（或 h.1 的项被判「候选全被认领」）必红 → 还原 + sha256。
-- [ ] **Step 7** 提交 `feat: emit one anchor per isomorphic layer`
+- [x] **Step 5** 全量 **798 passed**（792+6）；GC8 逐项重建比对。
+- [x] **Step 6** 变异探针：删掉每组的 `claimed = set()` 让 claimed 跨组共享 → `test_claims_are_isolated_per_layer`（或 h.1 的项被判「候选全被认领」）必红 → 还原 + sha256。
+- [x] **Step 7** 提交 `feat: emit one anchor per isomorphic layer`
 
 ---
 
@@ -181,12 +181,12 @@ def test_code_group_is_declared_in_schema(...):
 - `render_terms.term_rows(doc: dict) -> list[dict]`：每行含 `term_id / tier / confidence / aten_ops / evidence / layer`（`layer` 取 `code_group` 末段，无 code_group 时 `"—"`）。
 - 模板 ③ 表头加 `<th>层</th>`，行里输出 `{{ t.layer }}`。
 
-- [ ] **Step 1 写失败测试**：`test_terms_table_has_one_row_per_layer`（8 行）、`test_layer_column_shows_group_tail`（含 `h.0.attn` 与 `h.1.attn`）、`test_ops_graph_draws_links_in_both_layers`（`lnk-` 路径数 == anchor 数，且两个组的 opbox 里都有 lnklabel）。
-- [ ] **Step 2 跑确认失败**。
-- [ ] **Step 3 实现**（拆 `render_terms.py`、模板加列、StrictUndefined 下新变量必须有值）。
-- [ ] **Step 4** 全量 **801 passed**；四种真实输入（无--paper / 带--paper / skeleton+paper / 纯 skeleton）全部 EXIT=0，HTML <8MB。
-- [ ] **Step 5** 变异探针：把 `layer` 恒定为 `"—"` → `test_layer_column_shows_group_tail` 必红 → 还原 + sha256。
-- [ ] **Step 6** 提交 `feat: show which layer each anchor lands in`
+- [x] **Step 1 写失败测试**：`test_terms_table_has_one_row_per_layer`（8 行）、`test_layer_column_shows_group_tail`（含 `transformer.h.0.attn` 与 `transformer.h.1.attn`）、`test_ops_graph_draws_links_in_both_layers`（`lnk-` 路径数 == anchor 数，且两个组的 opbox 里都有 lnklabel）。
+- [x] **Step 2 跑确认失败**。
+- [x] **Step 3 实现**（拆 `render_terms.py`、模板加列、StrictUndefined 下新变量必须有值）。
+- [x] **Step 4** 全量 **801 passed**；四种真实输入（无--paper / 带--paper / skeleton+paper / 纯 skeleton）全部 EXIT=0，HTML <8MB。
+- [x] **Step 5** 变异探针：把 `layer` 恒定为 `"—"` → `test_layer_column_shows_group_tail` 必红 → 还原 + sha256。
+- [x] **Step 6** 提交 `feat: show which layer each anchor lands in`
 
 ---
 
@@ -196,10 +196,10 @@ def test_code_group_is_declared_in_schema(...):
 - Modify: `README.md`、`docs/superpowers/plans/2026-11-15-papertrace-layers.md`（本文件执行记录段）
 - 重生成 `output/demo/*`
 
-- [ ] **Step 1** README 补：逐层展开语义（B 方案）、`code_group` 字段、s_retr/s_struct 单元级而 s_judge 逐层、offline 下 unresolved 数 = 项数 × 层数。
-- [ ] **Step 2** 重生成三份演示（复用 `output/controller-probes/regen_demo2.py / regen_demo3.py` 的口径）：with-paper offline 的 unresolved 变 8。
-- [ ] **Step 3** 全量 801 passed + GC8 + census，写进计划执行记录段。
-- [ ] **Step 4** 提交 `docs: record the per-layer alignment slice`
+- [x] **Step 1** README 补：逐层展开语义（B 方案）、`code_group` 字段、s_retr/s_struct 单元级而 s_judge 逐层、offline 下 unresolved 数 = 项数 × 层数。
+- [x] **Step 2** 重生成三份演示（复用 `output/controller-probes/regen_demo2.py / regen_demo3.py` 的口径）：with-paper offline 的 unresolved 变 8。
+- [x] **Step 3** 全量 804 passed + GC8 + census，写进计划执行记录段。
+- [x] **Step 4** 提交 `docs: record per-layer alignment in README, plan and design`（按 L5 交付契约，覆盖本步骤原信息）
 
 ---
 
@@ -209,3 +209,37 @@ def test_code_group_is_declared_in_schema(...):
 - **类型一致**：`StructMatch(group, pairs)` 在 L2 定义、L3 消费；`code_group` 在 L3 写、L4 读；`record_unresolved` 在 L1 定义、L3 继续调用。
 - **Review Focus 五条**都有测试承接：层数>2（L2 `test_every_attention_layer...` 用真实 2 组但实现按组循环）、回退路径（L3 `test_fallback_path_stays_single_layer`）、认领作用域（L3 `test_claims_are_isolated_per_layer`）、judge 数（L3 `test_each_layer_gets_its_own_judge_call`）、HTML（L4 三条）。
 - **比例**：计划约 200 行，spec 约 120 行，未写成代码转录。
+
+---
+
+## 执行记录（2026-11-15，全部完成）
+
+**提交链**（master，每 Task 一次提交；行数与测试数均为落地时实测）：
+
+| Task | 提交 | 内容 | 全量测试 |
+| --- | --- | --- | --- |
+| 基线 | b04b046 | docs: add the per-layer alignment design plus plan | 787 passed |
+| L1 | bc5affe | refactor: split the single-term anchor writer out of spine（spine.py 200→123，新建 spine_anchor.py 99，行为零变化） | 787 passed |
+| L2 | 06889f2 | feat: report every isomorphic layer, keep pairs on the first（struct_signal.py 170→186，StructMatch + StructSignal.groups） | 792 passed |
+| L3 | 91dde12 | feat: anchor every isomorphic layer, isolate claims per group（spine.py 123→139，schema 加可选 code_group，5 files +214/-34） | 798 passed |
+| L4 | 98cfb87 | feat: show which layer each anchor lands in（新建 render_terms.py 50 行，模板加「层」列，4 files +131/-23） | 801 passed |
+| L3b | 157ea99 | fix: let a conservative tier downgrade pass validation（schema_anchor.py 改判据 + 3 条新测试，3 files +113/-8） | 804 passed |
+| L5 | 本提交 | docs: record per-layer alignment in README, plan and design | 804 passed（不改产品代码与测试） |
+
+**每 Task 一行**：L1 纯重构、L2 报全部同构组、L3 逐层出 anchor 并按「单元 × 组」隔离认领、L4 HTML 一条 anchor 一行 + 层列、L3b 修 tier 复核判据、L5 文档 + 演示 + 本记录段。
+
+**最终测试数：804 passed**（L5 复跑确认，零变化）。
+
+**实施期裁决与偏离（计划拍板时没有，实施中定）**：
+
+- **R169**（L3）：结构信号给了 pairs 却没给 groups → BuildError fail-closed，绝不静默降级成回退路径（papertrace/spine.py:103）。产品里两者永远一致，这条守门是给回归留的闸。
+- **R170**（L3）：既有只给 pairs 的测试桩必须按逐层口径补 groups（两组 / 一组两种；回退路径桩不动），否则会被 R169 炸掉；断言值按 R168 改，不减断言。
+- **R171 / R172**（L3b，控制器发现）：schema_anchor 的 tier 复核原判据「必须等于 signals 重算结果」会把 R112 回退路径**合法**的 green→yellow 封顶判成造假（实测配置：回退 + 假 yes + 真 embeddings，4 条 anchor 全中）。裁决：判据改成「不得高于重算结果」（rank none(0) < yellow(1) < green(2)），抓升格、放行保守下调；代价：手改把 green 涂成 yellow/none 不再被抓。落地范围只含 schema_anchor.py 判据 + docstring + 3 条新测试，既有 6 条 tier 测试一字不改。
+- **L3 implementer 自曝的 controller-brief 漏项五处**（均已按实施口径纠正，不是缺陷）：① offline 期望 unresolved 4→8（逐层报）；② tests/test_spine_html.py 的 [green]*4 期望 → *8；③ duplicate-guard 测试桩从 pairs_or_fallback 换成 struct_signal；④ two-unit 分组键按「单元 × 组」取；⑤ :367 的 backend.calls==4 必须**保持 4**（该处是回退路径，控制器 R168 清单误列，implementer 纠正）。
+
+**L5 自身的偏离（对计划 Task L5 步骤）**：
+
+- Step 4 提交信息按交付契约用 docs: record per-layer alignment in README, plan and design（计划里写的 docs: record the per-layer alignment slice 作废）。
+- Step 2 演示重生成没有复用 regen_demo2.py / regen_demo3.py 两个脚本，而是写一个 output/controller-probes/l5_regen_demo.py 一次覆盖三场景（code-only / with-paper / fallback-yellow），口径与两脚本一致；三场景落盘后重新读回 trace.json 跑 validate_trace 全过。
+- Step 3 的期望测试数写的是 801，实际 804（计划成文时 L3b 尚未发生）。
+

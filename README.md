@@ -13,9 +13,13 @@
 论文 ingest 与「公式项 ↔ 算子」对账的**脊柱**已经接进 `build --paper`（S9）：
 `meta.paper`、`symbols`、`anchors`、`unresolved` 四个槽都会如实填，拿不到依据就只写
 `unresolved`——默认 `offline` 后端下一项 anchor 都不出（没有 judge 判定、没有 embedding
-检索），四个公式项全部落 `unresolved` 并写清为什么。配了判断题后端时，即使结构同构没
-命中，judge 也会判「算子类型 + 词法」候选并给出**黄线**锚点——**绿线仍然只发给结构对上账的
-项**（S15/R112：回退候选没有形状与序列依据）。还没做的：mismatch 判定、交互式前端。
+检索），公式项按同构层逐层展开，共 8 条全部落 `unresolved` 并逐条写清为什么（4 个公式项
+× 2 个同构层，R161）。配了判断题后端时，即使结构同构没命中，judge 也会判「算子类型 +
+词法」候选并给出**黄线**锚点——**绿线仍然只发给结构对上账的项**（S15/R112：回退候选没有
+形状与序列依据）。结构同构命中时**逐层展开**（M4a B 方案，R161）：每个同构组各出一条
+anchor（如 `transformer.h.0.attn` 与 `transformer.h.1.attn` 两组各出 4 条），anchor 带
+`code_group`（形如 `root/transformer.h.0.attn`）标明落在哪一层。
+还没做的：mismatch 判定、交互式前端。
 这些仍然是桩，**空就是空**，不会塞示例数据。
 
 本地模型（Ollama / 7B / nomic-embed-text）**故意没装**，不是缺步骤。默认后端是 `offline`，任何要模型的地方会直接报 `LLMUnavailable`，不允许编造结果。
@@ -57,7 +61,8 @@ python -m papertrace build --repo tests/fixtures/nanogpt --skeleton --out output
 四种输入各产出一份 trace：① 不带 `--paper` → 没有论文侧，anchors/unresolved 全空，
 行为与 M1a 逐项一致（nodes/edges 计数见「字段约定」）；② 带 `--paper`（本地 `.tex`；
 只有 `ingest_mode=tex` 实现了，`arxiv:…` 不联网，如实空态 + unresolved）；③ `--skeleton --paper`
-→ 结构同构图（只到第一层，局限见「已知局限」）；④ 纯 `--skeleton` → 只写合法的空 trace，不追踪。
+→ 空骨架 + 论文脊柱：没有模型实例，5 个 `symbol` 与 4 个 `paper_unit` 全进 `unresolved`
+（不追踪就没有算子图，结构同构无从命中，走每项一条的回退口径）；④ 纯 `--skeleton` → 只写合法的空 trace，不追踪。
 产物固定是 `<out>/trace.json` 与 `<out>/index.html` 两个文件（`index.html` 是单文件离线 HTML，
 零外链，8MB 上限，超限抛 `BuildError` 而不是静默截断）。
 
@@ -120,8 +125,11 @@ set PAPERTRACE_LLM=deepseek-chat
 
 默认 `offline` 后端下 `chat` / `embed` 直接抛 `LLMUnavailable`（R83：不返回固定 yes、
 不返回假向量），于是判断题拿不到 yes/no、检索拿不到分数：`anchors == []`，全部公式项进
-`unresolved`（5 个 symbol + 4 个 paper_unit，共 9 条，每条带 reason）——**空清单就是诚实的
-答案**，不是 bug，也不该为了「好看」把线连上。
+`unresolved`，每条带 reason。条数随场景而不同，都是如实数：真实追踪（带模型）下是
+**0 个 symbol + 8 个 paper_unit**（4 个公式项 × 2 个同构层，逐层各报一条）；`--skeleton
+--paper` 下是 5 个 symbol + 4 个 paper_unit（骨架没有模型实例，符号抽不到；没有算子图，
+结构同构不命中，走每项一条的回退口径）——**空清单就是诚实的答案**，不是 bug，也不该为了
+「好看」把线连上。
 
 分档公式写死在代码里（`papertrace/spine.py`）：`a = 0.30·s_retr + 0.50·s_judge + 0.20·s_struct`，
 `c = sigmoid(4·(a−0.5))`；`c≥0.75` 绿实线、`0.45≤c<0.75` 黄虚线、`c<0.45` 不连线；
@@ -332,7 +340,8 @@ set PAPERTRACE_LLM=deepseek-chat
   `defined_at` 指向**类默认值所在行**（1024/12/768 那几行），`value` 是**实例值**（16/4/32）——
   两者本来就不是一回事，别拿 `symbols[].value` 当运行时形状：运行时形状只认 `nodes[].shapes`
   与 `meta.runtime`。
-- **`anchors` / `code_expr_range`（S9 起）**：一条 anchor = 一个论文公式项对一个算子节点。
+- **`anchors` / `code_expr_range`（S9 起）**：一条 anchor = 一个论文公式项对同构组里的算子节点
+  （逐层展开，R161：结构路径下每个同构组各出一条，回退路径每项一条）。
   `code_expr_range` 记的是 **trace 节点 id 区间**（单个 `root/@037`，多个 `root/@037..root/@045`，
   按结构信号 `pairs` 的 node_id 首尾），**仍是纯节点 id 区间、不换成 `file:line`**：换格式会让
   `index.html` 的彩线全部静默消失（`render_html.py:98` 拿它当节点 id 用），真实行号在
@@ -357,6 +366,17 @@ set PAPERTRACE_LLM=deepseek-chat
   **R82 偏离说明（HTML 侧）**：`index.html` 的公式项清单列不出公式项的 `kind`——schema 的
   `anchor` 不携带 `kind` 也不携带 `latex`，铁律是 `trace.json` 才是唯一契约，渲染器不许为拿一个
   `kind` 重新解析论文。要让 HTML 显示 kind，得扩 schema 让 S9 把 `term.kind` 写进 anchor，属新切片。
+  **逐层口径（M4a，R161/R163/R164）**：结构同构命中时每个同构组各出一条 anchor，anchor 另带
+  可选 `code_group`（组 id，形如 `root/transformer.h.0.attn`，即「顶层模块前缀 + 点式单段
+  路径」；回退路径不写这个键，schema 里声明但不进 required）。代价如实说：judge 每
+  「公式项 × 同构层」调一次——夹具 `n_layer=2` 时 4 项 × 2 层 = 8 次，层数更多则线性增长，
+  anchor 数与 `index.html` 公式项表行数同比例增长（本片夹具 8 条 / 8 行）。`s_retr` 与
+  `s_struct` 是**公式单元级**的（同一单元各层取到同一个值），只有 `s_judge` 逐层各问一次，
+  所以同一 term 的两条 anchor 只可能因 `s_judge` 不同而 `confidence` 不同（R164）。HTML
+  公式项表**一条 anchor 一行**（R166/L4），「层」列显示 `code_group` 去掉顶层 `root/` 前缀后的
+  组路径（`transformer.h.0.attn` / `transformer.h.1.attn`），回退路径没有层，显示 `—`；
+  `unresolved` 的两层共用同一个 term ref，在表里合并成一行（逐层的条数以 `trace.json` 的
+  `unresolved` 为准）。
 - **结构同构不命中时 judge 仍然工作（S15）**：`pairs` 为空时，回退候选由算子类型过滤 +
   词法排序产出（每个公式项最多 3 个、全局最多 12 个，`papertrace/align/candidates.py`），
   判断题只判这些候选。**这条路的 `tier` 上限锁死在 `yellow`（R112）**：回退候选没有形状与
@@ -368,6 +388,10 @@ set PAPERTRACE_LLM=deepseek-chat
   必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、
   **不接受自环**（`src == dst`）。这些错误一律 `TraceSchemaError`，不静默放过。
+  **tier 与 signals 的复核（S16 / L3b，R171）**：anchor 带 `tier` 时，校验按 `signals` 重算档位，
+  判据是 **tier 不得高于重算结果**（rank `none`(0) < `yellow`(1) < `green`(2)）——把 tier 往高涂
+  （升格）过不了校验，RF3 抓的就是这个；而 R112 回退路径把 green 保守封顶成 yellow 的**下调**
+  放行，那是产品自己的合法行为。不带 `tier` 键的旧 trace 不做这项复核，必须通过。
 
 ### 一个算子只归一个公式项
 
@@ -436,13 +460,22 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 
 ## 已知局限（如实说明，不装作已经支持）
 
-- **结构同构只对齐第一层**：`h.0.attn` 有同构对，逐层（`h.1.attn` 等）属 M4。
+- **逐层对齐已落地（M4a，R161）**：结构同构命中时每个同构组各出一条 anchor（本片夹具
+  `transformer.h.0.attn` 与 `transformer.h.1.attn` 两组），anchor 带 `code_group` 标明落在哪一层；代价是 judge 调用数、
+  anchor 数与 HTML 公式项表行数都随层数线性增长（judge 每「公式项 × 同构层」一次）。
+  **仍有限**：同构判定按组内子序列做，跨组混合结构（如残差在不同层插入位置不同）仍可能只
+  命中一部分层；层数 >2 的规模化只有单测覆盖，夹具本身只有 2 层。
+- **默认 offline 后端下逐层口径看不见**：`offline` 是默认后端，一条 anchor 都不产，演示产物
+  `index.html` 公式项表的「层」列全是 `—`；逐层那一列只有配了判断题后端才看得到，该路径由
+  `tests/test_spine_html.py` 覆盖，不在三个演示场景里。
 - **`s_struct` 的 +0.2 是二值的「有没有同构」**，不含「对齐了几项」（R80）——同构图对得多不等于分高。
 - **`conflicts` / `backward` 没落进 trace**：四类对账输入里这两类本切片是缺口，属 M4。
 - **S18 修订（m03858 已批）**：本切片不引 KaTeX，公式用等宽原始 LaTeX 文本 + 静态 SVG 展示，
   KaTeX `\htmlId` 推迟到 M2 前端。这是对冻结规则（工程计划书 :75 / :611）的显式批准偏离，不是漏改。
-- **S16 修订（m03858 已批）**：`anchor` 增加可选 `tier` + `signals`，结构校验钉住三者自洽——
-  所以手改 trace 把 tier 涂绿是过不了 schema 校验的（RF3）。
+- **S16 修订（m03858 已批）**：`anchor` 增加可选 `tier` + `signals`，结构校验钉住 **tier 不得高于
+  signals 重算结果**（R171）——所以手改 trace 把 tier 涂绿（升格）是过不了 schema 校验的
+  （RF3）；反向把 green 涂成 yellow / none 的保守下调不再被抓，那是为了让 R112 回退路径的
+  合法封顶过校验而主动让出的一小步（代价写进 design §6 已知局限）。
 - **equation 环境里未转义的 `%` 一律当注释**：这与 LaTeX 语义一致（`%` 到行尾就是注释），
   行内逐字（`\verb`/`\url`）里的 `%` 已按定界符配对保护，但 `equation` 内裸写的 `%`
   仍会吃掉其后直到行尾的内容。

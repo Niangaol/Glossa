@@ -78,7 +78,7 @@ R144 的重复守门同样按组跑。
 
 ### 3.4 HTML
 
-- ③ 公式项表：一行一条 anchor（8 行），新增「层」列显示 `code_group`（末段，如 `h.1.attn`）。
+- ③ 公式项表：一行一条 anchor（8 行），新增「层」列显示 `code_group` 去掉顶层 `root/` 前缀后的组路径（如 `transformer.h.1.attn`）。
 - ② 算子图：现有「节点 → 连线 + lnklabel」机制天然支持多层 —— 8 条 anchor 落在 8 个节点上，
   两个注意力组都会画出 t0..t3 的连线，无需新逻辑。
 - ④ 未对齐清单：offline 下 8 条（每层每项一条），文案不变。
@@ -93,14 +93,21 @@ R144 的重复守门同样按组跑。
 
 ## 4. 裁决
 
-- **R161** 逐层展开只发生在结构同构路径；回退路径每个 term 一条 anchor（无层可言）。
-- **R162** 认领唯一性按「单元 × 同构组」隔离；R144 重复守门同样按组。
-- **R163** anchor 新增可选 `code_group`：结构路径必填、回退路径省略；schema 里声明但不进 required。
-- **R164** s_retr / s_struct 是单元级、逐层相同；只有 s_judge 逐层。docstring 与 README 如实写。
-- **R165** 拆 `spine.py` → `spine_anchor.py`；`tests/test_spine_tier.py:169` 的 `from papertrace.spine import _record_unresolved` 改指新模块（断言一字不改，属重命名不是削弱）。
-- **R166** 拆 `render_html.py` 的公式项行构造 → `render_terms.py`。
-- **R167** `latex_safe.py` / `symbols/code_table.py` / `llm/openai_backend.py` 本片不动。
-- **R168** 既有测试里「结构路径 4 条 anchor / judge 4 次」的期望按逐层改成 8，逐处列进计划（授权改写，不许删断言）。
+- **R161**（已实现，L3 91dde12）逐层展开只发生在结构同构路径；回退路径每个 term 一条 anchor（无层可言）。
+- **R162**（已实现，L3 91dde12）认领唯一性按「单元 × 同构组」隔离；R144 重复守门同样按组。
+- **R163**（已实现，L3 91dde12）anchor 新增可选 `code_group`：结构路径必填、回退路径省略；schema 里声明但不进 required。
+- **R164**（已实现，L3 91dde12）s_retr / s_struct 是单元级、逐层相同；只有 s_judge 逐层。docstring 与 README 如实写（README 字段契约段 + 已知局限段，L5 补）。
+- **R165**（已实现，L1 bc5affe）拆 `spine.py` → `spine_anchor.py`；`tests/test_spine_tier.py:169` 的 `from papertrace.spine import _record_unresolved` 改指新模块（断言一字不改，属重命名不是削弱）。
+- **R166**（已实现，L4 98cfb87）拆 `render_html.py` 的公式项行构造 → `render_terms.py`；公式项表改成一条 anchor 一行，「层」列显示 `code_group` 末段。
+- **R167**（已实现：三文件一字未动，行数仍 200/200/199）`latex_safe.py` / `symbols/code_table.py` / `llm/openai_backend.py` 本片不动。
+- **R168**（已实现，L3 91dde12）既有测试里「结构路径 4 条 anchor / judge 4 次」的期望按逐层改成 8，逐处列进计划（授权改写，不许删断言）。
+
+**实施期新裁决（L3 / L3b，均已实现并落在测试里）**：
+
+- **R169**（L3 91dde12）结构信号给了 `pairs` 却没给 `groups` → `BuildError` fail-closed，绝不把结构路径静默降级成回退路径（`papertrace/spine.py:103`；测试 `tests/test_spine_end_to_end.py` 的 pairs-无-groups 用例）。产品里 `pairs` 与 `groups` 永远一致，这条守门是给未来的回归留的闸。
+- **R170**（L3 91dde12）测试桩补 `groups`：既有只给 `pairs` 的测试桩按逐层口径补同构组（两组 / 一组两种），回退路径的桩不动；断言值按 R168 改，不减断言。
+- **R171**（L3b 157ea99）`schema_anchor` 的 tier 复核判据从「必须等于重算结果」改成「**不得高于重算结果**」（rank `none`(0) < `yellow`(1) < `green`(2)）：抓升格（手涂绿）、放行保守下调。缺口成因：R112 回退路径会把 green 封顶成 yellow，旧判据把这个**合法行为**判成造假。代价：手改把 green 涂成 yellow/none 不再被抓。
+- **R172**（L3b 157ea99）Task L3b 立项范围：只改 `schema_anchor.py` 判据与 docstring，加 3 条测试（下调放行 / 升级拒绝 / 回退端到端过校验），既有 6 条 tier 测试一字不改。
 
 ## 5. 全局约束（追加）
 
@@ -114,6 +121,8 @@ R144 的重复守门同样按组跑。
 - s_struct 上限仍是 0.8（论文侧「N 层」与形状声明两条规则要靠 M4b 读论文正文）。
 - 配 DeepSeek 仍然出不了绿线（无 embeddings → s_retr=0）。
 - HTML 公式项表在 12 层模型下会变成 4×12=48 行；折叠/筛选留给后续。
+- **R171 之后 schema 只抓升格**：手改把 tier 从 green 涂成 yellow / none 不再被 `validate_trace` 抓到——这是让 R112 回退路径的合法封顶过校验而主动让出的一小步（换来的是合法构建不再崩），不是放进假事实。
+- **默认 offline 后端下逐层口径不可见**：offline 是默认后端，一条 anchor 都不产，演示产物 `index.html` 公式项表的「层」列全是「—」（L5 实测三个演示场景的层名个数均为 0）；逐层显示路径由 `tests/test_spine_html.py` 覆盖，不在演示里。
 
 ## 7. 验收
 
@@ -124,3 +133,5 @@ R144 的重复守门同样按组跑。
 5. GC8 逐项不变。
 6. 产品源文件 ≤200 行（census）。
 7. 演示产物重生成：`output/demo/with-paper` 的 unresolved 从 4 变 8；HTML 里 ② 两张 attn 图各有 4 条连线。
+
+**验收结论（L5 落地时核对）**：1–7 全部达成。全量测试 787 → **804 passed**；演示三场景重生成后 `validate_trace` 全过，with-paper offline 实测 unresolved=8（4 项 × 2 层），逐场景数字与提交链见 plan 文档执行记录段。
