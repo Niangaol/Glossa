@@ -11,7 +11,8 @@ R68 code_expr_range 填 pairs 的 node_id 首尾区间，逐算子行号属 M1b�
 兄弟项命中会把零检索的项抬上绿线。R78/R69/R70/R21/R56/R37/R2：拆项门是
 split_formula(...)==[]，三个 signal 同一份 dict 既喂 confidence() 又写进 signals，
 prompt_version 写 JUDGE_PROMPT_VERSION，符号差集记 unresolved，只捕预期不可用，
-judge 只对 pairs 里的配对调用。
+judge 只对 pairs 里的配对调用。S15：结构未命中时退到算子类型候选（R112 回退产的线最高
+到黄、R117 只指认 judge 确认的一个节点、R118 confirmed id），见 spine_fallback.py。
 """
 
 from __future__ import annotations
@@ -30,12 +31,13 @@ from papertrace.parse_paper.split_terms import split_formula
 from papertrace.symbols.code_table import _FROZEN_SYMBOLS, build_code_symbols
 from papertrace.symbols.mapping import map_symbols
 from papertrace.symbols.paper_table import build_paper_symbols
+from papertrace.spine_fallback import cap_tier, none_cause, pairs_or_fallback, resolve_code_range
 
 #: 本模块用到的字面量与预算（裁决编号见模块 docstring）
 UNSPLITTABLE_REASON = "公式拆不出项（超出白名单文法），不猜项"   # R78
 NO_CANDIDATE_REASON = "结构同构未命中，没有可判断的候选对"       # R37
-RANGE_SEP = ".."                                              # R68
 UNKNOWN_BACKEND = "unknown"                                   # R70
+FALLBACK_PAIR_NOTE = "候选来自算子类型+词法排序（结构同构未命中），最高黄线"  # R112
 FALLBACK_EVIDENCE = "判断题没有给出 yes：只凭结构/检索信号出线，需人工复核"
 ALTERNATIVE_LIMIT = 2   # schema alternatives maxItems
 EVIDENCE_LIMIT = 80     # schema anchor.evidence maxLength
@@ -101,14 +103,12 @@ def _attach_unit(doc: dict, unit, model, by_id: dict) -> None:
                   and n.get("kind") == "op" and n.get("id")]
     retrieval = retrieve_bidirectional(code_units, [
         {"term_id": f"{unit.unit_id}-t{t.index}", "text": t.latex} for t in terms])
-    grouped: dict[int, list[str]] = {}
-    for index, node_id in signal.pairs or []:
-        grouped.setdefault(index, []).append(node_id)
+    grouped, fallback = pairs_or_fallback(signal, terms, doc["nodes"])  # R112
     for term in terms:
-        _attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []), by_id)
+        _attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []), by_id, fallback)
 
 
-def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id: dict) -> None:
+def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids, by_id, fallback) -> None:
     """一个公式项：三个信号 → confidence → tier → anchor 或 unresolved。"""
     term_id = f"{unit.unit_id}-t{term.index}"
     # R85：逐项 s_retr 只取本项 forward 的最大分；缺键/空表 → 0.0（保守方向），
@@ -124,18 +124,20 @@ def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id
         _record_unresolved(doc, term_id, NO_CANDIDATE_REASON, retrieval,
                            {"s_retr": s_retr, "s_judge": 0.0, "s_struct": s_struct})
         return
-    s_judge, verdict = _judge_pairs(term, node_ids, by_id)
+    s_judge, verdict, confirmed = _judge_pairs(term, node_ids, by_id)
     # R69：同一份 signals 既喂 confidence() 又写进 anchor.signals，不分别算、不取整
     signals = {"s_retr": s_retr, "s_judge": s_judge, "s_struct": s_struct}
     score = confidence(signals["s_retr"], signals["s_judge"], signals["s_struct"])
-    level = tier(score, s_struct)
+    level = cap_tier(tier(score, s_struct), fallback)  # R112
     if level == "none":
-        _record_unresolved(doc, term_id, "判断题没有给出 yes 与依据", retrieval, signals)
+        _record_unresolved(doc, term_id, none_cause(fallback), retrieval, signals)
         return
-    # R68：填 pairs 的 node_id 区间；M1a 没有逐算子行号，绝不编 file:line
-    code_range = node_ids[0] if len(node_ids) == 1 else f"{node_ids[0]}{RANGE_SEP}{node_ids[-1]}"
+    # R68/R117：结构路径填首尾区间；回退路径只填 judge 确认的那一个节点
+    code_range = resolve_code_range(node_ids, confirmed, fallback)
     evidence = "；".join(p.strip() for p in (verdict, tier_reason(score, s_struct))
                         if p and p.strip())
+    if fallback:  # R112：候选不是结构对上的，必须写在用户看得见的地方
+        evidence = f"{FALLBACK_PAIR_NOTE}；{evidence}" if evidence else FALLBACK_PAIR_NOTE
     if s_judge <= 0:  # 判断题没说 yes：挂兜底证据，说明只凭结构/检索出线
         evidence = f"{evidence}；{FALLBACK_EVIDENCE}" if evidence else FALLBACK_EVIDENCE
     anchor = {"paper_unit_id": unit.unit_id, "formula_term_index": term.index,
@@ -167,16 +169,16 @@ def _record_unresolved(doc: dict, term_id: str, cause: str, retrieval: dict, sig
                               "reason": "；".join(parts)})
 
 
-def _judge_pairs(term, node_ids: list, by_id: dict) -> tuple[float, str]:
-    """R37：只对 StructSignal.pairs 里的配对调 judge；任一是 → s_judge=1.0。"""
+def _judge_pairs(term, node_ids: list, by_id: dict) -> tuple[float, str, str | None]:
+    """R37/R118：只对候选里的配对调 judge；任一是 → s_judge=1.0，并交出那个 node_id。"""
     for node_id in node_ids:
         node = by_id.get(node_id)
         if node is None:
             continue
         result = judge(term.latex, _node_text(node))
         if judge_score(result) > 0:
-            return 1.0, (result.evidence or "").strip()
-    return 0.0, ""
+            return 1.0, (result.evidence or "").strip(), node_id
+    return 0.0, "", None
 
 
 def _node_text(node: dict) -> str:

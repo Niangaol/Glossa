@@ -38,6 +38,7 @@ MODULES = [
     "papertrace.align.retrieve",
     "papertrace.align.judge",
     "papertrace.align.score",
+    "papertrace.align.candidates",
     "papertrace.diff.dim",
     "papertrace.diff.struct",
     "papertrace.diff.missing",
@@ -53,6 +54,7 @@ MODULES = [
     "papertrace.detail.cache",
     "papertrace.detail.stale",
     "papertrace.detail.annotations",
+    "papertrace.spine_fallback",
 ]
 
 

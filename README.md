@@ -13,7 +13,9 @@
 论文 ingest 与「公式项 ↔ 算子」对账的**脊柱**已经接进 `build --paper`（S9）：
 `meta.paper`、`symbols`、`anchors`、`unresolved` 四个槽都会如实填，拿不到依据就只写
 `unresolved`——默认 `offline` 后端下一项 anchor 都不出（没有 judge 判定、没有 embedding
-检索），四个公式项全部落 `unresolved` 并写清为什么。还没做的：mismatch 判定、前端。
+检索），四个公式项全部落 `unresolved` 并写清为什么。配了判断题后端时，即使结构同构没
+命中，judge 也会判「算子类型 + 词法」候选并给出**黄线**锚点——**绿线仍然只发给结构对上账的
+项**（S15/R112：回退候选没有形状与序列依据）。还没做的：mismatch 判定、交互式前端。
 这些仍然是桩，**空就是空**，不会塞示例数据。
 
 本地模型（Ollama / 7B / nomic-embed-text）**故意没装**，不是缺步骤。默认后端是 `offline`，任何要模型的地方会直接报 `LLMUnavailable`，不允许编造结果。
@@ -347,6 +349,13 @@ set PAPERTRACE_LLM=deepseek-chat
   **R82 偏离说明（HTML 侧）**：`index.html` 的公式项清单列不出公式项的 `kind`——schema 的
   `anchor` 不携带 `kind` 也不携带 `latex`，铁律是 `trace.json` 才是唯一契约，渲染器不许为拿一个
   `kind` 重新解析论文。要让 HTML 显示 kind，得扩 schema 让 S9 把 `term.kind` 写进 anchor，属新切片。
+- **结构同构不命中时 judge 仍然工作（S15）**：`pairs` 为空时，回退候选由算子类型过滤 +
+  词法排序产出（每个公式项最多 3 个、全局最多 12 个，`papertrace/align/candidates.py`），
+  判断题只判这些候选。**这条路的 `tier` 上限锁死在 `yellow`（R112）**：回退候选没有形状与
+  序列依据，`confidence` 照实计算（可能 ≥0.75），但绿线是「结构对上了」的承诺，不发。
+  回退产出的 anchor 的 `evidence` 以「最高黄线」开头，`code_expr_range` 只写 judge 确认的
+  **那一个**节点（不按首尾区间猜，否则会画出没人审过的彩线，R117）。offline 下拿不到 yes，
+  仍然一条 anchor 都不产，只进 `unresolved` 并自报「回退候选没拿到判断题 yes」。
 - **结构校验**：`validate_trace` 除了 JSON Schema 还查 `id`/`parent_id`/边的 `id`/`src`/`dst`
   必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、

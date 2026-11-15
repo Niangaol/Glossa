@@ -384,6 +384,8 @@ def test_symbol_note_matches_mapping_status():
     for status in sorted(statuses):
         assert status in note, f"说明文字漏说了真实状态 {status}"
     assert "code_only" not in note
+
+
 def test_cli_writes_index_html_for_skeleton():
     """R73：--skeleton 也要写 index.html（R83 两路径汇合处，不只真实 build 路径）。"""
     out_dir = scratch_dir("s10-fix1-skel-cli")
@@ -399,6 +401,8 @@ def test_cli_writes_index_html_for_skeleton():
     body = re.sub(r'\s+xmlns(?::\w+)?="[^"]*"', "", html)
     assert not re.search(r"https?://", body)
     assert "Traceback" not in result.stderr
+
+
 def test_skeleton_with_paper_renders_unresolved_kinds():
     """R92 场景三：--skeleton --paper → nodes=0/unresolved=9，两种 kind 都显示。"""
     out_dir = scratch_dir("s10-fix1-skel-paper-cli")
@@ -462,3 +466,42 @@ def test_schema_valid_trace_missing_runtime_renders_without_crash():
     assert validate_trace(d3) is None
     html3 = render_html(d3)
     assert "骨架模式，没有真实执行" in html3
+
+# ---------------------------------------------------- 真实源码行号显示（R116 / M1b）
+
+
+def test_operator_rows_show_basename_and_full_path_in_title(base_doc):
+    """R116：算子行显示 basename:line，完整路径只进 <title>，正文不留本机目录。"""
+    doc = copy.deepcopy(base_doc)
+    ops = [n for n in doc["nodes"] if n.get("level") == "op" and n.get("kind") == "op"]
+    assert ops, "夹具本该有真算子"
+    html = render_html(doc)
+    for node in ops:
+        loc = str(node.get("loc") or "")
+        head, sep, line = loc.rpartition(":")
+        assert sep and line.isdigit(), "M1b 之后算子 loc 必须是 file:line：%r" % (loc,)
+        short = "%s:%s" % (Path(head).name, line)
+        assert short in html, "算子行没显示 %s" % short
+        assert "<title>%s</title>" % (escape(loc),) in html, "完整路径不可查：%s" % loc
+    assert "model.py:147" in html
+    # 正文里不许出现完整路径（title 之外）
+    body = re.sub(r"<title>.*?</title>", "", html, flags=re.S)
+    for node in ops:
+        assert str(node["loc"]) not in body, "绝对路径漏进正文：%s" % node["loc"]
+
+
+def test_module_rows_do_not_show_module_path_as_a_line(base_doc):
+    """同一 loc 字段两种语义：module 节点的模块名不许被当成行号显示（R116）。"""
+    doc = copy.deepcopy(base_doc)
+    mods = [
+        n
+        for n in doc["nodes"]
+        if n.get("level") == "module" and ":" not in str(n.get("loc") or "")
+    ]
+    assert mods, "夹具本该有模块节点"
+    html = render_html(doc)
+    for node in mods:
+        loc = str(node["loc"])
+        assert "<title>%s</title>" % (escape(loc),) not in html
+        assert (loc + ":") not in html
+

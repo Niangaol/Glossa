@@ -54,6 +54,19 @@ def _node_label(node: dict) -> str:
     return str(label) if label else str(node.get("id", ""))
 
 
+def _loc_text(node: dict) -> tuple[str, str]:
+    """R116：算子行显示 basename:line，完整路径留在 SVG <title> 里悬停可见。
+
+    绝对路径不进正文：它会泄露本机目录，而正文要给人读。模块节点的 loc 是模块名
+    （不是 file:line），原样不显示——同一字段两种语义是既有设计，不编模块行号。
+    """
+    loc = str(node.get("loc") or "")
+    head, sep, line = loc.rpartition(":")
+    if not sep or not line.isdigit() or not head:
+        return "", ""
+    return "%s:%s" % (Path(head).name, line), loc
+
+
 def _shape_texts(node: dict) -> tuple[str, str]:
     """inputs 三态口径与 papertrace/report.py 的 print_ops 逐字一致（R71 这半句没错）。"""
     known_out = bool(node.get("outputs")) or bool(node.get("shape_out"))
@@ -96,6 +109,10 @@ def _groups(doc: dict) -> list[dict]:
             shown_in, shown_out = _shape_texts(node)
             text = shown_in + " → " + shown_out
             right = box_w + 12 + len(text) * 6.5
+            loc_short, loc_full = _loc_text(node)
+            loc_x = int(right + 8) if loc_short else None
+            if loc_short:
+                right = loc_x + len(loc_short) * 6.5
             link = None
             if code_id in style_of:
                 cls, stroke, dash = style_of[code_id]
@@ -104,7 +121,8 @@ def _groups(doc: dict) -> list[dict]:
                 right += 30 + len(link["label"]) * 6.5
             width = max(width, int(right))
             nodes_out.append({"y": y_of[code_id], "box_w": box_w, "label": _node_label(node),
-                              "shape_in": shown_in, "shape_out": shown_out, "link": link})
+                              "shape_in": shown_in, "shape_out": shown_out, "link": link,
+                              "loc_short": loc_short, "loc_full": loc_full, "loc_x": loc_x})
         groups.append({"parent": parent or "（无 parent_id）", "width": width + 8,
                        "height": 12 + 32 * len(rows), "nodes": nodes_out})
     return groups

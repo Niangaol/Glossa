@@ -380,13 +380,17 @@ def test_model_meta_records_judge_prompt_version(monkeypatch):
     assert doc["meta"]["model"]["embed_model"] == "none"
 
 
-def test_no_structural_pairs_never_asks_judge_even_with_embeddings(monkeypatch):
-    """R37 的硬边界：pairs 空 → 一个 judge 都不问，哪怕检索有候选、哪怕问了就能绿。
+def _no_isomorphism(nodes, terms, config):
+    """结构同构不命中的替身：pairs 为空、score 固定 0.60（真实夹具实测值）。"""
+    return StructSignal(0.6, [], ["算子序列与公式项顺序同构：没有任何算子组能匹配"], [])
 
-    反面对照（写进注释，别当成已测路径）：若拿检索 top1 当候选去问 judge，
-    s_retr=1.0 + s_judge=1.0 + s_struct=0.60 → confidence=0.8428 ≥ 0.75 且
-    s_struct ≥ 0.50，会出**绿线**——可这一项的结构同构根本没命中。那样的绿线
-    是 embedding 相似度撑起来的，不是公式项与算子对上了账。
+
+def test_structural_miss_falls_back_to_kind_candidates_but_never_green(monkeypatch):
+    """R115：结构同构不命中时 judge 仍然工作（S15），但**绝不出绿线**（R112）。
+
+    回退候选来自算子类型过滤 + 词法排序，没有形状与序列依据。s_retr=1.0 与
+    s_judge=1.0 把 confidence 推到 0.8429（≥0.75，且 s_struct=0.60 ≥ 0.50，
+    纯算分本来是绿的）——封的是 tier，不是分数：分数照实写，绿线不许发。
     """
     monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
     monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
@@ -394,10 +398,27 @@ def test_no_structural_pairs_never_asks_judge_even_with_embeddings(monkeypatch):
     monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
     embedder = _SameVectorsBackend()
     monkeypatch.setattr(embed_module, "get_llm", lambda: embedder)
+    monkeypatch.setattr("papertrace.spine.struct_signal", _no_isomorphism)
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    assert len(doc["anchors"]) == 4, "四项都该有回退候选，否则测的不是回退路径"
+    assert doc["unresolved"] == []
+    for anchor in doc["anchors"]:
+        assert anchor["tier"] == "yellow", "R112：回退产的线最高到黄"
+        assert anchor["confidence"] >= 0.75, "分数本身够绿，被降的是 tier"
+        assert "最高黄线" in anchor["evidence"], "降级理由必须写在用户看得见的地方"
+        assert ":" not in anchor["code_expr_range"], "R117：只指认一个节点，不是区间"
+        assert anchor["code_expr_range"].startswith("root/@")
+        assert set(anchor["signals"]) == {"s_retr", "s_judge", "s_struct"}
+    # 两条注入都被真的走到：embedding 跑了（否则测的是 offline 归零），judge 也真的问了
+    assert embedder.calls == 2
+    assert backend.calls >= 1
 
-    def _no_isomorphism(nodes, terms, config):
-        return StructSignal(0.6, [], ["算子序列与公式项顺序同构：没有任何算子组能匹配"], [])
 
+def test_offline_structural_miss_stays_honestly_empty(monkeypatch):
+    """offline + 结构不命中：回退候选拿不到 yes，四项都不许出 anchor，且原因自报回退。"""
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
     monkeypatch.setattr("papertrace.spine.struct_signal", _no_isomorphism)
     doc, model = _fresh_doc()
     attach_paper(doc, PAPER, model)
@@ -408,12 +429,12 @@ def test_no_structural_pairs_never_asks_judge_even_with_embeddings(monkeypatch):
         "S3.2-eq-attn-t2",
         "S3.2-eq-attn-t3",
     ]
+    expected = "置信度 %.4f" % confidence(0.0, 0.0, 0.6)
     for entry in doc["unresolved"]:
-        assert "结构同构未命中，没有可判断的候选对" in entry["reason"]
+        assert "回退候选没拿到判断题 yes" in entry["reason"], "别让人以为结构对上了"
+        assert "结构同构未命中" in entry["reason"]
         assert "s_struct=0.60" in entry["reason"]
-    # 两条注入都被真的走到：embedding 跑了（否则测的是 offline 归零），judge 一次都没跑
-    assert embedder.calls == 2
-    assert backend.calls == 0
+        assert expected in entry["reason"]
 
 
 def test_ingest_error_does_not_depend_on_model():

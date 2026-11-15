@@ -11,8 +11,11 @@
 - R25/R25a：同构判定按 parent_id 分组、组内做贪心子序列匹配，取 nodes 顺序里
   **第一个**匹配的组；代码侧多出的算子允许被跳过（因果掩码 masked_fill 就夹在
   中间）。只配第一层（h.0.attn），逐层对齐是 M4。
-- R37：pairs 是 judge 的唯一候选来源；同构不命中 → pairs == [] → s_judge=0。
-- R38：hits/misses 是给人看的短中文句子，会作为 evidence 展示在 HTML 报告里。
+- R37：结构路径上 pairs 是 judge 的唯一候选来源；同构不命中 → pairs == []。
+  S15 之后由 kind 过滤 + 词法排序的回退候选接管（papertrace/spine_fallback.py），
+  那条路的 tier 上限锁 yellow（R112）——结构没对上账，就不发绿线。
+- R38：hits/misses 是给人看的短中文句子，供测试与调试；spine 只消费 score 与 pairs，
+  它们不进 HTML、也不进 anchor.evidence。
 - loc 是 file:line（M1b 后）或模块路径（回落时）；判据只看算子名与组内顺序，配对回传 node_id。
 """
 
