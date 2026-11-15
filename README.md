@@ -39,6 +39,26 @@ python -m papertrace dump --trace output/m1a/trace.json --ops
 python -m papertrace dump --trace output/m1a/trace.json --edges
 ```
 
+脊柱切片（论文 → 公式项 → 符号 → 信号 → 分档 → `trace.json` + `index.html`）的跑法，
+Windows pwsh 里可直接复制（三个环境变量是测试纪律，见 `docs/ENVIRONMENT.md`）：
+
+```pwsh
+$env:PYTHONPATH='D:\AgentPrograms\PaperTrace;D:\AgentPrograms\PaperTrace\pydeps'
+$env:PYTHONIOENCODING='utf-8'
+$env:PYTHONUTF8='1'
+python -m papertrace build --repo tests/fixtures/nanogpt --entry model:build_model --out output/spine-nowhere
+python -m papertrace build --repo tests/fixtures/nanogpt --paper tests/fixtures/papers/vaswani2017/attention.tex --out output/spine
+python -m papertrace build --repo tests/fixtures/nanogpt --paper tests/fixtures/papers/vaswani2017/attention.tex --skeleton --out output/spine-skeleton
+python -m papertrace build --repo tests/fixtures/nanogpt --skeleton --out output/spine-skeleton-only
+```
+
+四种输入各产出一份 trace：① 不带 `--paper` → 没有论文侧，anchors/unresolved 全空，
+行为与 M1a 逐项一致（nodes/edges 计数见「字段约定」）；② 带 `--paper`（本地 `.tex`；
+只有 `ingest_mode=tex` 实现了，`arxiv:…` 不联网，如实空态 + unresolved）；③ `--skeleton --paper`
+→ 结构同构图（只到第一层，局限见「已知局限」）；④ 纯 `--skeleton` → 只写合法的空 trace，不追踪。
+产物固定是 `<out>/trace.json` 与 `<out>/index.html` 两个文件（`index.html` 是单文件离线 HTML，
+零外链，8MB 上限，超限抛 `BuildError` 而不是静默截断）。
+
 `--ops` 一行一个算子，下面是本仓库夹具的**真实输出**（形状是第二遍执行跑出来的，不是推的）：
 
 ```text
@@ -88,6 +108,48 @@ set PAPERTRACE_LLM=deepseek-chat
   不会默默套一个默认模型名顶上去。
 - **DeepSeek 没有 embeddings 端点。** 只配 openai 时检索分 `s_retr` 仍然是 0，出的是
   **黄线**（有 judge、没检索证据），不是绿线——配了 key 也不等于绿。
+- **两个变量别设混**：`PAPERTRACE_LLM_BACKEND` 是**后端选择器**（`offline` / `openai` / `ollama`），
+  `PAPERTRACE_LLM` 是**模型名**。名字写错不会报错，只会静默走回 offline（所以「没点亮」先查这两个）。
+- **S17 修订（m03858 已批）**：`embed_texts()` 返回 `list[list[float]]` 而不是 `np.ndarray`——
+  本机 `pydeps/` 里没有 numpy（工程计划书 Task 11 原来的措辞不成立）。配的后端没有
+  `/embeddings` 时 `embed` 必须抛 `LLMUnavailable`，不许拿假向量顶。
+
+### offline 为什么全 unresolved
+
+默认 `offline` 后端下 `chat` / `embed` 直接抛 `LLMUnavailable`（R83：不返回固定 yes、
+不返回假向量），于是判断题拿不到 yes/no、检索拿不到分数：`anchors == []`，全部公式项进
+`unresolved`（5 个 symbol + 4 个 paper_unit，共 9 条，每条带 reason）——**空清单就是诚实的
+答案**，不是 bug，也不该为了「好看」把线连上。
+
+分档公式写死在代码里（`papertrace/spine.py`）：`a = 0.30·s_retr + 0.50·s_judge + 0.20·s_struct`，
+`c = sigmoid(4·(a−0.5))`；`c≥0.75` 绿实线、`0.45≤c<0.75` 黄虚线、`c<0.45` 不连线；
+**U1 门：绿线还要求 `s_struct ≥ 0.5`**。
+
+下表是**本切片的可达值**。本切片结构分 `s_struct` 上限是 **0.8**（只可能加
+`BASE_SCORE 0.5` + `BONUS_CONFIG 0.1` + `BONUS_ISOMORPHIC 0.2`；设计文档 §2 里
++0.2 论文 N 层 / −0.4 shape 冲突 / −0.3 双向检索三条规则本切片不可判定，留给 M4）。
+设计文档 §2 那张表用的是 `s_struct=1` 的**理论值**，与这里口径不同——照抄会写出用户
+永远看不到的数字（第 4 行「弱检索 0.25 → 绿线」在本切片实际是黄线）：
+
+| 场景 | 设计文档 §2（理论 s_struct=1） | 本切片可达（s_struct=0.8） |
+| --- | --- | --- |
+| 全 offline，c=0 | 0.231475 → 不连线（none） | 0.204240 → 不连线（none） |
+| 词法满分但 judge=no | 0.500000 → 黄线 | 0.460085 → 黄线 |
+| judge=yes、无 embedding | 0.689974 → 黄线 | 0.654753 → 黄线 |
+| judge=yes + 弱检索 0.25 | 0.750260 → 绿线 | 0.719100 → **黄线**（档位翻了） |
+| 三项全满 | 0.880797 → 绿线 | 0.862949 → 绿线 |
+| U1 反例 (s_retr,s_judge,s_struct)=(1,1,0) | 0.768525 → 黄线 | 0.768525 → 黄线（s_struct=0 不受上限影响） |
+
+精确门槛（用 `sigmoid(4·(0.30·s_retr+0.50·s_judge+0.20·s_struct−0.5))` 实测算过）：
+
+- `s_judge=1` 时要绿线需要 `s_retr ≥ 0.382177`（0.3822 → 0.750000 绿；0.3812 → 0.749775 黄）。
+- `s_retr=0`（DeepSeek 没有 embeddings 端点）时天花板是 `c=0.654753` **黄线**：
+  配 DeepSeek 中转永远出不了绿线。
+- `s_judge=0` 时即使检索满分也只到 `c=0.460085` **黄线**（judge 权重 0.50 是决定性的）。
+- 绿线门独立生效：`s_struct=0.49` → `c=0.830897` 仍黄线；`0.5` → `0.832018` 绿线。
+
+所以要点亮绿线，必须换一个**真提供 `/embeddings` 的 OpenAI 兼容后端**（不是 DeepSeek），
+并且 judge 能答 `yes`——只配 `PAPERTRACE_LLM_BACKEND=openai` 是黄线，不是绿线。
 
 ### trace.json 的字段约定
 
@@ -261,6 +323,12 @@ set PAPERTRACE_LLM=deepseek-chat
   拿 `T` 去对论文里的序列长度会对错账。`Dh = D // H` 是**派生量**（夹具 `GPTConfig` 没有
   `head_dim` 字段），与论文侧 `d_k` 的精确对账由 M4 负责；整除不成立时也只发向下取整的值，
   `codeSymbol` 没有「约等」字段，不会假装两侧相等。
+  **符号表记「声明值」，运行时形状在 `nodes` 里**（R31）：夹具 `GPTConfig` 的类默认值是
+  `block_size=1024 / n_head=12 / n_embd=768`（`tests/fixtures/nanogpt/model.py:20-24`），
+  `build_model()` 实际传的是 `16 / 4 / 32`。`symbols` 是 trace 的**顶层键**（不在 `meta` 里），
+  `defined_at` 指向**类默认值所在行**（1024/12/768 那几行），`value` 是**实例值**（16/4/32）——
+  两者本来就不是一回事，别拿 `symbols[].value` 当运行时形状：运行时形状只认 `nodes[].shapes`
+  与 `meta.runtime`。
 - **`anchors` / `code_expr_range`（S9 起）**：一条 anchor = 一个论文公式项对一个算子节点。
   `code_expr_range` 记的是 **trace 节点 id 区间**（单个 `root/@037`，多个 `root/@037..root/@045`，
   按结构信号 `pairs` 的 node_id 首尾），**不是** `file:line`：M1a 的算子节点 `loc` 全是
@@ -270,6 +338,12 @@ set PAPERTRACE_LLM=deepseek-chat
   `source` 只可能是 `model`（判断题给了 yes）或 `static`（只有结构/检索依据）——anchor 不是
   实测出来的，所以永远不是 `runtime`。`signals` 里的 `s_retr`/`s_judge`/`s_struct` 与
   `confidence` 是**同一份数**（schema 会强制三者自洽），不是各算一遍。
+  **R91：`anchor.signals.s_retr` 只认逐项值**——本项 `forward[term_id]` 全部条目 `score` 的最大值。
+  单元级 `retrieval['s_retr']` 只是 S6 的调用级汇总，**不得直接写进 anchor**：M1b 若有人拿单元级
+  汇总填 anchor，公式项会凭「同批次里别的项检索得好」蹭到高置信度，假绿线就是这么复发的。
+  **R82 偏离说明（HTML 侧）**：`index.html` 的公式项清单列不出公式项的 `kind`——schema 的
+  `anchor` 不携带 `kind` 也不携带 `latex`，铁律是 `trace.json` 才是唯一契约，渲染器不许为拿一个
+  `kind` 重新解析论文。要让 HTML 显示 kind，得扩 schema 让 S9 把 `term.kind` 写进 anchor，属新切片。
 - **结构校验**：`validate_trace` 除了 JSON Schema 还查 `id`/`parent_id`/边的 `id`/`src`/`dst`
   必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、
@@ -308,6 +382,16 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
   同一个 `tree_flatten` + `call_spec.in_spec` 对照来支持，不猜顺序。
 - 退出码 5 时 stderr 前面可能有 torch 自己打的一二十行诊断图/警告（那是它的内部输出，
   我们拦不住）；**papertrace 的结论永远在最后一行**，脚本里请只看退出码。
+
+## 已知局限（如实说明，不装作已经支持）
+
+- **结构同构只对齐第一层**：`h.0.attn` 有同构对，逐层（`h.1.attn` 等）属 M4。
+- **`s_struct` 的 +0.2 是二值的「有没有同构」**，不含「对齐了几项」（R80）——同构图对得多不等于分高。
+- **`conflicts` / `backward` 没落进 trace**：四类对账输入里这两类本切片是缺口，属 M4。
+- **S18 修订（m03858 已批）**：本切片不引 KaTeX，公式用等宽原始 LaTeX 文本 + 静态 SVG 展示，
+  KaTeX `\htmlId` 推迟到 M2 前端。这是对冻结规则（工程计划书 :75 / :611）的显式批准偏离，不是漏改。
+- **S16 修订（m03858 已批）**：`anchor` 增加可选 `tier` + `signals`，结构校验钉住三者自洽——
+  所以手改 trace 把 tier 涂绿是过不了 schema 校验的（RF3）。
 
 ## 退出码
 

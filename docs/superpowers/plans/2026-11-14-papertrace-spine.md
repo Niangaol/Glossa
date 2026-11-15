@@ -16,7 +16,7 @@
 2. **禁止 mock 填产品输出**。trace 里每个结论必须带 `source ∈ {runtime, static, model}`；拿不到就空态 + 原因。测试替身只允许出现在 `tests/` 下。
 3. **默认 offline**。`OfflineBackend.chat` / `.embed` 必须继续抛 `LLMUnavailable`，禁止返回固定 yes 或假向量（S13）。
 4. **对齐禁止自由生成**。judge 只问「是同一件事吗」，依据必填且 ≤40 字符（schema 上限 80）。`judge()` 签名不得出现 `mapping: dict`。
-   - **S19 输出格式澄清（待批）**：按现有 `papertrace/llm/prompts.py:18-20` 的**严格两行**格式解析——`Verdict: yes|no` 与 `Evidence: <≤40字>`。工程计划书 :547 的「首 token 级 yes/no」指的是 **Verdict 行取值的首 token**，不是整个响应的首 token（整个响应的首 token 是 `Verdict:`，按字面解析会让真实 DeepSeek 全判失败）。大小写不敏感；`Verdict:` 行缺失或值不是 yes/no → **不是 yes**。
+   - **S19 输出格式澄清（已批 m03858）**：按现有 `papertrace/llm/prompts.py:18-20` 的**严格两行**格式解析——`Verdict: yes|no` 与 `Evidence: <≤40字>`。工程计划书 :547 的「首 token 级 yes/no」指的是 **Verdict 行取值的首 token**，不是整个响应的首 token（整个响应的首 token 是 `Verdict:`，按字面解析会让真实 DeepSeek 全判失败）。大小写不敏感；`Verdict:` 行缺失或值不是 yes/no → **不是 yes**。
 5. **置信度公式写死**：`a = 0.30·s_retr + 0.50·s_judge + 0.20·s_struct`，`c = sigmoid(4·(a−0.5))`。`c≥0.75` 绿实线 / `0.45≤c<0.75` 黄虚线 / `c<0.45` 不连线进 unresolved。**新增 U1 门：绿线还要求 `s_struct ≥ 0.5`**。
 6. **不改用户代码**、不联网下载论文（本切片只吃本地 `.tex`）、不训练、无账号、无云、无插件。
 7. **黄金主路径**：`tests/fixtures/nanogpt`（flash 已写死 False）+ `tests/fixtures/papers/vaswani2017/attention.tex`。探针默认 CPU。
@@ -76,6 +76,8 @@
 9. 核 Global Constraint 8（不带 --paper 的 build 逐项不变）+ 行数 census（OVER200 必须为空）。
 10. 提交：`feat: gate the green tier on a minimum structural signal`。
 
+**实测（S11 回填）**：BASE `9a18153`（文档提交），首提 `4ca3e7b`，fix —，结案 `4ca3e7b`；全量 **470 passed**，fix 轮数 **0**。
+
 ---
 
 ## Task S2：论文 ingest（只吃本地 .tex）
@@ -109,6 +111,8 @@
 5. 跑 → 绿；跑全量 → 绿（注意 `PaperBundle` 加字段可能影响既有构造点，grep 确认）。
 6. 变异探针：把 marker 优先级去掉（永远用派生 ID）→ 确认 `test_fixture_tex_yields_one_unit` 红 → 还原。
 7. 核行数 + Constraint 8。提交：`feat: ingest a local tex paper into stable equation units`。
+
+**实测（S11 回填）**：BASE `4ca3e7b`，首提 `3e0bc58`，fix `3afeb37`，结案 `3afeb37`；全量 **489 passed**，fix 轮数 **1**。
 
 ---
 
@@ -155,6 +159,8 @@
 6. 变异探针：把 `ok=False` 时的早退删掉 → 确认 `test_unknown_macro_is_not_split` 红 → 还原。
 7. 核行数 + Constraint 8。提交：`feat: split the attention formula into four ordered terms`。
 
+**实测（S11 回填）**：BASE `3afeb37`，首提 `e27f331`，fix `e0e93db`、`b19ab06`，结案 `b19ab06`；全量 **565 passed**，fix 轮数 **2**。
+
 ---
 
 ## Task S4：符号码表（代码侧 / 论文侧 / 映射）
@@ -190,6 +196,8 @@
 6. 跑 → 绿；全量 → 绿。
 7. 变异探针：把 Dh 改成从 config 读 `head_dim`（getattr 默认 64）→ 确认 RF4 用例红 → 还原。
 8. 核行数 + Constraint 8。提交：`feat: build code and paper symbol tables with real definition sites`。
+
+**实测（S11 回填）**：BASE `b19ab06`，首提 `d1f108e`，fix `d11f690`，结案 `d11f690`；全量 **576 passed**，fix 轮数 **1**。
 
 ---
 
@@ -229,6 +237,8 @@
 5. 变异探针：把子序列匹配改成严格相等 → 确认 `test_extra_mask_op_does_not_break_isomorphism` 红 → 还原。
 6. 核行数 + Constraint 8。提交：`feat: score structural agreement without any model`。
 
+**实测（S11 回填）**：BASE `d11f690`，首提 `2e4e6e9`，fix `c0bed10`，结案 `c0bed10`；全量 **588 passed**，fix 轮数 **1**。
+
 ---
 
 ## Task S6：双向检索 + embed 接口（offline 诚实归零）
@@ -260,6 +270,8 @@
 5. 跑 → 绿；全量 → 绿。
 6. 变异探针：把 `except LLMUnavailable` 的归零改成 `s_retr = 0.5` → 确认 RF2 用例红 → 还原。
 7. 核行数 + Constraint 8。提交：`feat: retrieve bidirectionally, score zero when offline`。
+
+**实测（S11 回填）**：BASE `c0bed10`，首提 `9667244`，fix `6bd7542`，结案 `6bd7542`；全量 **602 passed**，fix 轮数 **1**。
 
 ---
 
@@ -296,6 +308,8 @@
 6. 变异探针：把 Verdict 行解析改成 `"yes" in text.lower()` → 确认 `test_free_text_yes_is_not_accepted` 红 → 还原。
 7. 核行数 + Constraint 8。提交：`feat: ask a yes/no question, never a generation task`。
 
+**实测（S11 回填）**：BASE `6bd7542`，首提 `3bda705`，fix `b547fa1`，结案 `b547fa1`；全量 **641 passed**，fix 轮数 **1**。
+
 ---
 
 ## Task S8：openai 兼容后端（点亮开关，默认仍 offline）
@@ -326,6 +340,8 @@
 5. 跑 → 绿；全量 → 绿。**已定位会被打破的既有用例**：`tests/test_llm_offline.py:30-33` 参数化 `["ollama", "openai", "openai:deepseek"]` 断言 `get_llm()` 返回 offline；`tests/test_llm_hint.py:19-24` 断言配 ollama 时报「backend=ollama 尚未实现」。openai 那条语义变了，必须**按新事实改写**（openai → 真后端；ollama → 仍如实报未实现），不是删掉测试。
 6. 变异探针：把非 200 的分支改成返回 `ChatResult("yes", …)` → 确认 `test_non_200_raises` 红 → 还原。
 7. 核行数 + Constraint 8。提交：`feat: add an openai-compatible backend, offline stays the default`。
+
+**实测（S11 回填）**：BASE `b547fa1`，首提 `c7ed6f6`，fix —，结案 `c7ed6f6`；全量 **674 passed**，fix 轮数 **0**。
 
 ---
 
@@ -365,6 +381,8 @@
 7. 变异探针：把 `tier=="none"` 也写成 anchor → 确认 `test_offline_has_no_anchors` 红 → 还原。
 8. 核行数（spine.py 必须 ≤200）+ Constraint 8。提交：`feat: wire the paper spine into build --paper`。
 
+**实测（S11 回填）**：BASE `c7ed6f6`，首提 `95984f5`，fix `270f2f8`，结案 `270f2f8`；全量 **693 passed**，fix 轮数 **1**。
+
 ---
 
 ## Task S10：单文件离线 HTML
@@ -381,7 +399,7 @@
 
 **行为约定**
 - **零外链**：不得出现 `http://` / `https://` / `//cdn` 形式的资源引用（CSS/JS/字体/图片全部内联或不使用）。
-  **S18（待批）：本切片不引 KaTeX**，公式用等宽原始 LaTeX 文本 + 静态 SVG 展示。
+  **S18（已批 m03858）：本切片不引 KaTeX**，公式用等宽原始 LaTeX 文本 + 静态 SVG 展示。
   理由：全仓 glob `**/katex*` 实测为空，而冻结规则（工程计划书 :75）要求 KaTeX `\htmlId`、:611 要求只内联用到的字体子集——
   在「零新依赖 + 禁外链 + <8MB」三条同时成立时拿不到这些资产，离线 vendoring JS + 字体子集是一个**独立前置任务**。
   这是对冻结规则的偏离，**必须年糕点头**，不静默采纳；批了就把 KaTeX 留给 M2 前端里程碑。
@@ -400,6 +418,8 @@
 7. 变异探针：把 unresolved 清单那段模板删掉 → 确认 `test_unresolved_list_is_visible` 红 → 还原。
 8. 核行数 + Constraint 8。提交：`feat: render a single offline html with an honest unresolved list`。
 
+**实测（S11 回填）**：BASE `270f2f8`，首提 `23664b6`，fix `4491dff`，结案 `4491dff`；全量 **711 passed**，fix 轮数 **1**。
+
 ---
 
 ## Task S11：收尾（文档同步 + 交付）
@@ -412,14 +432,19 @@
    - `tests/test_llm_offline.py:30-36`：参数化 `["ollama","openai","openai:deepseek"]` 断言返回 offline。改成 **openai/openai:deepseek → `OpenAICompatBackend`；ollama → 仍 offline 并如实报未实现**；另留一条「清空环境变量 → offline」。
    - `tests/test_cli.py:101-111` `test_build_with_paper_refuses`：原断言 `--paper arxiv:…` → exit 2 +「论文 ingest 尚未实现」。改成 **exit 0 + `meta.paper.unit_count==0` + `ingest_mode=="none"` + `unresolved` 里有 `kind=="paper_unit"` 且 reason 说明 arXiv 未实现**，函数名改成 `test_build_with_unsupported_paper_is_honest_empty`。
    - `tests/test_llm_hint.py:19-24`：ollama 文案不变（仍未实现），只需确认 openai 的 hint 不再说「尚未实现」。
+   **S11 核验结论（2026-11-15，R90 更正 brief）**：以上三项改写**已全部完成**，S11 只核验、不重做/不改名/不动断言——
+   `tests/test_imports.py:74` 已改名 `test_align_never_fakes_results`（:87-89 钉住 offline 下 `judge("x","y") == JudgeResult(False, "")` 且 `judge_score(result) == 0.0`；:90-91 钉住 `embed_texts` offline 抛 `LLMUnavailable`，R44）；
+   `judge_score(JudgeResult(True, "")) == 0.0` 钉在 `tests/test_spine_judge.py:323` 真值表，不在 test_imports.py；
+   `tests/test_llm_offline.py` 按 R60 拆成三条（:8/:31/:40）；`tests/test_cli.py:101` 名字成立（`test_build_with_paper_records_ingest_failure_not_refusal`），S9 定名不许再改。
+   逐条精确 file:line 与输出原文见 `.superpowers/sdd/2026-11-14-papertrace-spine/task-S11-report.md`。
 4. 派独立评审子智能体复审脊柱（沿用 M1a 的做法：只读、快照、变异探针、五个自问点）。
-5. 向年糕交付：trace.json + index.html + 评审结论 + 仍待批的 S15/S16/S17/S18/S19。
+5. 向年糕交付：trace.json + index.html + 评审结论 + 仍待批的 S15（S16/S17/S18/S19 已批 m03858，S15 词法检索基线仍未批、不在本切片内）。
 
 ## 自审（writing-plans 技能要求的五项）
 
 - **规格覆盖**：U1 门 → S1；论文 ingest → S2；拆项 → S3；符号表 → S4；结构信号 → S5；检索 → S6；judge → S7；后端 → S8；编排与 --paper → S9；HTML → S10。M1b 的 shape_prop、PDF/arXiv ingest、L1/L2/L3、serve/eval **明确不在本切片**，桩保持原样。
 - **步骤扫描**：每个 Task 都是「写测试 → 跑红 → 实现 → 跑绿 → 变异探针 → 核约束 → 提交」，每步一个可检查结果，没有「然后把它做好」这种空话。
 - **类型一致**：`Term(index,latex,kind)` 不含 term_id（由编排层拼）；`PaperBundle` 加字段带默认值保持兼容；`embed_texts` 与既有 `LLMBackend.embed` 协议一致（都是 `list[list[float]]`）；`judge()` 签名不变；`build_code_symbols(mod,bundle)` 签名不变；`StructSignal` 新增 `pairs` 字段（NamedTuple 加字段会影响既有构造点，S5 里 grep 确认）。
-- **builder-check 五个缺口已闭合**：①验收改「更新后全绿」+ S11 列出 3 处改写清单；②judge 候选由 S5 `pairs` 确定性产出（4 次调用，非 376）；③S3 改手写拆项 + 显式宏翻译，不用 `parse_latex`（Constraint 13）；④KaTeX 推迟记为 S18 待批；⑤judge 两行格式解析记为 S19 待批。详见设计文档 §10。
+- **builder-check 五个缺口已闭合**：①验收改「更新后全绿」+ S11 列出 3 处改写清单；②judge 候选由 S5 `pairs` 确定性产出（4 次调用，非 376）；③S3 改手写拆项 + 显式宏翻译，不用 `parse_latex`（Constraint 13）；④KaTeX 推迟记为 S18（已批 m03858）；⑤judge 两行格式解析记为 S19（已批 m03858）。详见设计文档 §10。
 - **Review Focus**：RF1→S2/S3、RF2→S6/S7/S8、RF3→S1、RF4→S4、RF5→S10，每条都有具名测试。
 - **篇幅比例**：11 个 Task，最重的是 S9（编排）与 S4（符号表），各约 10 步；其余 7–8 步。没有哪个 Task 大到需要再拆。
