@@ -241,3 +241,34 @@
 3. 精确值（`CLAIMED_REASON` 必须含哪两词、`portable_loc` 的三类输入、GC14 的四字段）都写成了可断言的形式？是。
 4. 既有测试里会被打破的都点名了？`test_imports.py` MODULES（新模块），除它之外还有 3 处授权改写，见上表；其余靠 cli 层相对化避开。
 5. 有没有要求执行者「自己发挥」的地方？`portable_path` 的异常处理写到了 `try/except ValueError` 级别。
+
+---
+
+## 执行记录（波次 1–5，已完成）
+
+| 波次 | 内容 | 结果 |
+|---|---|---|
+| 1 | 三路并行实现：Task A 认领唯一性、Task B 路径便携化、Task C 文档 | `8987b57`（spine_claims.py 70 行 + 7 测试）、`681a29b`（paths.py 83 行 + 8 测试）、`048ada1`（README 两节 + candidates.py docstring） |
+| 2 | 控制器接线：spine.py / cli.py / spine_fallback.py，并按 R145 改写三处既有测试 | 全量 780 passed |
+| 3 | 三路独立评审并行（路径 / 认领 / 集成） | Critical 0，Important 6（路径 2、认领 1、集成 3），Minor 14 |
+| 4 | 一个 fixer 带 F1–F6 清单一次修完 + 恰好一次定向复审 | `a490da9`（9 files +479/−31），全量 **787 passed**；复审 **ALL ADDRESSED / 0 open**，新破损 0 |
+
+### 波次4 落的六件事
+
+- **F1**：`papertrace/paths.py` 新增 `leaked_absolute(doc, base=None)`（只诊断 GC14 的四处字段；`://` 前置豁免；`<path>:<line>` 用 `rpartition` 只判 head）；`papertrace/cli.py` 在相对化之后写一行 stderr 提示「N 条路径不在构建目录 X 之下，按 GC14 原样保留（仍含盘符）」，**不动 exit code、不动 stdout**。同时把两处多行 `print` 压成单行，cli.py 199 → 197 行。
+- **F2**：补 `test_two_units_may_share_a_node`（两个公式单元的夹具），把 R136「跨单元可以共享」从注释变成有牙的测试；产品零改动。
+- **F3**（R158）：`resolve_code_range` 的**回退分支一律单节点** `str(confirmed_id or node_ids[0])`，于是结构路径（每项恰好 1 节点）+ 回退路径全部单节点 ⇒「认领集合 == 区间覆盖」自动成立，GC16 的「区间内部节点」第三态从根上消失。GC16 文案改认领集口径并写唤醒条件。
+- **F4**：R145 的授权改写拆成 R145-1/2/3 补登（第三处是 @038 同属 t0/t1 逼出的**输入**调整，t0 期望一字未动），plan 自审句同步改口。
+- **F5**：补 `test_yellow_alternatives_exclude_claimed`——R151 的黄线 alternatives 过滤此前零测试（offline / DeepSeek 下 forward 恒空，是可达配置下的死代码）。
+- **F6**：七条 Minor 全修（docstring 五类行为、盘根假设假失败、README 两处措辞、期望值改手算常量、`GOLD_PAIRS` 派生、注释落点）。
+
+### 波次5 定向复审的判定
+
+六条 finding 全部 ADDRESSED，**New breakage Critical 0 / Important 0 / Minor 0**，裁决「放行」。复审额外用变异探针独立确认了三件事有牙：F2（把 `claimed` 提到单元循环外 → 红）、F5（删掉 `and code_id not in claimed` → 红）、F3（回退改回 `if fallback and confirmed_id` → 两条红）。报告 `.superpowers/sdd/2026-11-15-papertrace-claims-paths/wave5-rereview.md`。
+
+### 留待后续（已记账，不在本切片）
+
+- `_attach_term` 9 个位置参数 → 小对象重构（`papertrace/spine.py` 正好 200 行零余量，须与 M4 第 0 步的拆文件一起做）。
+- `relativize_doc` 与 `leaked_absolute` 与提示文案三处都吃默认 `base=Path.cwd()`：今天同源但没有测试钉住（复审判为可推迟，最坏后果是提示报错基准、不影响产物）。
+- `CLAIMED_REASON` 不点名「占位者」是谁（文案 R146 冻结，可读性 Minor）。
+- 子目录 cwd 构建（如 `cd tests && papertrace build`）产物路径相对子目录——GC14 允许，但用户可能意外；暂无提示。
