@@ -157,6 +157,33 @@ def test_validate_trace_catches_hand_painted_tier():
     assert any("tier" in e for e in excinfo.value.errors)
 
 
+def test_conservative_downgrade_to_yellow_is_allowed():
+    """R171：tier 不得高于重算结果——**降格必须放行**。
+
+    回退路径上 spine_fallback.cap_tier 按 R112 把 green 封顶成 yellow：
+    signals 重算仍是 green（c=sigmoid(4·(0.30·1.0+0.50·1.0+0.20·0.6−0.5))≈0.8428、
+    s_struct=0.60 ≥ GREEN_STRUCT_MIN=0.50），落盘 yellow 是产品自己的保守下调——
+    用户看到的是更弱的结论，不是假事实。旧判据「必须相等」会把这份合法配置
+    判成「手改涂色」，让构建在最后一步崩掉；本测试就是那条网。
+    """
+    doc = _doc(_anchor(tier="yellow", signals={"s_retr": 1.0, "s_judge": 1.0, "s_struct": 0.6}))
+    assert anchor_errors(doc) == []
+    validate_trace(doc)
+
+
+def test_upgrade_from_none_to_yellow_is_rejected():
+    """R171 的另一半：**升格必须抓**——signals 全 0 重算 none，落盘 yellow。
+
+    把「不连线」涂成黄线是往「多断言」的方向造假，与 RF3 的原始目的
+    （把黄涂成绿）同族，只是档位不同；既有两条涂色用例没有覆盖 none→yellow
+    这一面，判据改成秩比较之后必须仍然拒。
+    """
+    doc = _doc(_anchor(tier="yellow", signals={"s_retr": 0.0, "s_judge": 0.0, "s_struct": 0.0}))
+    errors = anchor_errors(doc)
+    assert errors
+    assert any("tier" in e for e in errors)
+
+
 def test_green_struct_min_is_the_u1_gate():
     """常量值本身就是产品语义：0.5，不许被顺手改成别的数。"""
     assert GREEN_STRUCT_MIN == 0.5

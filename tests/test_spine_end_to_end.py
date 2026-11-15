@@ -177,6 +177,40 @@ class _YesWithBucketEmbeddingBackend:
                 for t in texts]
 
 
+class _YesWithDeterministicEmbeddingBackend:
+    """答 yes 的假后端 + sha256 前 8 字节映射到 [-1,1] 再归一化的单位向量（双计数器）。
+
+    L3b 专用：回退路径（结构不命中）+ judge 全 yes + 有 embeddings 的后端，正是
+    R112 的 cap_tier 把 green 封顶成 yellow 的那个合法配置。向量只由文本决定，
+    同一份文本永远得到同一个向量，跑多少次都可复现；单实例跨调用，两个计数器
+    各自累积（每次调用新建会重置计数器，「少返回」类分支永不触发）。
+    """
+
+    name = "fake-yes-det-embed"
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.embed_calls = 0
+
+    def chat(self, prompt, *, system=None):
+        self.calls += 1
+        return ChatResult(
+            text="Verdict: yes\nEvidence: 第 68 行的矩乘",
+            model="fake-yes-det-embed",
+            backend="fake-yes-det-embed",
+        )
+
+    def embed(self, texts):
+        self.embed_calls += 1
+        vectors = []
+        for t in texts:
+            raw = hashlib.sha256(t.encode("utf-8")).digest()[:8]
+            vec = [b / 127.5 - 1.0 for b in raw]  # [0,255] → [-1,1]
+            norm = sum(v * v for v in vec) ** 0.5 or 1.0
+            vectors.append([v / norm for v in vec])
+        return vectors
+
+
 def _run_cli(*args: str, cwd: str | None = None) -> subprocess.CompletedProcess:
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
@@ -1215,10 +1249,41 @@ def test_fallback_path_stays_single_layer(monkeypatch):
             "回退路径没有同构组，不该写 code_group：%r" % (anchor,))
         assert anchor["code_expr_range"].count(RANGE_SEP) == 0, (
             "R117：回退路径只写一个节点 id：%r" % (anchor["code_expr_range"],))
-    # 这里不调 validate_trace：schema_anchor 只用 signals 重算 tier，不知道 R112 的
-    # 回退封顶（s_struct=0.60 + c=0.8429 重算是 green，落盘是 yellow）——这是 L3 之前
-    # 就有的既有差异（R115 那条用例同样只手工断言 tier），回退路径一字不改就不去动它。
+    # 这里不调 validate_trace：回退路径的 validate_trace 覆盖在
+    # test_fallback_cap_is_accepted_by_validate_trace（L3b/R171：schema_anchor 的秩比较
+    # 认得 R112 的保守下调——s_struct=0.60 + c=0.8429 重算 green、落盘 yellow 现在合法）；
+    # 本条只手工断言回退路径本身的形状，逐项断言留在那条。
     assert all(a["tier"] == "yellow" for a in anchors), anchors
+
+
+def test_fallback_cap_is_accepted_by_validate_trace(monkeypatch):
+    """L3b/R171：回退 + 假 yes + 确定性 embeddings —— R112 封顶出的 yellow 必须过 validate_trace。
+
+    控制器实测过这份配置在旧判据下的死法：4 条 anchor 全 yellow、signals 重算却是
+    green（s_struct=0.60、c≈0.84），validate_trace 抛
+    「tier='yellow' 与 signals 重算结果 'green' 不符」——一个完全合法的构建
+    在最后一步崩掉，报错还把产品自己的封顶说成「手改涂色」（误导性极强）。
+    R171 把不变量改成「不得高于重算结果」后，这份配置必须被收下。
+    """
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    backend = _YesWithDeterministicEmbeddingBackend()
+    monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
+    monkeypatch.setattr(embed_module, "get_llm", lambda: backend)
+    monkeypatch.setattr("papertrace.spine.struct_signal", _no_isomorphism)
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    # 回退路径仍是每个公式项一条 anchor（R161），一组 4 条、不写 code_group
+    assert len(doc["anchors"]) == 4, "回退路径本该 4 条，实得 %d" % len(doc["anchors"])
+    for anchor in doc["anchors"]:
+        # R112：回退产的线最高到黄——signals 重算本是 green，封顶是产品自己的保守下调
+        assert anchor["tier"] == "yellow", anchor
+        assert "code_group" not in anchor, "回退路径没有同构组，不该写 code_group：%r" % (anchor,)
+    # 两条注入都被真的走到：否则测的是 offline 归零路径，结论是假的
+    assert backend.calls >= 1, "假后端必须真的被问到，否则测的是 offline 兜底"
+    assert backend.embed_calls >= 1, "embedding 桩必须真的被走到，否则 s_retr=0"
+    # 旧判据在这里抛 TraceSchemaError；秩比较放行保守下调后必须通过
+    validate_trace(doc)
 
 
 def test_pairs_without_groups_is_refused(monkeypatch):
