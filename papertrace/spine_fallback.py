@@ -44,11 +44,16 @@ def pairs_or_fallback(signal, terms: list, nodes: list[dict], *,
 
 
 def resolve_code_range(node_ids: list[str], confirmed_id: str | None, fallback: bool) -> str:
-    """anchor.code_expr_range：回退路径只写 judge 确认的那一个节点，结构路径保持 first..last。"""
+    """anchor.code_expr_range：回退路径只写一个节点，结构路径保持 first..last。
+
+    R158：回退路径**一律单节点**——judge 没确认（confirmed 为 None）时也一样。
+    回退上 s_judge=0 也出得了黄线（s_retr=1 时 c≈0.46 ≥ 0.45，R147），
+    那时 confirmed 是 None；照旧写 first..last 会把整组没审过的候选画成一条线。
+    """
     if not node_ids:
         return ""
-    if fallback and confirmed_id:
-        return str(confirmed_id)
+    if fallback:
+        return str(confirmed_id or node_ids[0])
     if len(node_ids) == 1:
         return str(node_ids[0])
     return f"{node_ids[0]}{RANGE_SEP}{node_ids[-1]}"

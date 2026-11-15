@@ -14,6 +14,7 @@ import pathlib
 
 from _tmp import scratch_dir
 
+from papertrace import paths as paths_module
 from papertrace.paths import portable_loc, portable_path, relativize_doc
 
 
@@ -32,10 +33,12 @@ def test_portable_path_keeps_paths_outside_base():
     letter = "Z" if drive[:1].upper() != "Z" else "Y"
     other_drive = pathlib.Path(f"{letter}:\\elsewhere\\model.py")
     assert portable_path(str(other_drive)) == str(other_drive)
-    # 同盘但不在 base 之下（仓库的上级目录）：同样原样返回，不造 '..\\..'
-    assert pathlib.Path.cwd().parent != pathlib.Path.cwd(), "仓库目录不该是盘符根目录"
-    above = pathlib.Path.cwd().parent / "elsewhere" / "model.py"
-    assert portable_path(str(above)) == str(above)
+    # 同盘但不在 base 之下（base 的上级目录）：同样原样返回，不造 '..\\..'。
+    # base 显式传 scratch_dir：原先那条 `cwd().parent != cwd()` 在盘根目录
+    # （cwd 就是盘符根）会假失败，而那不是本测试要测的东西。
+    above_base = scratch_dir("portable-path-above")
+    above = above_base.parent / "elsewhere" / "model.py"
+    assert portable_path(str(above), above_base) == str(above)
 
 
 def test_portable_path_converts_separators_for_relative_input():
@@ -105,3 +108,48 @@ def test_relativize_doc_leaves_module_paths_alone():
     assert relativize_doc(doc, base) == 1
     assert doc["nodes"][0]["loc"] == "pkg/model.py:10"
     assert doc["nodes"][1]["loc"] == "model.GPT"
+
+
+def test_leaked_absolute_reports_only_real_local_paths():
+    """R154：泄漏诊断只认「真的是本机绝对路径」的值，URL 与模块路径不算。
+
+    三类算泄漏：盘符（D:\\ / D:/）、UNC（\\\\srv\\share）、POSIX 根（/tmp）。
+    https:// 的 scheme 会被 Windows 的 PurePath 当成盘符（路径评审 M4 实测过），
+    所以任何含 :// 的串一律不算——否则 GitHub URL 会被当成泄漏刷屏。
+    """
+    base = scratch_dir("leaked-abs")
+    doc = {
+        "meta": {
+            "repo": {"url": "D:\\a\\b.py"},
+            "paper": {"source": "\\\\srv\\share\\x"},
+        },
+        "nodes": [
+            {"id": "n0", "loc": "/tmp/x"},
+            {"id": "n1", "loc": "https://github.com/x/y"},
+            {"id": "n2", "loc": "model.GPT"},
+            {"id": "n3", "loc": "tests/fixtures/x"},
+            {"id": "n4", "loc": "D:\\a\\b.py:12"},
+            {"id": "n5", "loc": "{}:12"},
+        ],
+        "symbols": {"code": [{"name": "GPT", "defined_at": "D:\\a\\b.py:20"}]},
+    }
+    fn = getattr(paths_module, "leaked_absolute", None)
+    assert callable(fn), "R154：papertrace/paths.py 还没有 leaked_absolute(doc, base) 诊断函数"
+    # 原值返回（不改写、不去重、按字段顺序），loc 形态只判 head
+    assert fn(doc, base) == [
+        "D:\\a\\b.py",
+        "\\\\srv\\share\\x",
+        "/tmp/x",
+        "D:\\a\\b.py:12",
+        "D:\\a\\b.py:20",
+    ], fn(doc, base)
+    # base 之下的绝对路径会被相对化，不算泄漏（否则一切正常的构建也喊狼来了）
+    inside = str(base / "pkg" / "model.py")
+    assert fn({"nodes": [{"id": "n", "loc": f"{inside}:10"}]}, base) == [], "在 base 之下不算泄漏"
+    # 空串 / None / 非 str / 缺键：一律跳过不抛
+    empty = {
+        "meta": {"repo": {"url": ""}, "paper": {"source": None}},
+        "nodes": [{"loc": None}, {}],
+    }
+    assert fn(empty, base) == []
+    assert fn({}, base) == []

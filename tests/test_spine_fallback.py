@@ -110,6 +110,19 @@ def test_resolve_range_keeps_first_last_on_structure_path():
     assert resolve_code_range([], None, False) == ""
 
 
+def test_resolve_range_never_spans_on_fallback_even_without_confirmed():
+    """R158：回退路径一律单节点——judge 没确认（confirmed=None）时也不许按首尾区间扩张。
+
+    回退路径上 s_judge=0 也照样出黄线（s_retr=1 时 c≈0.46 ≥ 0.45，R147），
+    此时 confirmed 是 None；老实现在这里会写 first..last，把整组没审过的
+    候选画成一条线。所以 fallback=True 时必须落到第一个节点。
+    """
+    assert resolve_code_range(["root/@1", "root/@2", "root/@3"], None, True) == "root/@1"
+    assert resolve_code_range(["a", "b", "c"], "b", True) == "b"
+    # 结构路径一个字都不动：三节点仍是 first..last
+    assert resolve_code_range(["a", "b", "c"], None, False) == "a..c"
+
+
 @pytest.mark.parametrize("level,fallback,expected", [
     ("green", True, "yellow"),
     ("green", False, "green"),

@@ -218,6 +218,7 @@
 |---|---|---|
 | 修改 | `tests/test_spine_end_to_end.py:199-204` `test_meta_paper_is_tex` | `paper["source"]` 期望改成 `"tests/fixtures/papers/vaswani2017/attention.tex"`（相对 cwd，`/` 分隔） |
 | 修改 | `tests/test_spine_end_to_end.py:390-442` 回退认领测试 | t3 的 `code_range` 期望改成 `"root/@045"`（该 term 候选组里第一个未被认领的节点），注释写明这是 S20 的结果 |
+| 修改 | `tests/test_spine_end_to_end.py:390-442` 回退认领测试的**输入** pairs | 被 R144 守门逼出的输入调整：旧 pairs 让 @038 同时属 t0 与 t1 → 新产品直接抛 BuildError，故 t1 候选 @038→@039（t0 期望一字未动） |
 | 新增 | `tests/test_imports.py` MODULES | 加 `papertrace.spine_claims`、`papertrace.paths` |
 | 新增 | `tests/test_spine_end_to_end.py` | `test_two_terms_never_claim_the_same_node`、`test_exhausted_candidates_report_claim_not_absence`、`test_structural_duplicate_is_a_build_error`、`test_cli_trace_has_no_drive_letters`、`test_gc16_anchors_do_not_share_nodes` |
 
@@ -238,5 +239,5 @@
 1. 三个 Task 的文件清单**互不交叠**？是（A 与 B 各自新文件；C 只碰 README 与 candidates 的 docstring）。
 2. 每个 Task 的「测试」都能在**没有**其它 Task 的情况下写出来？是（A/B 都是纯函数级；C 无测试）。
 3. 精确值（`CLAIMED_REASON` 必须含哪两词、`portable_loc` 的三类输入、GC14 的四字段）都写成了可断言的形式？是。
-4. 既有测试里会被打破的都点名了？`test_imports.py` MODULES（新模块）——**唯一**一处；其余靠 cli 层相对化避开。
+4. 既有测试里会被打破的都点名了？`test_imports.py` MODULES（新模块），除它之外还有 3 处授权改写，见上表；其余靠 cli 层相对化避开。
 5. 有没有要求执行者「自己发挥」的地方？`portable_path` 的异常处理写到了 `try/except ValueError` 级别。

@@ -124,7 +124,9 @@ spine）全部不动——单点、可测、不散落。
 - **GC14**：`relativize_doc` 之后，当输入都在 cwd 之下时，trace.json 的 `meta.repo.url`/`meta.paper.source`/
   所有 op `loc`/所有 `defined_at` **不含** `[A-Za-z]:\\` 与以 `/` 开头的绝对形态。
 - **GC15**：认领唯一性**不增加** judge 调用次数上限（仍每项 3、合计 12），且实测 ≤ 现状。
-- **GC16**：同一公式单元内，所有 anchor 的 `code_expr_range` 指认的节点集合**互不相交**（结构路径与回退路径都要成立）。
+- **GC16**：同一公式单元内，**认领（claim）集合**互不相交——一个算子至多归属一个公式项；anchor 的 `code_expr_range` 写出的节点与它覆盖的候选节点全部计入认领；跨公式单元共享是允许的。
+  R157/R158 之后所有 range 都是单节点，「认领口径」与「区间口径」因此是同一件事。**唤醒条件**：若将来结构路径的一个公式项又产出多节点区间，
+  必须重新裁决区间口径（内部节点算不算认领）并补测试，不许默默恢复第三态。
 - 沿用：零新依赖、单文件 ≤200 行（`splitlines` 口径）、GC8 不带 `--paper` 逐项不变、offline 诚实空态、
   禁止 mock 填产品输出、测试用 `tests/_tmp.py::scratch_dir`、每次提交一次改动。
 
@@ -156,7 +158,7 @@ spine）全部不动——单点、可测、不散落。
 | R144 | **推翻 R138 的「理论不可达」**：守门**只在结构路径（`fallback=False`）执行**；回退路径的 grouped 跨 term 重复是**正常输入**，唯一性交给 `claimed` | builder-check 探针实测回退 grouped = `{t0:[@037,@045,@071], t3:[@037,@045,@071]}`，按字面实现会让**所有结构不命中的 build** 崩 BuildError——那正是 S15 的核心场景与两条既有回归测试 | 结构路径若真出现重复会响亮失败（保留守门）；回退路径不变 |
 | R145 | 两条既有测试**必然要改**，新期望值写死：`test_meta_paper_is_tex` 的 `source` → `tests/fixtures/papers/vaswani2017/attention.tex`；回退测试里 t3 的 `code_range` → `root/@045`（= 该 term 候选组里第一个未被认领的节点） | 设计 §7.1 说「零回归」却不点名，实现者跑到红会怀疑自己实现错而回滚认领 | 若把断言改成自证循环，验收就成了橡皮图章——所以期望值必须是**手算的常量** |
 | R146 | `CLAIMED_REASON` 统一文案：`候选全部被同一公式单元内更早的公式项认领（一个算子只归一个公式项）`，**裸 append** 进 unresolved，**不走** `_record_unresolved` | 走 `_record_unresolved` 会包装成「置信度 x < 0.45：…」，但这里的成因是「节点被占了」不是「证据不够」，文案会误导 | unresolved 的字段形态与其它条目略不一致（仍满足 schema：kind/ref/reason 都有） |
-| R147 | **GC16 的达成机制补死**：任何**产出 anchor** 的项，把它 `code_expr_range` 覆盖到的节点**全部加进 `claimed`** | builder-check 指出只认领「judge 确认的那个」时，回退路径 s_judge=0 仍可上黄线（s_retr=1 时 c≈0.46≥0.45）且 range 是 first..last，两项仍可重叠。GC16 是硬约束，必须有无条件机制 | 无 judge 确认的回退 anchor 会吞掉整段候选，同单元后面的项更早落 unresolved——方向是「少连一条线并写明原因」 |
+| R147 | **GC16 的达成机制补死**：任何**产出 anchor** 的项，把它 `code_expr_range` 覆盖到的节点**全部加进 `claimed`** | builder-check 指出只认领「judge 确认的那个」时，回退路径 s_judge=0 仍可上黄线（s_retr=1 时 c≈0.46≥0.45）；当时 range 是 first..last，两项仍可重叠（R158 之后回退一律单节点，这条动机随历史保留，机制本身无条件生效）。GC16 是硬约束，必须有无条件机制 | 无 judge 确认的回退 anchor 会吞掉整段候选，同单元后面的项更早落 unresolved——方向是「少连一条线并写明原因」 |
 | R148 | 守门/接线抛的 `BuildError` 由 cli **新增一个 try** 收成一行错误 + 退出码 2（与既有 BuildError 处理一致），不冒 traceback | `attach_paper` 现在不在任何 `try/except BuildError` 里，守门一炸就是裸 traceback | cli.py 193→≤198 行，仍 ≤200 |
 | R149 | 演示产物**重新生成并覆盖** `output/demo/{code-only,with-paper,fallback-yellow}`；旧产物不留副本（它是 `output/`，gitignored，且新产物本身就是证据） | 旧产物里两项指 `@037` 正是要被修掉的缺陷，留副本只会让下一个人以为缺陷还在 | 失去「修复前后对比」的实物；设计 §7.3 的对比改写进交付说明（文字 + 新产物数值） |
 | R150 | CLI 端到端新测试必须**显式 pin cwd = 仓库根**（`subprocess.run(..., cwd=REPO)`） | GC14 的相对基准是 cwd；从别的目录跑 pytest 期望值全漂 | 测试多一点样板 |

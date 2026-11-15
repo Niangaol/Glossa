@@ -150,8 +150,9 @@ set PAPERTRACE_LLM=deepseek-chat
 - `s_judge=0` 时即使检索满分也只到 `c=0.460085` **黄线**（judge 权重 0.50 是决定性的）。
 - 绿线门独立生效：`s_struct=0.49` → `c=0.830897` 仍黄线；`0.5` → `0.832018` 绿线。
 
-所以要点亮绿线，必须换一个**真提供 `/embeddings` 的 OpenAI 兼容后端**（不是 DeepSeek），
-并且 judge 能答 `yes`——只配 `PAPERTRACE_LLM_BACKEND=openai` 是黄线，不是绿线。
+所以要点亮绿线，得让检索信号真的拿得到：**DeepSeek 没有 `/embeddings`**，配它时 `s_retr`
+恒 0，天花板就是黄线；换一个真提供 `/embeddings` 的 OpenAI 兼容后端，并且 judge 能答 `yes`，
+才够得到绿线——只配 `PAPERTRACE_LLM_BACKEND=openai` 而 embeddings 端点取不到，仍然是黄线。
 
 ### trace.json 的字段约定
 
@@ -380,6 +381,10 @@ anchor 是「归属」断言——这个公式项的工作由哪个算子节点�
 - 候选被前面项占尽的项会落进 `unresolved`，原因写「被同一公式单元里更早的公式项认领」——
   与「根本没有候选」是**两种不同**的文案，用户分得清是哪种。
 
+R158 之后 anchor 的 `code_expr_range` 一律是**单节点**（回退路径不再按首尾区间猜），所以「认领口径」
+与「区间口径」是同一件事；若将来结构路径的一个公式项又产出多节点区间，得重新裁决区间内部的节点算不算
+被认领，并补上测试（global-constraints.md GC16 的唤醒条件）。
+
 **已知局限**：认领是**按项编号顺序的贪心**，不是全局最大匹配。理论上存在「先来的项抢走了后面的项
 更该用的节点」的情形；这时后面的项落 `unresolved` 并写明原因，而不是硬抢。
 
@@ -459,6 +464,8 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 `TOKEN`/`CUSTOM_OBJ` 归 **2** 是**契约策略**而不是「你输入写错了」：spec 里出现本切片不支持的
 `InputKind` 就是契约错误（与未知 kind 同一类）；`no_grad`/`cond` 归 **5** 是**能力边界**（spec 完全合法，
 只是图里有非张量节点）。两者的分界线是「spec 合不合法」，不是「用户有没有写错」。
+
+契约错误退出（码 2）**不会**删除上一次构建留下的 `trace.json`——失败发生在写出之前，旧产物原样留在磁盘上。
 
 `index.html` 是**派生产物**：每次 `build` 都重新生成并覆盖，**不受 `--force` 约束**（R74）；
 `--force` 只约束 `trace.json`（对应码 3）。HTML 渲染失败时报码 2，且 `trace.json` 早已写出、绝不回删。

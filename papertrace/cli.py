@@ -22,7 +22,7 @@ import jinja2
 
 from papertrace.build_trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
-from papertrace.paths import relativize_doc
+from papertrace.paths import leaked_absolute, relativize_doc
 from papertrace.render_html import write_html
 from papertrace.report import (
     print_build_summary,
@@ -125,11 +125,12 @@ def _cmd_build(args: argparse.Namespace) -> int:
         except BuildError as exc:  # R148：契约错误（如结构配对重复）报一行，不冒 traceback
             print(f"papertrace build：{exc}", file=sys.stderr)
             return UNIMPLEMENTED
-        print(
-            f"  论文脊柱：anchors={len(doc['anchors'])} "
-            f"unresolved={len(doc['unresolved'])}（{args.paper}）"
-        )
+        print(f"  论文脊柱：anchors={len(doc['anchors'])} unresolved={len(doc['unresolved'])}（{args.paper}）")
     relativize_doc(doc)  # R139/R140：写盘前一次性把本机绝对路径改成相对构建目录
+    leaked = leaked_absolute(doc)  # R154/R155：仍然绝对的路径必须当面提示，不许静默送出去
+    if leaked:
+        msg = f"papertrace build：{len(leaked)} 条路径不在构建目录 {Path.cwd()} 之下，按 GC14 原样保留（仍含盘符）；要便携化请在仓库根目录或其上级目录构建"
+        print(msg, file=sys.stderr)
     try:
         validate_trace(doc)
     except TraceSchemaError as exc:
@@ -152,10 +153,7 @@ def _cmd_build(args: argparse.Namespace) -> int:
     try:
         html_path = write_html(doc, Path(args.out))
     except (BuildError, jinja2.TemplateError) as exc:
-        print(
-            f"papertrace build：trace.json 已写出，HTML 渲染失败：{exc}",
-            file=sys.stderr,
-        )
+        print(f"papertrace build：trace.json 已写出，HTML 渲染失败：{exc}", file=sys.stderr)
         return 2
     print(f"已写出 {html_path}（单文件离线 HTML，零外链）")
     return 0
