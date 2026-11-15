@@ -8,9 +8,10 @@
   misses。绝不发明论文侧证据凑分。本切片上限 0.5+0.1+0.2=0.8，仍过绿线门 0.5。
 - R24：「超参名在 config 出现」读作**代码侧**超参名 n_layer/n_head/n_embd/block_size，
   四个全在才 +0.1，只加一次。
-- R25/R25a：同构判定按 parent_id 分组、组内做贪心子序列匹配，取 nodes 顺序里
-  **第一个**匹配的组；代码侧多出的算子允许被跳过（因果掩码 masked_fill 就夹在
-  中间）。只配第一层（h.0.attn），逐层对齐是 M4。
+- R25/R25a：同构判定按 parent_id 分组、组内做贪心子序列匹配；`pairs` 取 nodes
+  顺序里**第一个**匹配的组，代码侧多出的算子允许被跳过（因果掩码 masked_fill
+  就夹在中间）。L2 起 `StructSignal.groups` 报出**全部**命中组（两层都同构时
+  报两个），`pairs` 与 `score` 仍只认首组、只加一次 +0.2（首匹配语义不变）。
 - R37：结构路径上 pairs 是 judge 的唯一候选来源；同构不命中 → pairs == []。
   S15 之后由 kind 过滤 + 词法排序的回退候选接管（papertrace/spine_fallback.py），
   那条路的 tier 上限锁 yellow（R112）——结构没对上账，就不发绿线。
@@ -258,3 +259,41 @@ def _fake_terms() -> list[Term]:
         Term(2, "\\mathrm{softmax}", "norm"),
         Term(3, "V", "matmul"),
     ]
+
+
+# --- L2：报出全部同构组（B 方案逐层展开的候选来源）--------------------------
+
+
+def test_every_attention_layer_is_reported(fixture):
+    """B 方案：两层都同构时，groups 要如实给出两个组，不许只报首层。"""
+    mod, doc, terms = fixture
+    sig = struct_signal(doc["nodes"], terms, mod.config)
+    assert [m.group for m in sig.groups] == [
+        "root/transformer.h.0.attn", "root/transformer.h.1.attn"]
+
+
+def test_pairs_still_come_from_the_first_group(fixture):
+    """pairs 是 S7 的候选来源，逐层展开不许改变它的语义（R25a 首匹配）。"""
+    mod, doc, terms = fixture
+    sig = struct_signal(doc["nodes"], terms, mod.config)
+    assert sig.groups[0].pairs == sig.pairs
+
+
+def test_score_does_not_grow_with_more_layers(fixture):
+    """两组同构也只加一次 +0.2：0.5+0.1+0.2=0.8，不许变成 1.0。"""
+    mod, doc, terms = fixture
+    assert struct_signal(doc["nodes"], terms, mod.config).score == pytest.approx(0.8)
+
+
+def test_no_isomorphism_means_no_groups(fixture):
+    """顺序打乱 → 一组都匹配不上，groups 为空（回退路径没有层可言）。"""
+    mod, doc, terms = fixture
+    sig = struct_signal(doc["nodes"], list(reversed(terms)), mod.config)
+    assert sig.groups == ()
+
+
+def test_single_group_reports_exactly_one():
+    """单组夹具：groups 恰好一组，且它就是 pairs 的来源。"""
+    sig = struct_signal(_fake_nodes(), _fake_terms(), None)
+    assert len(sig.groups) == 1
+    assert [nid for _, nid in sig.groups[0].pairs] == ["n0", "n1", "n2", "n3"]

@@ -22,8 +22,10 @@
   里第一个匹配的组；拉平成一条序列会产生跨模块假匹配。匹配是贪心从左到右的子序列：
   代码侧多出的算子允许被跳过（因果掩码 masked_fill 就夹在中间）。term.kind 不在
   冻结映射里时永远匹配不上。
-- R25a：只配第一层。h.0.attn 与 h.1.attn 完全同构且都能匹配，首匹配规则选
-  h.0.attn。这是本切片的已知局限（逐层对齐是 M4）：签名不变，也不返回多个组。
+- R25a：同构判定收集**所有**匹配的算子组（L2 起）——h.0.attn 与 h.1.attn
+  完全同构且都能匹配时两个组都报进 groups。pairs 仍取 nodes 顺序里第一个匹配的
+  组（S7 的候选来源与首匹配语义不变），score 仍只加一次 +0.2（两组同构也是
+  0.8）。逐层展开由下游 spine 按 groups 循环完成，本函数只如实报数。
 - R37：pairs 是判断题（S7）唯一的候选来源。同构不命中 → pairs == [] → s_judge=0。
   绝不为了给 judge 凑候选而编造 pairs：不做全配对。S15 已批：非结构候选由
   papertrace.align.candidates 产出，pairs 仍是本模块唯一产出。
@@ -32,7 +34,8 @@
 - loc 是 file:line（M1b 后）或模块路径（回落时）；判据只看算子名与组内顺序，
   配对回传 node_id，不依赖 loc。
 
-产出 StructSignal(score, hits, misses, pairs)；pairs 是 [(term.index, node_id)]。
+产出 StructSignal(score, hits, misses, pairs, groups)；pairs 是首组的
+[(term.index, node_id)]，groups 是全部命中组（StructMatch(group, pairs)）。
 """
 
 from __future__ import annotations
@@ -71,13 +74,21 @@ _SHAPE_MISS = (
 _RETRIEVAL_MISS = "双向检索规则：offline 没有检索结果，top1 是否同一对无从比对，不扣分"
 
 
+class StructMatch(NamedTuple):
+    """L2：一个同构命中组。group 是 parent_id，pairs 是组内 [(term.index, node_id)]。"""
+
+    group: str
+    pairs: list[tuple[int, str]]
+
+
 class StructSignal(NamedTuple):
-    """结构信号。pairs 是 judge 的唯一候选来源（R37）。"""
+    """结构信号。pairs 是 judge 的唯一候选来源（R37），取第一个命中组。"""
 
     score: float
     hits: list[str]
     misses: list[str]
     pairs: list[tuple[int, str]]
+    groups: tuple[StructMatch, ...] = ()
 
 
 def struct_signal(nodes: list[dict], terms: list, config) -> StructSignal:
@@ -86,6 +97,7 @@ def struct_signal(nodes: list[dict], terms: list, config) -> StructSignal:
     hits: list[str] = []
     misses: list[str] = [_LAYER_MISS, _SHAPE_MISS, _RETRIEVAL_MISS]
     pairs: list[tuple[int, str]] = []
+    groups: tuple[StructMatch, ...] = ()
 
     # R24：超参名在 config 出现（四个全在才 +0.1，只加一次）
     if config is None:
@@ -102,18 +114,22 @@ def struct_signal(nodes: list[dict], terms: list, config) -> StructSignal:
                 "超参名在 config 出现：" + "/".join(HYPERPARAM_NAMES) + " 四个都在（+0.1）"
             )
 
-    # R25/R25a：组内贪心子序列同构 + 首匹配组；R37：pairs 由这条规则顺带产出
+    # R25/R25a：组内贪心子序列同构，报出全部命中组；pairs 取首组；R37：pairs
+    # 由这条规则顺带产出，score 只加一次（多层同构不是多次加分）
     if not terms:
         misses.append(
             "算子序列与公式项顺序同构：公式没拆出任何项，无从比对，不加分，候选对为空"
         )
     else:
-        pairs, group_id, matched = _first_isomorphic_group(nodes, terms)
-        if pairs:
+        matches = _isomorphic_groups(nodes, terms)
+        if matches:
+            pairs = matches[0].pairs
+            groups = tuple(matches)
             score += BONUS_ISOMORPHIC
+            by_id = {n.get("id"): n.get("op") for n in _operator_nodes(nodes)}
             hits.append(
-                f"算子序列与公式项同构：{group_id} 组内 "
-                + "→".join(matched)
+                f"算子序列与公式项同构：{matches[0].group} 组内 "
+                + "→".join(by_id[node_id] for _, node_id in pairs)
                 + " 依次命中（+0.2）"
             )
         else:
@@ -122,17 +138,17 @@ def struct_signal(nodes: list[dict], terms: list, config) -> StructSignal:
                 "不加分，候选对为空"
             )
 
-    return StructSignal(min(1.0, max(0.0, score)), hits, misses, pairs)
+    return StructSignal(min(1.0, max(0.0, score)), hits, misses, pairs, groups)
 
 
-def _first_isomorphic_group(nodes: list[dict], terms: list):
-    """R25/R25a：按 nodes 顺序找第一个匹配的算子组；不命中返回 ([], "", [])。"""
+def _isomorphic_groups(nodes: list[dict], terms: list) -> list[StructMatch]:
+    """R25/L2：按 nodes 顺序收集**所有**匹配的算子组；不命中返回 []。"""
+    matches: list[StructMatch] = []
     for group_id, ops in _groups_in_node_order(nodes):
         pairs = _greedy_subsequence(ops, terms)
         if pairs:
-            by_id = {node.get("id"): node.get("op") for node in ops}
-            return pairs, group_id, [by_id[node_id] for _, node_id in pairs]
-    return [], "", []
+            matches.append(StructMatch(group_id, pairs))
+    return matches
 
 
 def _groups_in_node_order(nodes: list[dict]) -> list[tuple[str, list[dict]]]:
