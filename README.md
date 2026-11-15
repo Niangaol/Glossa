@@ -334,11 +334,15 @@ set PAPERTRACE_LLM=deepseek-chat
 - **`anchors` / `code_expr_range`（S9 起）**：一条 anchor = 一个论文公式项对一个算子节点。
   `code_expr_range` 记的是 **trace 节点 id 区间**（单个 `root/@037`，多个 `root/@037..root/@045`，
   按结构信号 `pairs` 的 node_id 首尾），**仍是纯节点 id 区间、不换成 `file:line`**：换格式会让
-  `index.html` 的彩线全部静默消失（`render_html.py:82` 拿它当节点 id 用），真实行号在
+  `index.html` 的彩线全部静默消失（`render_html.py:98` 拿它当节点 id 用），真实行号在
   `nodes[].loc` 上——**算子节点的 `loc` 现在是真实 `file:line`**（M1b 已落地）；M1a 时它全是
   `model.GPT` 这类模块路径（编行号就是造假）。HTML 的算子行显示 `basename:line`，完整路径在
   `title` 里。**两条局限**：`loc` 是**绝对路径**（`trace.json` 机器相关，相对化归 M4）；
   **op 节点 `loc` 是 `file:line` 而 module 节点 `loc` 仍是模块路径**（同一字段两种语义，既有设计）。
+  **R133**：另两条溯源字段 `meta.repo.url` 与 `meta.paper.source` **原样保留、不相对化**——它们是「这份
+  trace 从哪来」的机器可读记录（`paper.source` 是本机 `.tex` 路径，`repo.url` 是命令行传入的仓库路径），
+  分享 `trace.json` 会一并带上本机目录，相对化归 M4。给人读的正文侧则只显 `basename`：算子行与符号表的
+  完整路径进 `title`，HTML 里的仓库名取 `Path(...).name`。
   `tier` 只有 `green`/`yellow`/`none` 三档，`none` **绝不写成 anchor**，只进 `unresolved`；
   `source` 只可能是 `model`（判断题给了 yes）或 `static`（只有结构/检索依据）——anchor 不是
   实测出来的，所以永远不是 `runtime`。`signals` 里的 `s_retr`/`s_judge`/`s_struct` 与

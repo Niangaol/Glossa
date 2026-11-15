@@ -108,7 +108,7 @@ def _attach_unit(doc: dict, unit, model, by_id: dict) -> None:
         _attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []), by_id, fallback)
 
 
-def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids, by_id, fallback) -> None:
+def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id: dict, fallback: bool) -> None:
     """一个公式项：三个信号 → confidence → tier → anchor 或 unresolved。"""
     term_id = f"{unit.unit_id}-t{term.index}"
     # R85：逐项 s_retr 只取本项 forward 的最大分；缺键/空表 → 0.0（保守方向），

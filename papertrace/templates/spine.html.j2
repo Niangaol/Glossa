@@ -123,7 +123,7 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 <table>
 <tr><th>side</th><th>symbol</th><th>value</th><th>status / 含义</th><th>defined_at / first_seen</th><th>maps to</th></tr>
 {% for s in symbol_rows %}
-<tr><td>{{ s.side }}</td><td class="mono">{{ s.name }}</td><td class="mono">{{ s.value if s.value is not none else "-" }}</td><td>{{ s.meaning }}</td><td class="mono">{{ s.where }}</td><td class="mono">{{ s.maps_to }}</td></tr>
+<tr><td>{{ s.side }}</td><td class="mono">{{ s.name }}</td><td class="mono">{{ s.value if s.value is not none else "-" }}</td><td>{{ s.meaning }}</td><td class="mono"{% if s.where_full %} title="{{ s.where_full }}"{% endif %}>{{ s.where }}</td><td class="mono">{{ s.maps_to }}</td></tr>
 {% endfor %}
 </table>
 </section>

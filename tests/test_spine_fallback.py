@@ -58,6 +58,45 @@ def test_empty_pairs_fall_back_to_kind_candidates():
     assert empty == {} and empty_flag is False
 
 
+def _matmul_nodes(count: int) -> list[dict]:
+    """count 个同型算子节点：全都对一个 matmul 项有资格，用来把预算撑爆。"""
+    return [{"id": f"root/@m{i}", "level": "op", "kind": "op", "op": "matmul",
+             "label": f"root.matmul{i}"} for i in range(count)]
+
+
+def test_fallback_budget_defaults_are_pinned_by_signature_and_behaviour():
+    """S15 预算：per_term_limit=3 / total_limit=12 既是签名默认值，也真的在截断候选。
+
+    原有断言只写 `set(grouped) <= {0,1,2}`——那测的是「键是 term.index」，压根没碰预算
+    （D-M-4）。这里用 5 个 term × 9 个同型资格节点把两个上限同时撑爆。
+    """
+    import inspect
+
+    import papertrace.spine_fallback as fb
+
+    params = inspect.signature(fb.pairs_or_fallback).parameters
+    assert params["per_term_limit"].default == 3, "每项候选的默认上限就是 3"
+    assert params["total_limit"].default == 12, "合计候选的默认上限就是 12"
+
+    # ① 单个 term 面对 9 个资格候选 → 只拿 3 个（per_term_limit 真的在截断）
+    single_grouped, single_fallback = pairs_or_fallback(_Signal([]), _terms()[:1], _matmul_nodes(9))
+    assert single_fallback is True
+    assert list(single_grouped) == [0]
+    assert len(single_grouped[0]) == 3, "单 term 超过 per_term_limit 必须被截到 3 个"
+
+    # ② 5 个 term 抢 9 个同型资格节点 → 每项 ≤3 且合计 ≤12（total_limit 真的在截断）
+    flood_terms = [Term(i, "QK^{T}", "matmul") for i in range(5)]
+    grouped, fallback = pairs_or_fallback(_Signal([]), flood_terms, _matmul_nodes(9))
+    assert fallback is True
+    assert set(grouped) <= {0, 1, 2, 3, 4}
+    for index, ids in grouped.items():
+        assert len(ids) <= 3, f"term {index} 拿了 {len(ids)} 个候选，超过每项上限 3"
+    total = sum(len(ids) for ids in grouped.values())
+    assert total <= 12, f"回退候选合计 {total} 个，超过 total_limit=12"
+    assert total == 12, "预算按 term.index 升序分配：前四项各 3 个正好用尽 12"
+    assert 4 not in grouped, "预算耗尽后第五项如实为空，不凑对"
+
+
 def test_resolve_range_uses_confirmed_node_on_fallback():
     """"R117：回退路径只指认 judge 确认的那一个节点，绝不按首尾区间扩张。"""
     assert resolve_code_range(["root/@1", "root/@2", "root/@3"], "root/@2", True) == "root/@2"

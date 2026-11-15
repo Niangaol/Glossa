@@ -23,11 +23,13 @@ from papertrace.align.score import confidence
 from papertrace.align.struct_signal import StructSignal
 from papertrace.build_trace import build_trace, load_entry
 from papertrace.exceptions import LLMUnavailable
-from papertrace.ingest.paper import IngestError
+from papertrace.ingest.paper import IngestError, ingest_paper
 from papertrace.llm.client import ChatResult
 from papertrace.llm.prompts import JUDGE_PROMPT_VERSION
+from papertrace.parse_paper.split_terms import split_formula
 from papertrace.schema_validate import load_trace, validate_trace
 from papertrace.spine import attach_paper
+from papertrace.spine_fallback import RANGE_SEP, pairs_or_fallback
 from tests._tmp import scratch_dir
 
 # 不依赖 cwd：从哪个目录跑 pytest 都得找得到夹具
@@ -403,11 +405,36 @@ def test_structural_miss_falls_back_to_kind_candidates_but_never_green(monkeypat
     attach_paper(doc, PAPER, model)
     assert len(doc["anchors"]) == 4, "四项都该有回退候选，否则测的不是回退路径"
     assert doc["unresolved"] == []
+    # R117：回退路径只写 judge 确认的那**一个**节点 id。期望值用产品自己的候选生成器
+    # 算出来（不手捏 anchor、不硬编码节点 id）：假后端对每个候选都答 yes，所以
+    # judge 确认的就是该 term 候选组里的第一个节点。
+    expected_first: dict[str, str] = {}
+    for unit in ingest_paper(PAPER).units:
+        unit_terms = split_formula(unit.latex)
+        if not unit_terms:
+            continue
+        signal = _no_isomorphism(doc["nodes"], unit_terms, None)
+        grouped, is_fallback = pairs_or_fallback(signal, unit_terms, doc["nodes"])
+        assert is_fallback, "这条测试必须走在退路径上"
+        for term in unit_terms:
+            group = grouped.get(term.index) or []
+            assert group, "每个公式项都该有回退候选"
+            expected_first["%s-t%s" % (unit.unit_id, term.index)] = group[0]
+    node_ids = {str(n["id"]) for n in doc["nodes"]}
     for anchor in doc["anchors"]:
         assert anchor["tier"] == "yellow", "R112：回退产的线最高到黄"
         assert anchor["confidence"] >= 0.75, "分数本身够绿，被降的是 tier"
         assert "最高黄线" in anchor["evidence"], "降级理由必须写在用户看得见的地方"
-        assert ":" not in anchor["code_expr_range"], "R117：只指认一个节点，不是区间"
+        term_id = "%s-t%s" % (anchor["paper_unit_id"], anchor["formula_term_index"])
+        code_range = str(anchor["code_expr_range"])
+        # 原来是 assert ":" not in code_expr_range——节点 id 里本来就没有冒号，
+        # 首尾区间 root/@037..root/@071 同样不含冒号，那条断言是空转的（D-M-2）。
+        assert code_range.count(RANGE_SEP) == 0, (
+            "R117：回退路径只写一个节点 id，不是首尾区间：%r" % code_range)
+        assert code_range in node_ids, "R117：写的必须是 trace 里真实存在的节点 id：%r" % code_range
+        assert code_range == expected_first[term_id], (
+            "R117：回退路径写的必须是 judge 确认的那一个节点：%r != %r"
+            % (code_range, expected_first[term_id]))
         assert anchor["code_expr_range"].startswith("root/@")
         assert set(anchor["signals"]) == {"s_retr", "s_judge", "s_struct"}
     # 两条注入都被真的走到：embedding 跑了（否则测的是 offline 归零），judge 也真的问了

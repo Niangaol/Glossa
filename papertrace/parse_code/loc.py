@@ -23,6 +23,9 @@ def loc_from_stack_trace(stack_trace: str) -> str:
        全部帧被排除 → 返回 "" → 回落 root_loc（诚实降级，宁缺毋假）。
     2. 行号只定位到**行**，不区分行内算子：同一行可能挤着多个算子（真实夹具里 68 个
        算子都在 tests/fixtures/nanogpt/model.py:147），行内到底是哪一个只能靠 node id。
+    3. 帧里的 `<path>` 是**本机绝对路径**（机器相关）：分享 trace.json 会一并带上本机目录，
+       相对化归 M4（README 同口径写明）；HTML 正文侧已由 R116 只显 `basename:line`，
+       完整路径进 `title`。
     """
     if not stack_trace:
         return ""

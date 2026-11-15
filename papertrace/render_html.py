@@ -60,11 +60,14 @@ def _loc_text(node: dict) -> tuple[str, str]:
     绝对路径不进正文：它会泄露本机目录，而正文要给人读。模块节点的 loc 是模块名
     （不是 file:line），原样不显示——同一字段两种语义是既有设计，不编模块行号。
     """
-    loc = str(node.get("loc") or "")
+    short, full = _where_texts(str(node.get("loc") or ""))
+    return (short, full) if full else ("", "")
+
+
+def _where_texts(loc: str) -> tuple[str, str]:
+    """R116 同口径：`<path>:<line>` → (basename:line, 完整路径)；形状不合法 → (原样, "")。"""
     head, sep, line = loc.rpartition(":")
-    if not sep or not line.isdigit() or not head:
-        return "", ""
-    return "%s:%s" % (Path(head).name, line), loc
+    return ("%s:%s" % (Path(head).name, line), loc) if sep and line.isdigit() and head else (loc, "")
 
 
 def _shape_texts(node: dict) -> tuple[str, str]:
@@ -146,22 +149,24 @@ def _terms(doc: dict) -> list[dict]:
 
 
 def _symbol_rows(doc: dict) -> list[dict]:
-    """代码侧 / 论文侧符号与映射；骨架模式代码侧为空，如实显示。"""
+    """代码侧 / 论文侧符号与映射；骨架模式代码侧为空，如实显示（R116：where 只显 basename:line）。"""
     symbols = doc.get("symbols") or {}
     rows: list[dict] = []
     for s in symbols.get("code") or []:
+        where, where_full = _where_texts(str(s.get("defined_at") or "-"))
         rows.append({"side": "代码", "name": s.get("var") or s.get("symbol"), "value": s.get("value"),
-                     "meaning": s.get("symbol") or "-", "where": s.get("defined_at") or "-", "maps_to": "-"})
+                     "meaning": s.get("symbol") or "-", "where": where, "where_full": where_full, "maps_to": "-"})
     for s in symbols.get("paper") or []:
+        where, where_full = _where_texts(str(s.get("first_seen") or "-"))
         rows.append({"side": "论文", "name": s.get("symbol"),
                      "value": s.get("value") if s.get("value") is not None else "-",
-                     "meaning": s.get("meaning") or "-", "where": s.get("first_seen") or "-", "maps_to": "-"})
+                     "meaning": s.get("meaning") or "-", "where": where, "where_full": where_full, "maps_to": "-"})
     for m in symbols.get("mapping") or []:
         code_var = m.get("code_var") or "?"
         paper_symbol = m.get("paper_symbol")
         rows.append({"side": "映射", "name": "%s → %s" % (code_var, paper_symbol or "-"),
                      "value": m.get("value") if m.get("value") is not None else "-",
-                     "meaning": m.get("status") or "-", "where": "-",
+                     "meaning": m.get("status") or "-", "where": "-", "where_full": "",
                      "maps_to": paper_symbol or "-"})
     return rows
 

@@ -491,17 +491,69 @@ def test_operator_rows_show_basename_and_full_path_in_title(base_doc):
 
 
 def test_module_rows_do_not_show_module_path_as_a_line(base_doc):
-    """同一 loc 字段两种语义：module 节点的模块名不许被当成行号显示（R116）。"""
+    """同一 loc 字段两种语义：module 节点的模块名不许被当成行号显示（R116）。
+
+    FIX-2（D-M-1）：原版只查「模块名没被当成 file:line」，而把 render_html.py:92 的
+    `if node.get("level") == "op":` 改成 `if True:`（34 个 module 节点全进 SVG 桶）
+    之后 21 条测试仍全绿——那条断言是空转的。现在把 SVG 算子行钉死：行数恰好等于
+    level=="op" 节点数，且每一行的文本都来自某个 level=="op" 节点（模块节点一个
+    都不许混进来）。数量与期望集合都从真实 doc 数出来，不硬编码任何魔数。
+    """
     doc = copy.deepcopy(base_doc)
+    ops = [n for n in doc["nodes"] if n.get("level") == "op"]
     mods = [
         n
         for n in doc["nodes"]
         if n.get("level") == "module" and ":" not in str(n.get("loc") or "")
     ]
+    assert ops, "夹具本该有算子节点"
     assert mods, "夹具本该有模块节点"
     html = render_html(doc)
+    rows = re.findall(r'<text class="nodelabel"[^>]*>(.*?)</text>', _section(html, "ops"))
+    assert len(rows) == len(ops), (
+        "SVG 算子行数 %d != level==op 节点数 %d：要么漏画了算子，要么把非算子节点画了进来"
+        % (len(rows), len(ops)))
+    op_texts = set()
+    for node in ops:
+        if node.get("kind") == "op" and node.get("op"):
+            op_texts.add(escape(str(node["op"])))
+        else:
+            op_texts.add(escape(str(node.get("label") or node.get("id") or "")))
+    for row in rows:
+        assert row in op_texts, "SVG 里有一行不来自 level==op 节点：%r" % (row,)
     for node in mods:
         loc = str(node["loc"])
         assert "<title>%s</title>" % (escape(loc),) not in html
         assert (loc + ":") not in html
 
+
+
+def test_symbol_rows_show_basename_and_full_path_in_title(offline_doc):
+    """FIX-1（D-I-1）：符号表 where 列只显 basename:line，完整路径只进 <td title="...">。
+
+    R116 同口径（算子行的 _loc_text 已经这么做）：正文只给人读，绝对路径会泄露
+    本机目录。拿不到合法行号的 where（论文侧 first_seen 是 unit_id、缺记是 "-"）
+    原样显示，绝不编行号。meta.repo.url 与 meta.paper.source 是溯源记录（R133），
+    按裁决保留绝对路径，所以全文查绝对路径时先把 meta 节剔掉。
+    """
+    code_symbols = [s for s in offline_doc["symbols"]["code"] if s.get("defined_at")]
+    assert code_symbols, "夹具本该有带 defined_at 的代码符号"
+    html = render_html(offline_doc)
+    block = _section(html, "symbols")
+    for s in code_symbols:
+        loc = str(s["defined_at"])
+        head, sep, line = loc.rpartition(":")
+        assert sep and line.isdigit(), "代码符号 defined_at 必须是 file:line：%r" % (loc,)
+        short = "%s:%s" % (Path(head).name, line)
+        assert short in block, "符号表没显示 %s" % short
+        assert '<td class="mono" title="%s">%s</td>' % (escape(loc), escape(short)) in block, (
+            "完整路径没进 title 或正文不是 basename:line：%s" % loc)
+    assert "model.py:20" in block  # 夹具 config 类默认值就在 model.py:20-24
+    # 正文（剔除 title 属性与 <title> 元素内容后）不许再出现本机绝对路径
+    body = html.replace(_section(html, "meta"), "")  # R133：溯源字段保留绝对路径
+    body = re.sub(r"<title>.*?</title>", "", body, flags=re.S)
+    body = re.sub(r'\s+title="[^"]*"', "", body)
+    for s in code_symbols:
+        assert str(s["defined_at"]) not in body, "绝对路径漏进正文：%s" % s["defined_at"]
+    assert not re.search(r"[A-Za-z]:\\\\", body), "正文还有盘符绝对路径"
+    assert not re.search(r"(?:^|[\s'\"=])/(?!/)(?:home|Users|tmp|opt|var|mnt|media|root|usr|etc)/", body), "正文还有 POSIX 绝对路径"

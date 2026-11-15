@@ -180,6 +180,33 @@ def test_unknown_kind_yields_no_candidates():
     _assert_chinese_lines(cands)
 
 
+def test_zero_candidate_miss_distinguishes_unknown_kind_from_missing_operator(real):
+    """A-Minor-1：零候选有两种成因，文案必须分开说，不许一句「映射里没有」蒙过去。"""
+    nodes, terms = real
+    # 成因②：kind 在冻结映射里（transpose → transpose），但当前 trace 没有这类算子节点。
+    # 拿真实 trace 的 nodes 子集（剔掉 transpose）来造，不手捏假 trace。
+    assert any(n.get("op") == "transpose" for n in nodes), "夹具里得有 transpose，否则测不到成因②"
+    no_transpose = [n for n in nodes if n.get("op") != "transpose"]
+    assert not any(n.get("op") == "transpose" for n in no_transpose)
+    cands = candidate_pairs([Term(7, "X^{T}", "transpose")], no_transpose)
+    assert cands.pairs == []
+    assert len(cands.misses) == 1
+    miss = cands.misses[0]
+    assert "term 7" in miss and "transpose" in miss
+    assert "冻结映射里对应算子" in miss, "必须说明这个 kind 在映射里是有对应算子的"
+    assert "没有" in miss and "算子节点" in miss, "必须说清是当前 trace 缺这类算子节点"
+    _assert_chinese_lines(cands)
+
+    # 成因①：kind 根本不在冻结映射里（KIND_TO_OPS 的键里没有 frobnicate）。
+    unknown = candidate_pairs([Term(0, "x", "frobnicate")], nodes)
+    assert unknown.pairs == []
+    assert len(unknown.misses) == 1
+    assert "frobnicate" in unknown.misses[0] and "term 0" in unknown.misses[0]
+    assert "不在冻结" in unknown.misses[0], "成因①必须说 kind 不在映射里"
+    assert "算子节点" not in unknown.misses[0], "成因①不该把话头拐到 trace 缺节点上"
+    _assert_chinese_lines(unknown)
+
+
 def test_every_split_kind_has_an_operator_mapping():
     """KINDS 与 KIND_TO_OPS 名单同步：新 kind 不加映射就会零候选。"""
     assert set(split_terms.KINDS) <= set(KIND_TO_OPS)

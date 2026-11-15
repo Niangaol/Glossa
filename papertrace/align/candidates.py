@@ -63,10 +63,18 @@ def candidate_pairs(
         wanted = KIND_TO_OPS.get(term.kind, ())
         eligible = [n for n in pool if n.get("op") in wanted]
         if not eligible:
-            misses.append(
-                f"term {term.index}（{term.kind}）在冻结算子映射里没有对应算子，"
-                "零候选，绝不凑对"
-            )
+            # A-Minor-1：零候选有两种成因，文案必须分开说，不许一句「映射里没有」蒙过去 ——
+            # ① kind 根本不在冻结映射里；② 映射里有，但当前 trace 没有这类算子节点。
+            if term.kind not in KIND_TO_OPS:
+                misses.append(
+                    f"term {term.index}（{term.kind}）不在冻结的算子类型映射里，"
+                    "零候选，绝不凑对"
+                )
+            else:
+                misses.append(
+                    f"term {term.index}（{term.kind}）在冻结映射里对应算子 "
+                    f"{'/'.join(wanted)}，但当前 trace 没有这类算子节点，零候选，绝不凑对"
+                )
             continue
         ranked = sorted(
             eligible, key=lambda n: (-lexical_rank(term.latex, n), str(n.get("id")))
@@ -90,6 +98,10 @@ def lexical_rank(text: str, node: dict) -> float:
     """两段文本的标识符词法重叠度：交集 / 较大者；任一为空集返回 0.0。
 
     这是 brief 冻结的确定性定义——只排序、不过滤，分数高不代表任何对齐语义。
+    实现取 `node.get("op", "") / node.get("label", "")`，冻结定义写的是 `node["op"] /
+    node["label"]`：**对格式良好的节点两者逐字等价**；只在畸形节点（缺 `op` / `label`
+    键）上把 KeyError 变成 0.0——方向安全，分数低不会凭空造出对齐，也绝不会把候选踢出
+    池子（资格判定在 `candidate_pairs` 里另做，不走本函数）。
     """
     left = set(_TOKEN.findall(text.lower()))
     right = set(_TOKEN.findall(f"{node.get('op', '')} {node.get('label', '')}".lower()))
