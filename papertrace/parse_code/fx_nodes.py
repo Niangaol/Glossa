@@ -24,6 +24,7 @@ from papertrace.parse_code.fx_inputs import (
 from papertrace.parse_code.fx_contract import check_plan_table, require_real_export
 from papertrace.parse_code.fx_shapes import tree_shapes
 from papertrace.parse_code.fx_signature import classify, input_plan
+from papertrace.parse_code.loc import loc_from_stack_trace
 
 
 def build_op_nodes(
@@ -166,7 +167,7 @@ def build_op_nodes(
                 "level": "op",
                 "op": op,
                 "label": f"{module_id}.{node.name}",
-                "loc": root_loc,
+                "loc": loc_from_stack_trace(node.meta.get("stack_trace")) or root_loc,
                 "kind": kind,
                 "shape_in": data_input if data_input is not None else [],
                 "inputs": inputs,
