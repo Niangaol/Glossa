@@ -341,7 +341,8 @@ set PAPERTRACE_LLM=deepseek-chat
   **op 节点 `loc` 是 `file:line` 而 module 节点 `loc` 仍是模块路径**（同一字段两种语义，既有设计）。
   **R133**：另两条溯源字段 `meta.repo.url` 与 `meta.paper.source` **原样保留、不相对化**——它们是「这份
   trace 从哪来」的机器可读记录（`paper.source` 是本机 `.tex` 路径，`repo.url` 是命令行传入的仓库路径），
-  分享 `trace.json` 会一并带上本机目录，相对化归 M4。给人读的正文侧则只显 `basename`：算子行与符号表的
+  分享 `trace.json` **可能**一并带上本机目录（`--repo`/`--paper` 传相对路径时记的就是相对路径），相对化归 M4。
+  给人读的正文侧则只显 `basename`：算子行与符号表的
   完整路径进 `title`，HTML 里的仓库名取 `Path(...).name`。
   `tier` 只有 `green`/`yellow`/`none` 三档，`none` **绝不写成 anchor**，只进 `unresolved`；
   `source` 只可能是 `model`（判断题给了 yes）或 `static`（只有结构/检索依据）——anchor 不是
