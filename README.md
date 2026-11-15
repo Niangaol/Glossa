@@ -337,11 +337,13 @@ set PAPERTRACE_LLM=deepseek-chat
   `index.html` 的彩线全部静默消失（`render_html.py:98` 拿它当节点 id 用），真实行号在
   `nodes[].loc` 上——**算子节点的 `loc` 现在是真实 `file:line`**（M1b 已落地）；M1a 时它全是
   `model.GPT` 这类模块路径（编行号就是造假）。HTML 的算子行显示 `basename:line`，完整路径在
-  `title` 里。**两条局限**：`loc` 是**绝对路径**（`trace.json` 机器相关，相对化归 M4）；
-  **op 节点 `loc` 是 `file:line` 而 module 节点 `loc` 仍是模块路径**（同一字段两种语义，既有设计）。
-  **R133**：另两条溯源字段 `meta.repo.url` 与 `meta.paper.source` **原样保留、不相对化**——它们是「这份
-  trace 从哪来」的机器可读记录（`paper.source` 是本机 `.tex` 路径，`repo.url` 是命令行传入的仓库路径），
-  分享 `trace.json` **可能**一并带上本机目录（`--repo`/`--paper` 传相对路径时记的就是相对路径），相对化归 M4。
+  `title` 里。**路径已相对化**：算子 `loc` 写出时转成相对构建时工作目录的路径（分隔符统一 `/`，
+  口径与例外见「路径是相对构建目录的」）——它记录的是「相对构建目录」的位置，不是自包含的，
+  换目录打开会指错；**op 节点 `loc` 是 `file:line` 而 module 节点 `loc` 仍是模块路径**
+  （同一字段两种语义，既有设计；module 的 `loc` 是模块路径不是文件路径，不参与相对化）。
+  **R133 修订**：另两条溯源字段 `meta.repo.url` 与 `meta.paper.source` **同样相对化**（同一口径）——它们是「这份
+  trace 从哪来」的机器可读记录（`paper.source` 是本机 `.tex` 路径，`repo.url` 是命令行传入的仓库路径）；
+  不在构建目录之下的绝对路径保持原样，分享 `trace.json` 只在这一种情形下还会带上本机目录。
   给人读的正文侧则只显 `basename`：算子行与符号表的
   完整路径进 `title`，HTML 里的仓库名取 `Path(...).name`。
   `tier` 只有 `green`/`yellow`/`none` 三档，`none` **绝不写成 anchor**，只进 `unresolved`；
@@ -365,6 +367,33 @@ set PAPERTRACE_LLM=deepseek-chat
   必须是字符串（是 list/dict 时报「必须是字符串」，**不会漏成 `TypeError` 和 traceback**）、重复 id、悬空边、`parent_id` 不存在、
   module 节点必须 `source=static`、**边两端必须是算子节点**（不接受 module→op / op→module）、
   **不接受自环**（`src == dst`）。这些错误一律 `TraceSchemaError`，不静默放过。
+
+### 一个算子只归一个公式项
+
+anchor 是「归属」断言——这个公式项的工作由哪个算子节点实现——不是「相关」断言。所以认领规则是：
+
+- **同一公式单元内，一个算子节点最多被一个公式项的 anchor 认领（独占）**：让用户看见一个算子
+  同时是两个公式项的实现，那是错的，不是「保留可能性」。
+- **跨公式单元允许共享**：不同单元的公式本来就是不同的事，同一个算子被两个单元各自认领没有矛盾。
+- 候选生成器（`papertrace/align/candidates.py`）**仍然不去重**——它是纯函数、不知道谁被认领；
+  唯一性由 `papertrace/spine_claims.py` 在编排层执行。
+- 候选被前面项占尽的项会落进 `unresolved`，原因写「被同一公式单元里更早的公式项认领」——
+  与「根本没有候选」是**两种不同**的文案，用户分得清是哪种。
+
+**已知局限**：认领是**按项编号顺序的贪心**，不是全局最大匹配。理论上存在「先来的项抢走了后面的项
+更该用的节点」的情形；这时后面的项落 `unresolved` 并写明原因，而不是硬抢。
+
+### 路径是相对构建目录的
+
+写进 `trace.json` 的路径不再是机器相关的绝对路径：
+
+- **`meta.repo.url` / `meta.paper.source` / 算子节点 `loc` / 代码符号 `defined_at`** 四类字段，
+  写出时都转成相对**构建时工作目录**的路径，分隔符统一 `/`。
+- **不在构建目录之下的绝对路径保持原样**（比如 `--repo D:\other\proj` 而 cwd 在别处），
+  不硬造 `..` 跳出形态。
+- **后果**：把 `trace.json` / `index.html` 换到别的目录打开时，相对路径会指错——它记录的是
+  「相对构建目录」的位置，**不是自包含的**。
+- **module 节点的 `loc` 不参与相对化**：它是模块路径（如 `model.GPT`）不是文件路径，本就不可点击。
 
 ### 入口契约：模块:工厂函数
 
