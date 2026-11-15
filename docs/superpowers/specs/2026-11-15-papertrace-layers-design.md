@@ -98,7 +98,7 @@ R144 的重复守门同样按组跑。
 - **R163**（已实现，L3 91dde12）anchor 新增可选 `code_group`：结构路径必填、回退路径省略；schema 里声明但不进 required。
 - **R164**（已实现，L3 91dde12）s_retr / s_struct 是单元级、逐层相同；只有 s_judge 逐层。docstring 与 README 如实写（README 字段契约段 + 已知局限段，L5 补）。
 - **R165**（已实现，L1 bc5affe）拆 `spine.py` → `spine_anchor.py`；`tests/test_spine_tier.py:169` 的 `from papertrace.spine import _record_unresolved` 改指新模块（断言一字不改，属重命名不是削弱）。
-- **R166**（已实现，L4 98cfb87）拆 `render_html.py` 的公式项行构造 → `render_terms.py`；公式项表改成一条 anchor 一行，「层」列显示 `code_group` 末段。
+- **R166**（已实现，L4 98cfb87）拆 `render_html.py` 的公式项行构造 → `render_terms.py`；公式项表改成一条 anchor 一行，「层」列显示 `code_group` 去掉顶层模块前缀后的组路径（R176：不取末段——嵌套 id 下末段会塌成同一个词，层列信息全丢）。
 - **R167**（已实现：三文件一字未动，行数仍 200/200/199）`latex_safe.py` / `symbols/code_table.py` / `llm/openai_backend.py` 本片不动。
 - **R168**（已实现，L3 91dde12）既有测试里「结构路径 4 条 anchor / judge 4 次」的期望按逐层改成 8，逐处列进计划（授权改写，不许删断言）。
 
@@ -118,6 +118,7 @@ R144 的重复守门同样按组跑。
 ## 6. 已知局限（本片结束仍然存在）
 
 - 逐层展开只对「结构同构」有效的组；同构判定按**组内子序列**做，跨组混合结构（如残差在不同层插入位置不同）仍可能只命中一部分层。
+- 层数 >2 的规模化只有结构信号层的合成用例覆盖（`tests/test_spine_struct.py` 的三组同构图，R179）；夹具本身只有 2 层，>2 层的端到端 anchor 生成与 HTML 渲染仍未覆盖。
 - s_struct 上限仍是 0.8（论文侧「N 层」与形状声明两条规则要靠 M4b 读论文正文）。
 - 配 DeepSeek 仍然出不了绿线（无 embeddings → s_retr=0）。
 - HTML 公式项表在 12 层模型下会变成 4×12=48 行；折叠/筛选留给后续。
@@ -127,11 +128,19 @@ R144 的重复守门同样按组跑。
 ## 7. 验收
 
 1. 全量测试全绿（基线 787），既有断言只按 R168 清单改期望值。
-2. 夹具 + 假 yes 后端：**8 条 anchor**，分属两个组，组内四个 term 各一条，judge 调用 **8 次**。
+2. 夹具 + 假 yes 后端：**8 条 anchor**，分属两个组，组内四个 term 各一条，judge 调用 **8 次**
+   （结构路径每个「公式项 × 同构组」候选只有 1 个节点，恰好 1 次；回退路径每项最多 3 次、
+   全局最多 12 次，R178）。
 3. 真 offline：**0 条 anchor、8 条 unresolved**。
 4. 回退路径（结构不命中）：仍是 **4 条**，且不带 `code_group`。
 5. GC8 逐项不变。
 6. 产品源文件 ≤200 行（census）。
-7. 演示产物重生成：`output/demo/with-paper` 的 unresolved 从 4 变 8；HTML 里 ② 两张 attn 图各有 4 条连线。
+7. 演示产物重生成：`output/demo/with-paper` 的 unresolved 从 4 变 8；HTML 里 ② 两张 attn 图各有 4 条连线
+   （如实说：这 8 条连线只出现在「结构命中 + 判断题后端」的测试路径里，即
+   `tests/test_spine_html.py` 的假 yes 路径；演示产物里没有这条路径——with-paper offline
+   两子图 0 条，fallback-yellow 是 h.0=4 / h.1=0）。
 
 **验收结论（L5 落地时核对）**：1–7 全部达成。全量测试 787 → **804 passed**；演示三场景重生成后 `validate_trace` 全过，with-paper offline 实测 unresolved=8（4 项 × 2 层），逐场景数字与提交链见 plan 文档执行记录段。
+  **L5-I4 复盘（波次 6 更正）**：第 7 条里「两张 attn 图各有 4 条连线」在演示产物里并不成立——
+  8 条连线只在测试路径（结构命中 + 假 yes 后端）里出现；演示产物实测 with-paper offline
+  两子图 0 条、fallback-yellow h.0=4 / h.1=0。第 7 条已按此如实口径重写，其余条目结论不变。

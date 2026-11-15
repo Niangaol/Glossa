@@ -36,7 +36,7 @@
 | **R23** | S5 | +0.2 论文N层 / −0.4 shape冲突 / −0.3 双向检索 三条本切片不可判定 → 不触发、记 misses 写明原因；s_struct 上限 0.8；绝不编论文侧证据、不扩签名偷运论文正文 | struct_signal(nodes, terms, config) 拿不到论文散文也拿不到论文声明的 shape | 编造论文证据 → 假绿线 |
 | **R24** | S5 | +0.1 的唯一可工作读法是代码侧超参名；冻结名单 (n_layer, n_head, n_embd, block_size) 四个全在才 +0.1 一次 | 论文符号是 d_k 这类，永远不会出现在 config 里 | 每个名字 +0.1 → 分数虚高 |
 | **R25** | S5 | 只取 level=='op'，按 parent_id 分组、组内各自贪心子序列匹配、取 nodes 顺序第一个命中的组；kind→op 映射冻结（matmul→matmul；scale→mul/div；norm→softmax；act→gelu/relu/sigmoid/tanh；transpose→transpose；concat→cat） | 全 trace 75 个算子，跨模块扁平匹配会误命中 | 跨模块误命中 → 假对齐 |
-| **R25a** | S5 | 必须再过滤 kind=='op'（排除 18 权重 + 1 输入的 placeholder）；只对齐第一层是已知局限，写进 docstring，不许改签名或返回多组 | op-level 94 个里混着 placeholder；h.0.attn 与 h.1.attn 完全同构 | placeholder 混进序列 → 同构误判 |
+| **R25a** | S5 | 必须再过滤 kind=='op'（排除 18 权重 + 1 输入的 placeholder）；只对齐第一层是已知局限，写进 docstring，不许改签名或返回多组（M4a 已落地，见 specs/2026-11-15-papertrace-layers-design.md） | op-level 94 个里混着 placeholder；h.0.attn 与 h.1.attn 完全同构 | placeholder 混进序列 → 同构误判 |
 | **R26** | S3 | 接受 implementer 的设计改动：门在 split_terms.py:53-54 是唯一权威，:158 的改动对任何能过门的输入都不可达 | 生产行为不变，而「扫描器静默跳过未知宏」正是 S2 刚修掉的 C1 同族 | 若门不是唯一权威，就会静默跳过未知宏 |
 | **R27** | S3 | 把评审的 Minor 升级为 Important：exposed 硬编码 True → y=\frac{a}{b} 的除法操作数被贴 matmul | 评审理由「仅影响夹具外公式」不成立；控制器亲跑探针实测 | 除法操作数连到矩阵乘算子＝假对齐 |
 | **R28** | S3 | 修法验收六条行为（夹具四项与精确子串完全不变、y=\frac{a}{b} 恰好 1 项 scale、y=\sqrt{\frac{a}{b}} 恰好 1 项等），机制由 implementer 定 | 只给验收不给机制，避免过度指定 | 修一处坏一处 |
@@ -121,7 +121,7 @@
 
 ## 已知局限（不是缺陷，是范围）
 
-- **只对齐第一层**（`h.0.attn`）。夹具 `n_layer=2`，两层完全同构，按 R25 确定性选第一层。逐层对齐属 M4。
+- **只对齐第一层**（`h.0.attn`）。夹具 `n_layer=2`，两层完全同构，按 R25 确定性选第一层。逐层对齐属 M4。（M4a 已落地，见 specs/2026-11-15-papertrace-layers-design.md）
 - **s_struct 上限 0.8**（R23）：三条规则拿不到论文侧证据，不触发、记 misses。
 - **+0.2 是二值的**（R80）：不含「对齐了几项」的覆盖度。
 - **conflicts / backward 未落进 trace**：M4「四类对账」的输入缺口。

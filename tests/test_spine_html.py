@@ -30,6 +30,7 @@ from papertrace.constants import HTML_MAX_BYTES
 from papertrace.exceptions import BuildError
 from papertrace.llm.client import ChatResult
 from papertrace.render_html import render_html, write_html
+from papertrace.render_terms import _layer_of
 from papertrace.schema_validate import load_trace, validate_trace
 from papertrace.spine import attach_paper
 from tests._tmp import scratch_dir
@@ -86,6 +87,18 @@ def _section(html: str, name: str) -> str:
     """取出 <section id="name">…</section>，用来证明内容真的落在该块里。"""
     start = html.index('<section id="' + name + '">')
     return html[start : html.index("</section>", start)]
+
+
+_TERM_ROW = re.compile(r'<tr><td class="mono">([^<]+)</td><td class="mono">([^<]+)</td>')
+
+
+def _layer_cells(html: str) -> list[tuple[str, str]]:
+    """R177：解析公式项表每一行的 (term_id, 层) 单元格，不整页搜子串。
+
+    整页子串搜 "h.0.attn" 会被 section 里的说明散文满足——散文供答案，层列恒
+    "—" 也绿。守门必须落在数据行上。
+    """
+    return _TERM_ROW.findall(_section(html, "terms"))
 
 
 @pytest.fixture(scope="module")
@@ -589,19 +602,29 @@ def test_terms_table_has_one_row_per_layer(base_doc, monkeypatch):
         assert "S3.2-eq-attn-t%d" % term in block
 
 
-def test_layer_column_shows_group_tail(base_doc, monkeypatch):
-    """R161/R163：层列显示 code_group 的末段，两层都要出现在表里。
+def test_layer_column_shows_group_tail(base_doc, offline_doc, monkeypatch):
+    """R161/R163/R176/R177：层列 = 去掉顶层模块前缀后的组路径，逐单元格断言。
 
-    这一列只回答「这条 anchor 落在哪一层」（h.0.attn / h.1.attn）；完整组路径
-    是算子图的分组标题，不该塞进公式项清单。
+    旧断言是整页子串 "h.0.attn" in block——模板说明散文里就写着这组字样，散文即
+    可满足断言，层列恒 "—" 时测试仍全绿（L4 评审 I-2 实测，层列当时无守门）。
+    现在正则抓每一行的 (term_id, 层) 单元格再逐字比：结构路径每个 term 恰好一行
+    transformer.h.0.attn 与一行 transformer.h.1.attn，整表层单元格集合就这两个值；
+    offline/回退的 doc 没有 code_group，集合是 {"—"}。
     """
     doc, backend = _attached(base_doc, monkeypatch, "yes")
     assert backend.chat_calls >= 1 and backend.embed_calls >= 1
-    html = render_html(doc)
-    block = _section(html, "terms")
-    assert "h.0.attn" in block and "h.1.attn" in block, "层列没显示两层的组末段"
-    assert "root/transformer.h.0.attn" not in block, "层列漏出了完整组路径"
-    assert "root/transformer.h.1.attn" not in block, "层列漏出了完整组路径"
+    assert len(doc["anchors"]) == 8, "两层同构本该各出 4 条 anchor：%d" % len(doc["anchors"])
+    rows = _layer_cells(render_html(doc))
+    assert len(rows) == 8, "公式项表数据行 %d 行 != anchor 数 8" % len(rows)
+    for term in range(4):
+        term_id = "S3.2-eq-attn-t%d" % term
+        layers = sorted(layer for tid, layer in rows if tid == term_id)
+        assert layers == ["transformer.h.0.attn", "transformer.h.1.attn"], (
+            "%s 的两行层值不是逐层组路径：%r" % (term_id, layers))
+    assert {layer for _, layer in rows} == {"transformer.h.0.attn", "transformer.h.1.attn"}
+    # 回退 / offline 的 doc 没有层可记：层单元格集合只能是破折号
+    fallback = {layer for _, layer in _layer_cells(render_html(offline_doc))}
+    assert fallback == {"—"}, "回退 doc 的层列必须是 —，实际 %r" % fallback
 
 
 def test_ops_graph_draws_links_in_both_layers(base_doc, monkeypatch):
@@ -632,3 +655,17 @@ def test_ops_graph_draws_links_in_both_layers(base_doc, monkeypatch):
                 "%s 该在 %s 里出现恰好一次，实际 %d 次"
                 % (label, group, by_parent[group].count(label))
             )
+
+
+def test_layer_of_drops_only_the_top_module_prefix():
+    """R176：层列去掉顶层模块前缀（第一段及其 /），不是取 code_group 末段。
+
+    真实组 id 是点式单段 root/transformer.h.0.attn，取末段与去前缀恰好等价；
+    但嵌套 id（root/a/b）下取末段会塌成 b，两条 anchor 的层列可能变成同一个词。
+    """
+    assert _layer_of({"code_group": "root/transformer.h.0.attn"}) == "transformer.h.0.attn"
+    assert _layer_of({"code_group": "root/transformer.h.1.attn"}) == "transformer.h.1.attn"
+    assert _layer_of({"code_group": "root/a/b"}) == "a/b", "嵌套 id 不许塌成最后一段"
+    assert _layer_of({"code_group": "transformer.h.0.attn"}) == "transformer.h.0.attn"
+    assert _layer_of({}) == "—", "没有 code_group（回退路径）必须是破折号"
+    assert _layer_of({"code_group": None}) == "—"

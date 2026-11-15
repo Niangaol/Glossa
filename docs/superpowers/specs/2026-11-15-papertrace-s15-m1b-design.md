@@ -228,7 +228,7 @@ papertrace/render_html.py:50-54 的 _node_label 现在只返回 op 名，**全�
 
 ## 5. 已知局限（本切片不解决，写进 README）
 
-- 只对齐第一层 h.0.attn（逐层属 M4）。
+- 只对齐第一层 h.0.attn（逐层属 M4）。（M4a 已落地，见 specs/2026-11-15-papertrace-layers-design.md）
 - s_struct 上限 0.8（论文层数/形状/双向检索三条规则本切片不可判定，R23）。
 - 68 个算子共享一行 → 行号不能区分行内算子（code_expr_range 用 node_id 补）。
 - **loc 是绝对路径** → trace.json 机器相关；HTML 只显示 basename:line，相对化归 M4（R116）。

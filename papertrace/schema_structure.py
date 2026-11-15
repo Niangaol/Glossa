@@ -126,7 +126,8 @@ def structural_errors(doc: dict) -> list[str]:
                 )
         if edge.get("src") == edge.get("dst"):
             errors.append(f"edges: {edge_id} 是自环（src == dst）：{edge.get('src')}")
-    # anchor 的跨字段不变量：tier 必须与 signals 重算的门一致（RF3）。
+    # anchor 的跨字段不变量：tier 不得高于 signals 重算的门（R171 秩比较
+    # none(0)<yellow(1)<green(2)，只抓升格）；R112 封顶的保守下调合法，不报错。
     # 挂在这里，validate_trace 就自动执行门，不用改 schema_validate.py。
     errors.extend(anchor_errors(doc))
     return errors

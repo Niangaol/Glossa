@@ -297,3 +297,41 @@ def test_single_group_reports_exactly_one():
     sig = struct_signal(_fake_nodes(), _fake_terms(), None)
     assert len(sig.groups) == 1
     assert [nid for _, nid in sig.groups[0].pairs] == ["n0", "n1", "n2", "n3"]
+
+
+# --- L6：>2 层的合成图守门（夹具只有 2 层，规模化只在信号层覆盖）------------------
+
+
+def _three_group_nodes() -> list[dict]:
+    """三个同构 attention 组的合成图（R179：夹具 n_layer=2，层数更多靠这里守）。"""
+    nodes: list[dict] = []
+    for prefix, group in (("a", "g0"), ("b", "g1"), ("c", "g2")):
+        nodes.extend(
+            {
+                "id": f"{prefix}{i}",
+                "parent_id": group,
+                "level": "op",
+                "kind": "op",
+                "op": op,
+            }
+            for i, op in enumerate(["matmul", "mul", "softmax", "matmul"])
+        )
+    return nodes
+
+
+def test_three_isomorphic_groups_are_all_reported():
+    """三个同构组：groups 报 3 个、顺序按 nodes 出现序，score 仍只加一次 +0.2。
+
+    夹具只有 2 层（n_layer=2），「每层一条 anchor」在层数更多时是否成立，由这个
+    合成用例在结构信号层守门；端到端 anchor 生成与 HTML 渲染仍未覆盖（README 已知局限）。
+    """
+    nodes = _three_group_nodes()
+    assert len(nodes) == 12, "三组 × 四算子 = 12 个 op 节点：%d" % len(nodes)
+    sig = struct_signal(nodes, _fake_terms(), None)
+    assert [m.group for m in sig.groups] == ["g0", "g1", "g2"], (
+        "三组同构只报了 %r" % [m.group for m in sig.groups])
+    assert [len(m.pairs) for m in sig.groups] == [4, 4, 4], (
+        "每组都该配上四项，不是只报组名")
+    assert sig.pairs == sig.groups[0].pairs, "pairs 仍取首组（R25a 首匹配）"
+    assert [nid for _, nid in sig.groups[0].pairs] == ["a0", "a1", "a2", "a3"]
+    assert sig.score == pytest.approx(0.7), "0.5+0.2，三组同构不许叠成 1.1"

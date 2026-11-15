@@ -28,7 +28,9 @@
 - **层数 > 2 的模型**：夹具只有 2 层，容易写成「只有 h.0/h.1」的特例。任何依据层数写死的分支都是缺陷。
 - **回退路径**：结构不命中时**不该**逐层展开（回退候选没有层的概念）；写错会让回退 anchor 数从 4 变 8。
 - **认领集合的作用域**：`claimed` 提到单元外或提到组外，会让第二个层/第二个单元的错误项拿不到候选（R135/R162）。
-- **judge 调用数**：每层每项一次；早退（同一项命中第一个 yes）与跨层复用是两回事，跨层复用会让人看到「h.1 的证据其实来自 h.0」。
+- **judge 调用数**：分路径算（R178）——结构路径每层每项恰好一次（每组每个项只 1 个候选节点），
+  回退路径每项最多 3 次、全局最多 12 次（`papertrace/align/candidates.py` 的 `per_term_limit` /
+  `total_limit`）；早退（同一项命中第一个 yes）与跨层复用是两回事，跨层复用会让人看到「h.1 的证据其实来自 h.0」。
 - **HTML 行数与连线**：公式项表行数 = anchor 数；图上两个 attn 组都该有连线。写成只画首组会让用户以为 h.1 没对上。
 
 ---
@@ -178,7 +180,7 @@ def test_code_group_is_declared_in_schema(...):
 - Test: `tests/test_spine_html.py`（新增 3 条）
 
 **Interfaces:**
-- `render_terms.term_rows(doc: dict) -> list[dict]`：每行含 `term_id / tier / confidence / aten_ops / evidence / layer`（`layer` 取 `code_group` 末段，无 code_group 时 `"—"`）。
+- `render_terms.term_rows(doc: dict) -> list[dict]`：每行含 `term_id / tier / confidence / aten_ops / evidence / layer`（`layer` 去掉顶层模块前缀（`root/`）后的组路径，无 code_group 时 `"—"`）。
 - 模板 ③ 表头加 `<th>层</th>`，行里输出 `{{ t.layer }}`。
 
 - [x] **Step 1 写失败测试**：`test_terms_table_has_one_row_per_layer`（8 行）、`test_layer_column_shows_group_tail`（含 `transformer.h.0.attn` 与 `transformer.h.1.attn`）、`test_ops_graph_draws_links_in_both_layers`（`lnk-` 路径数 == anchor 数，且两个组的 opbox 里都有 lnklabel）。
@@ -186,6 +188,7 @@ def test_code_group_is_declared_in_schema(...):
 - [x] **Step 3 实现**（拆 `render_terms.py`、模板加列、StrictUndefined 下新变量必须有值）。
 - [x] **Step 4** 全量 **801 passed**；四种真实输入（无--paper / 带--paper / skeleton+paper / 纯 skeleton）全部 EXIT=0，HTML <8MB。
 - [x] **Step 5** 变异探针：把 `layer` 恒定为 `"—"` → `test_layer_column_shows_group_tail` 必红 → 还原 + sha256。
+  **L5-I3 复盘（当时勾的 [x] 是假记录）**：这一步在 L4 落地时并没有真红——旧断言是整页子串 `"h.0.attn" in block`，被 terms 段说明散文里的「（h.0.attn / h.1.attn）」满足，`_layer_of` 恒 `"—"` 测试仍全绿（L4-I2，即 R175：守门必须解析表格行逐字断言）。波次 6 的 F2 已把该测试改成正则抓每行 「层」单元格逐字比，并补 `_layer_cells()` 助手；同款变异复跑 `1 failed in 5.76s`（RED 原文见 .superpowers/sdd/2026-11-15-papertrace-layers/wave6-fix-report.md F2 段），还原后 sha256 复核一致。 教训：变异探针的 RED 输出必须贴进报告才算做过，不能凭「想必会红」勾 [x]。
 - [x] **Step 6** 提交 `feat: show which layer each anchor lands in`
 
 ---
@@ -235,6 +238,12 @@ def test_code_group_is_declared_in_schema(...):
 - **R169**（L3）：结构信号给了 pairs 却没给 groups → BuildError fail-closed，绝不静默降级成回退路径（papertrace/spine.py:103）。产品里两者永远一致，这条守门是给回归留的闸。
 - **R170**（L3）：既有只给 pairs 的测试桩必须按逐层口径补 groups（两组 / 一组两种；回退路径桩不动），否则会被 R169 炸掉；断言值按 R168 改，不减断言。
 - **R171 / R172**（L3b，控制器发现）：schema_anchor 的 tier 复核原判据「必须等于 signals 重算结果」会把 R112 回退路径**合法**的 green→yellow 封顶判成造假（实测配置：回退 + 假 yes + 真 embeddings，4 条 anchor 全中）。裁决：判据改成「不得高于重算结果」（rank none(0) < yellow(1) < green(2)），抓升格、放行保守下调；代价：手改把 green 涂成 yellow/none 不再被抓。落地范围只含 schema_anchor.py 判据 + docstring + 3 条新测试，既有 6 条 tier 测试一字不改。
+- **R173**（L3b 控制器发现，deferred 到波次 6）：`papertrace/schema_structure.py:129` 的注释仍写 tier「必须与 signals 重算的门一致（RF3）」，R171 之后已过期（判据改成「不得高于重算结果」）。纯注释、零行为变化，L3b 因范围外未动；波次 6 F5 已改成 R171 秩比较口径（134→135 行）。
+- **R174**（L4 评审 I-1）：层列原实现 `code_group.rsplit("/", 1)[-1]` 取末段，与规格「顶层模块前缀 + 点式单段路径」不符——`root/transformer.h.0.attn` 的末段是 `attn`，两层完全相同、层列零信息。裁决口径 = 去掉顶层模块前缀、保留组内路径（`transformer.h.0.attn`）；`root/a/b` 这类嵌套 id 也不能塌成末段。
+- **R175 / R177**（L4 评审 I-2）：层列守门 `test_layer_column_shows_group_tail` 用整页子串 `"h.0.attn" in block`，被模板 terms 段散文里的「（h.0.attn / h.1.attn）」满足——`_layer_of` 恒返回 `"—"` 测试仍全绿，等于没有守门。判据：必须解析表格行取「层」单元格逐字断言，模板散文删掉具体层名。波次 6 F2 落地（新增 `_layer_cells()` 助手 + `_TERM_ROW` 正则），变异复跑 `1 failed in 5.76s`，RED 原文与 sha256 见 `.superpowers/sdd/2026-11-15-papertrace-layers/wave6-fix-report.md`。
+- **R176**（控制器）：实现从 rsplit 取末段改成 `group.split("/", 1)[1]`（无 `/` 原样返回），render_terms.py 50→57 行，docstring 与 plan:181 / design:101 同步改口径。
+- **控制器的错（R168 清单，记账）**：R168 清单把 base :367（`test_code_expr_range` 的 `backend.calls`）误列入「→8」，该处是**回退路径**的桩、必须保持 4；L3 implementer 顶住没改，是对的（执行记录 ⑤ 已记）。规约：**清单与实测冲突时，以实测为准**。
+- **R178 / R179 / R180**（L5 评审 I-1 / I-2 / I-3+I-4，波次 6 F3 / F4 / F5+F6 落地）：judge 调用口径改成分路径如实说（README + design + plan 三处）；「>2 层有单测覆盖」是假话，补三组同构合成用例并把文案改成「端到端与 HTML 仍未覆盖」；plan:188 的变异探针假 [x] 已改写成真实记录。
 - **L3 implementer 自曝的 controller-brief 漏项五处**（均已按实施口径纠正，不是缺陷）：① offline 期望 unresolved 4→8（逐层报）；② tests/test_spine_html.py 的 [green]*4 期望 → *8；③ duplicate-guard 测试桩从 pairs_or_fallback 换成 struct_signal；④ two-unit 分组键按「单元 × 组」取；⑤ :367 的 backend.calls==4 必须**保持 4**（该处是回退路径，控制器 R168 清单误列，implementer 纠正）。
 
 **L5 自身的偏离（对计划 Task L5 步骤）**：

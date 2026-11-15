@@ -93,6 +93,8 @@ def attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id:
              "score": h.get("score")} for h in picks]
     doc["anchors"].append(anchor)
     claimed.update(claimed_nodes(available, confirmed, fallback))  # R147：占住已产出的节点
+
+
 def record_unresolved(doc: dict, term_id: str, cause: str, retrieval: dict, signals: dict) -> None:
     """tier=='none' → 不产 anchor，把为什么说不清写进 unresolved。"""
     score = confidence(signals["s_retr"], signals["s_judge"], signals["s_struct"])

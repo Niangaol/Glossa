@@ -368,9 +368,13 @@ set PAPERTRACE_LLM=deepseek-chat
   `kind` 重新解析论文。要让 HTML 显示 kind，得扩 schema 让 S9 把 `term.kind` 写进 anchor，属新切片。
   **逐层口径（M4a，R161/R163/R164）**：结构同构命中时每个同构组各出一条 anchor，anchor 另带
   可选 `code_group`（组 id，形如 `root/transformer.h.0.attn`，即「顶层模块前缀 + 点式单段
-  路径」；回退路径不写这个键，schema 里声明但不进 required）。代价如实说：judge 每
-  「公式项 × 同构层」调一次——夹具 `n_layer=2` 时 4 项 × 2 层 = 8 次，层数更多则线性增长，
-  anchor 数与 `index.html` 公式项表行数同比例增长（本片夹具 8 条 / 8 行）。`s_retr` 与
+  路径」；回退路径不写这个键，schema 里声明但不进 required）。代价如实说，judge 调用数要分
+  两条路径算（R178）：结构同构命中时，每个「公式项 × 同构组」的候选只有 1 个节点，
+  `judge_first_yes`（`papertrace/spine_claims.py:36`）恰好问 1 次——夹具 `n_layer=2` 时
+  4 项 × 2 组 = 8 anchor 即 8 次；结构不命中走回退路径时，候选由
+  `papertrace/align/candidates.py` 产出（每项至多 `per_term_limit=3`、全局至多
+  `total_limit=12`），每项 1..3 次、全局最多 12 次，问到第一个 yes 就停。anchor 数与
+  `index.html` 公式项表行数同比例增长（本片夹具 8 条 / 8 行）。`s_retr` 与
   `s_struct` 是**公式单元级**的（同一单元各层取到同一个值），只有 `s_judge` 逐层各问一次，
   所以同一 term 的两条 anchor 只可能因 `s_judge` 不同而 `confidence` 不同（R164）。HTML
   公式项表**一条 anchor 一行**（R166/L4），「层」列显示 `code_group` 去掉顶层 `root/` 前缀后的
@@ -462,9 +466,12 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 
 - **逐层对齐已落地（M4a，R161）**：结构同构命中时每个同构组各出一条 anchor（本片夹具
   `transformer.h.0.attn` 与 `transformer.h.1.attn` 两组），anchor 带 `code_group` 标明落在哪一层；代价是 judge 调用数、
-  anchor 数与 HTML 公式项表行数都随层数线性增长（judge 每「公式项 × 同构层」一次）。
+  anchor 数与 HTML 公式项表行数都随层数线性增长（judge 每「公式项 × 同构组」问 1 次，R178；
+  回退路径每项最多 3 次、全局最多 12 次）。
   **仍有限**：同构判定按组内子序列做，跨组混合结构（如残差在不同层插入位置不同）仍可能只
-  命中一部分层；层数 >2 的规模化只有单测覆盖，夹具本身只有 2 层。
+  命中一部分层；层数 >2 的规模化目前只有结构信号层的合成用例覆盖
+  （`tests/test_spine_struct.py` 的三组同构图），夹具本身只有 2 层，>2 层的端到端 anchor
+  生成与 HTML 渲染仍未覆盖（已知局限）。
 - **默认 offline 后端下逐层口径看不见**：`offline` 是默认后端，一条 anchor 都不产，演示产物
   `index.html` 公式项表的「层」列全是 `—`；逐层那一列只有配了判断题后端才看得到，该路径由
   `tests/test_spine_html.py` 覆盖，不在三个演示场景里。

@@ -10,7 +10,9 @@ s_struct 低只会把 green 降成 yellow，绝不会把 yellow 降成 none，�
 执行不了「还要看 s_struct」这条判据；只有分档函数同时见过 c 和 s_struct。
 """
 
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -211,4 +213,20 @@ def test_unresolved_confidence_rendering_avoids_self_contradiction():
         f"自相矛盾：左侧 {rendered_score} 与右侧 {rendered_threshold} 相同"
     )
     assert f"{c:.4f}" in reason
+
+
+def test_anchor_schema_declares_code_group():
+    """补 R169 顶掉的同名声明用例（L3 plan 漏项，波次 6 F6-②）。
+
+    为什么值得单独立一条：schema/trace.schema.json 里删掉 code_group 声明，
+    产品代码和现有测试照样全绿——schema 是最后一道守门，声明没了没人报警。
+    这里钉住「properties 里有 code_group、类型 string、且不在 required」：
+    回退路径不写 code_group，所以它必须保持可选。
+    """
+    p = Path(__file__).resolve().parents[1] / "schema" / "trace.schema.json"
+    anchor = json.loads(p.read_text(encoding="utf-8"))["$defs"]["anchor"]
+    assert anchor["properties"]["code_group"] == {"type": "string"}, (
+        "code_group 必须留在 $defs.anchor.properties，且类型是 string")
+    assert "code_group" not in anchor["required"], (
+        "回退路径不写 code_group，它必须保持可选，不许进 required")
 
