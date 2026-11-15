@@ -6,17 +6,19 @@ anchor 画彩线）/ 论文公式项清单 / 未对齐清单 / 符号表。
 [] → () 是 0 维标量；inputs 数据入参三态照抄 print_ops）、R75 xmlns 是命名空间标识符
 不是资源引用、R82 项清单取并集、R83 超 HTML_MAX_BYTES 抛 BuildError 绝不静默截断。
 完整裁决记录见 .superpowers/sdd/2026-11-14-papertrace-spine/task-S10-report.md。
+公式项清单的行构造在 papertrace/render_terms.py（R166 拆出：一条 anchor 一行，
+逐层展开，OBS-L3-1）。
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
 from papertrace.constants import HTML_MAX_BYTES
 from papertrace.exceptions import BuildError
+from papertrace.render_terms import term_rows
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _ENV = Environment(
@@ -26,7 +28,6 @@ _ENV = Environment(
     undefined=StrictUndefined,
 )
 
-_TERM_REF = re.compile(r"^(?P<unit>.+)-t(?P<index>\d+)$")
 # tier → 线条样式；缺 tier / tier==none 一律不画线（R84：绝不许把 none 画成绿线）
 _TIER_STYLE = {"green": ("lnk-green", "#1a7f37", False), "yellow": ("lnk-yellow", "#9a6700", True)}
 
@@ -131,23 +132,6 @@ def _groups(doc: dict) -> list[dict]:
     return groups
 
 
-def _terms(doc: dict) -> list[dict]:
-    """R82：项清单 = anchors ∪ unresolved 里形如 *-t<N> 的 paper_unit。"""
-    terms: dict[str, dict] = {}
-    for anchor in doc.get("anchors") or []:
-        term_id = "%s-t%s" % (anchor.get("paper_unit_id"), anchor.get("formula_term_index"))
-        terms[term_id] = {"term_id": term_id, "tier": anchor.get("tier") or "none",
-                          "confidence": anchor.get("confidence"),
-                          "aten_ops": ", ".join(anchor.get("aten_ops") or []) or "-",
-                          "evidence": anchor.get("evidence") or ""}
-    for entry in doc.get("unresolved") or []:
-        ref = str(entry.get("ref") or "")
-        if entry.get("kind") == "paper_unit" and _TERM_REF.match(ref) and ref not in terms:
-            terms[ref] = {"term_id": ref, "tier": "none", "confidence": None,
-                          "aten_ops": "-", "evidence": entry.get("reason") or ""}
-    return [terms[key] for key in sorted(terms)]
-
-
 def _symbol_rows(doc: dict) -> list[dict]:
     """代码侧 / 论文侧符号与映射；骨架模式代码侧为空，如实显示（R116：where 只显 basename:line）。"""
     symbols = doc.get("symbols") or {}
@@ -176,7 +160,7 @@ def render_html(doc: dict) -> str:
     meta = doc.get("meta") or {}
     html = _ENV.get_template("spine.html.j2").render(
         repo_name=Path(str((meta.get("repo") or {}).get("url") or "unknown")).name,
-        doc=doc, groups=_groups(doc), terms=_terms(doc), symbol_rows=_symbol_rows(doc),
+        doc=doc, groups=_groups(doc), terms=term_rows(doc), symbol_rows=_symbol_rows(doc),
     )
     size = len(html.encode("utf-8"))
     if size > HTML_MAX_BYTES:

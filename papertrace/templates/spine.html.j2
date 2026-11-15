@@ -89,12 +89,12 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 
 <section id="terms">
 <h2>③ 论文公式项清单</h2>
-<p class="sub">公式项 = 已出线的 anchor 与仍未对齐的 *-t&lt;N&gt; 项取并集；tier=none 表示没出线（未连线），不是「对上了」。</p>
+<p class="sub">公式项 = 已出线的 anchor 与仍未对齐的 *-t&lt;N&gt; 项取并集；逐层展开后同一公式项每层各占一行，「层」列显示它落在哪个同构组（h.0.attn / h.1.attn），回退路径没有层可记则显示 —；tier=none 表示没出线（未连线），不是「对上了」。</p>
 {% if terms %}
 <table>
-<tr><th>term_id</th><th>tier</th><th>confidence</th><th>aten_ops</th><th>evidence</th></tr>
+<tr><th>term_id</th><th>层</th><th>tier</th><th>confidence</th><th>aten_ops</th><th>evidence</th></tr>
 {% for t in terms %}
-<tr><td class="mono">{{ t.term_id }}</td><td><span class="pill {{ t.tier }}">{% if t.tier == "none" %}none（未连线）{% else %}{{ t.tier }}{% endif %}</span></td><td class="mono">{{ t.confidence if t.confidence is not none else "-" }}</td><td class="mono">{{ t.aten_ops }}</td><td>{{ t.evidence }}</td></tr>
+<tr><td class="mono">{{ t.term_id }}</td><td class="mono">{{ t.layer }}</td><td><span class="pill {{ t.tier }}">{% if t.tier == "none" %}none（未连线）{% else %}{{ t.tier }}{% endif %}</span></td><td class="mono">{{ t.confidence if t.confidence is not none else "-" }}</td><td class="mono">{{ t.aten_ops }}</td><td>{{ t.evidence }}</td></tr>
 {% endfor %}
 </table>
 {% else %}

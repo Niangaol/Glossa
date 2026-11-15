@@ -558,3 +558,77 @@ def test_symbol_rows_show_basename_and_full_path_in_title(offline_doc):
         assert str(s["defined_at"]) not in body, "绝对路径漏进正文：%s" % s["defined_at"]
     assert not re.search(r"[A-Za-z]:\\\\", body), "正文还有盘符绝对路径"
     assert not re.search(r"(?:^|[\s'\"=])/(?!/)(?:home|Users|tmp|opt|var|mnt|media|root|usr|etc)/", body), "正文还有 POSIX 绝对路径"
+
+
+# --------------------------------- L4：每条 anchor 落在哪一层（OBS-L3-1 / R161 / R166）
+
+
+def test_terms_table_has_one_row_per_layer(base_doc, monkeypatch):
+    """OBS-L3-1：公式项表必须一条 anchor 一行，逐层展开不许被合并。
+
+    旧 render_html._terms 拿 term_id 当字典键：S3.2-eq-attn-t0 在 h.0 与 h.1
+    各有一条 anchor，后写覆盖前一条，8 条 anchor 只剩 4 行，h.1 整层从页面上
+    静默消失（trace.json 里有、页面上没有，最难发现的那类错）。现在数据行数
+    必须等于 anchor 数。
+    """
+    doc, backend = _attached(base_doc, monkeypatch, "yes")
+    # 注入的假后端必须真的被走到（否则测的是 offline 兜底，结论是假的）
+    assert backend.chat_calls >= 1 and backend.embed_calls >= 1
+    assert len(doc["anchors"]) == 8, "两层同构本该各出 4 条 anchor：%d" % len(doc["anchors"])
+    out_dir = scratch_dir("s10-l4-rows")
+    index_path = write_html(doc, out_dir)  # R74：走真实写盘路径，读回 index.html
+    html = index_path.read_text(encoding="utf-8")
+    block = _section(html, "terms")
+    data_rows = len(re.findall(r"<tr><td", block))
+    assert data_rows == len(doc["anchors"]), (
+        "公式项表数据行 %d 行 != anchor 数 %d：两层的同项又被合并成一行了"
+        % (data_rows, len(doc["anchors"]))
+    )
+    assert data_rows != 4, "8 条 anchor 渲染成 4 行：字典合并缺陷复发"
+    for term in range(4):
+        assert "S3.2-eq-attn-t%d" % term in block
+
+
+def test_layer_column_shows_group_tail(base_doc, monkeypatch):
+    """R161/R163：层列显示 code_group 的末段，两层都要出现在表里。
+
+    这一列只回答「这条 anchor 落在哪一层」（h.0.attn / h.1.attn）；完整组路径
+    是算子图的分组标题，不该塞进公式项清单。
+    """
+    doc, backend = _attached(base_doc, monkeypatch, "yes")
+    assert backend.chat_calls >= 1 and backend.embed_calls >= 1
+    html = render_html(doc)
+    block = _section(html, "terms")
+    assert "h.0.attn" in block and "h.1.attn" in block, "层列没显示两层的组末段"
+    assert "root/transformer.h.0.attn" not in block, "层列漏出了完整组路径"
+    assert "root/transformer.h.1.attn" not in block, "层列漏出了完整组路径"
+
+
+def test_ops_graph_draws_links_in_both_layers(base_doc, monkeypatch):
+    """R161：算子图每条 anchor 画一条线，且每个 term 在两个 attn 组里各一条。
+
+    _groups 按 code_expr_range 画彩线：8 条 anchor 落在 8 个不同节点上，所以
+    两层都画线；同名项（t0）在 h.0 与 h.1 各连一次，不许互相覆盖。
+    """
+    doc, backend = _attached(base_doc, monkeypatch, "yes")
+    assert backend.chat_calls >= 1 and backend.embed_calls >= 1
+    assert len(doc["anchors"]) == 8
+    html = render_html(doc)
+    ops = _section(html, "ops")
+    assert ops.count("lnk-") == len(doc["anchors"]), (
+        "连线类名出现 %d 次 != anchor 数 %d" % (ops.count("lnk-"), len(doc["anchors"]))
+    )
+    boxes = re.findall(r'<div class="opbox">.*?</div>', ops, re.S)
+    titles = re.findall(r"<h3>(.*?)</h3>", ops, re.S)
+    assert len(boxes) == len(titles) and boxes, (
+        "算子图分组数对不上：%d 个盒子 / %d 个标题" % (len(boxes), len(titles))
+    )
+    by_parent = dict(zip(titles, boxes))
+    for group in sorted({str(a["code_group"]) for a in doc["anchors"]}):
+        assert group in by_parent, "算子图里没有 %s 这一组" % group
+        for term in range(4):
+            label = "S3.2-eq-attn-t%d" % term
+            assert by_parent[group].count(label) == 1, (
+                "%s 该在 %s 里出现恰好一次，实际 %d 次"
+                % (label, group, by_parent[group].count(label))
+            )
