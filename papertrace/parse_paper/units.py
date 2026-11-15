@@ -4,20 +4,21 @@
 语义，硬切就是猜。ID 分配故意不依赖 marker 是否存在——序号取方程在本文件里的
 1 基位置，所以事后增删 marker 也不会让别的方程改 ID。
 
-匹配前先把原文过一遍「掩码」，生成等长的 code / comment 双视图：
-- code 视图里，未转义 % 到行尾的注释和 verbatim / lstlisting 逐字环境整体
-  换成等长空格——被注释掉的 \begin{equation} 和印在 verbatim 里的都不是
-  公式，公式体内的行尾 % 注释也活不进 latex；
-- comment 视图保留注释原文；逐字环境与行内逐字段两个视图均挖空，避免 marker
-  从逐字内容里误匹配（代码字符虽未置空，但 _MARKER_RE 只认 % 注释，偏移完全对应）。
-_ENV_RE 只扫 code 视图（找公式），_MARKER_RE 只扫 comment 视图（找注释里的
-marker）；两个视图与原文偏移一一对应，区间可以互相套用。\\% 是转义百分号，
-尊重它。行内逐字段（\\verb|...| 与 \\url{...}）里的 % 是字面内容不是注释
-起点，掩码时整段跳过——否则一个 \\verb|%| 就会把同行的 \\end{equation}
-一起吃掉，整条公式静默消失或和下一条缝合。marker 只认「上一个
-\\end{equation} 之后、本 \\begin{equation} 之前」那段注释区（裁决 R14）：
-写在公式体里的 marker 会被上一条公式偷走，造成两条公式的 ID 互换错配，
-一律忽略。
+匹配前先把原文过一遍「掩码」，生成等长的 code / comment 双视图（偏移与原文
+一一对应，区间可以互相套用）：
+- code 视图（_ENV_RE 找公式用）：未转义 % 到行尾的注释和 verbatim /
+  lstlisting 逐字环境整体换成等长空格——被注释掉的 \\begin{equation} 和印在
+  verbatim 里的都不是公式，公式体内的行尾 % 注释也活不进 latex；
+- comment 视图（_MARKER_RE 找 marker 用）：注释原文保留，逐字环境与行内
+  逐字（\\verb|...| 与 \\url{...}）整段换成等长空格，marker 不许从逐字内容里捡；
+- 行内逐字只在 comment 视图挖空：code 视图原样保留，连 \\verb|%| 里的字面
+  % 和它的定界符一起留着。LaTeX 的 % 只在注释里是注释，在 \\verb 里是字面
+  字符，所以行内逐字必须按定界符配对、整段跳过，绝不能当成注释起点——
+  否则一个 \\verb|%| 就会把同行的 \\end{equation} 一起吃掉，整条公式静默
+  消失或和下一条缝合。\\% 是转义百分号，尊重它。
+marker 只认「上一个 \\end{equation} 之后、本 \\begin{equation} 之前」那段
+注释区（裁决 R14）：写在公式体里的 marker 会被上一条公式偷走，造成两条
+公式的 ID 互换错配，一律忽略。
 """
 
 from __future__ import annotations

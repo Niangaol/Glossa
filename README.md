@@ -331,9 +331,12 @@ set PAPERTRACE_LLM=deepseek-chat
   与 `meta.runtime`。
 - **`anchors` / `code_expr_range`（S9 起）**：一条 anchor = 一个论文公式项对一个算子节点。
   `code_expr_range` 记的是 **trace 节点 id 区间**（单个 `root/@037`，多个 `root/@037..root/@045`，
-  按结构信号 `pairs` 的 node_id 首尾），**不是** `file:line`：M1a 的算子节点 `loc` 全是
-  `model.GPT` 这一类模块路径，没有逐算子源码行号，编一个出来就是对账造假。逐算子源码定位属
-  **M1b**，届时换成真实 `file:line`（字段类型不变，仍是 string）。
+  按结构信号 `pairs` 的 node_id 首尾），**仍是纯节点 id 区间、不换成 `file:line`**：换格式会让
+  `index.html` 的彩线全部静默消失（`render_html.py:82` 拿它当节点 id 用），真实行号在
+  `nodes[].loc` 上——**算子节点的 `loc` 现在是真实 `file:line`**（M1b 已落地）；M1a 时它全是
+  `model.GPT` 这类模块路径（编行号就是造假）。HTML 的算子行显示 `basename:line`，完整路径在
+  `title` 里。**两条局限**：`loc` 是**绝对路径**（`trace.json` 机器相关，相对化归 M4）；
+  **op 节点 `loc` 是 `file:line` 而 module 节点 `loc` 仍是模块路径**（同一字段两种语义，既有设计）。
   `tier` 只有 `green`/`yellow`/`none` 三档，`none` **绝不写成 anchor**，只进 `unresolved`；
   `source` 只可能是 `model`（判断题给了 yes）或 `static`（只有结构/检索依据）——anchor 不是
   实测出来的，所以永远不是 `runtime`。`signals` 里的 `s_retr`/`s_judge`/`s_struct` 与
