@@ -240,7 +240,8 @@
         "evidence": { "type": "string", "minLength": 1, "maxLength": 80 },
         "alternatives": { "type": "array", "maxItems": 2 },
         "verified_by": { "enum": [null, "user"] },
-        "direction": { "enum": ["paper_to_code", "code_to_paper", "both"] }
+        "direction": { "enum": ["paper_to_code", "code_to_paper", "both"] },
+        "code_group": { "type": "string" }
       }
     },
     "mismatch": {

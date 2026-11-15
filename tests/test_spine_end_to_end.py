@@ -21,7 +21,7 @@ import pytest
 from papertrace.align import embed as embed_module
 from papertrace.align import judge as judge_module
 from papertrace.align.score import confidence
-from papertrace.align.struct_signal import StructSignal
+from papertrace.align.struct_signal import StructMatch, StructSignal
 from papertrace.build_trace import build_trace, load_entry
 from papertrace.exceptions import BuildError, LLMUnavailable
 from papertrace.ingest.paper import IngestError, ingest_paper
@@ -245,7 +245,12 @@ def test_offline_has_no_anchors(monkeypatch):
 def test_offline_has_four_unresolved_terms(monkeypatch):
     doc, _ = _offline_build(monkeypatch)
     unresolved = doc["unresolved"]
+    # R168：逐层展开后 offline 下每组各报 4 项（先 h.0 后 h.1），共 8 条
     assert [u["ref"] for u in unresolved] == [
+        "S3.2-eq-attn-t0",
+        "S3.2-eq-attn-t1",
+        "S3.2-eq-attn-t2",
+        "S3.2-eq-attn-t3",
         "S3.2-eq-attn-t0",
         "S3.2-eq-attn-t1",
         "S3.2-eq-attn-t2",
@@ -291,7 +296,7 @@ def test_yes_backend_produces_yellow_anchor(monkeypatch):
     returned = attach_paper(doc, PAPER, model)
     assert returned is doc
     yellow = [a for a in doc["anchors"] if a["tier"] == "yellow"]
-    assert len(yellow) == 4
+    assert len(yellow) == 8  # R168：两层同构组 × 4 项
     anchor = yellow[0]
     assert 0.45 <= anchor["confidence"] < 0.75
     assert anchor["confidence"] == pytest.approx(0.654753, abs=1e-6)
@@ -299,8 +304,8 @@ def test_yes_backend_produces_yellow_anchor(monkeypatch):
     assert anchor["source"] == "model"
     assert anchor["evidence"].strip() != ""
     # 注入的假后端必须真的被走到（否则测的是 offline 兜底）
-    assert backend.calls == 4
-    assert len(backend.prompts) == 4
+    assert backend.calls == 8  # R168：每组各问 4 项
+    assert len(backend.prompts) == 8
 
 
 def test_green_gate_downgrades_in_real_trace(monkeypatch):
@@ -313,12 +318,15 @@ def test_green_gate_downgrades_in_real_trace(monkeypatch):
     monkeypatch.setattr(embed_module, "get_llm", lambda: embedder)
 
     def _no_structure(nodes, terms, config):
-        return StructSignal(0.0, [], ["同构未命中"], GOLD_PAIRS)
+        # R170：补成两层同构组——只给 pairs 不带 groups 会被 R169 当成截断信号炸掉
+        return StructSignal(0.0, [], ["同构未命中"], GOLD_PAIRS,
+                            (StructMatch("root/transformer.h.0.attn", GOLD_PAIRS),
+                             StructMatch("root/transformer.h.1.attn", GOLD_PAIRS_LAYER_1)))
 
     monkeypatch.setattr("papertrace.spine.struct_signal", _no_structure)
     doc, model = _fresh_doc()
     attach_paper(doc, PAPER, model)
-    assert len(doc["anchors"]) == 4
+    assert len(doc["anchors"]) == 8  # R168：两组 × 4 项
     for anchor in doc["anchors"]:
         assert anchor["tier"] == "yellow"
         assert anchor["signals"]["s_struct"] == 0.0
@@ -328,8 +336,8 @@ def test_green_gate_downgrades_in_real_trace(monkeypatch):
         assert anchor["confidence"] == pytest.approx(0.768525, abs=1e-6)
         assert "绿线降为黄线" in anchor["evidence"]
         assert anchor["source"] == "model"
-    # 判定的桩确实被走到（4 个公式项各一次；t0 命中第一个 yes 就早退）
-    assert backend.calls == 4
+    # 判定的桩确实被走到（两个同构组各 4 项各一次；t0 命中第一个 yes 就早退）
+    assert backend.calls == 8  # R168
     # embedding 的桩确实被走到（retrieve_bidirectional 对 code 侧、paper 侧各调一次）
     assert embedder.calls == 2
 
@@ -345,7 +353,9 @@ def test_code_expr_range_uses_node_ids_not_source_lines(monkeypatch):
         # R135：同一算子至多归一个公式项，所以 t0 的两个节点不能和 t1 的候选重叠
         pairs = [(0, "root/@037"), (0, "root/@038"), (1, "root/@039"),
                  (2, "root/@043"), (3, "root/@045")]
-        return StructSignal(0.8, ["同构"], [], pairs)
+        # R170：一组（本用例只测 t0 两节点区间）
+        return StructSignal(0.8, ["同构"], [], pairs,
+                            (StructMatch("root/transformer.h.0.attn", pairs),))
 
     monkeypatch.setattr("papertrace.spine.struct_signal", _two_nodes_for_first_term)
     doc, model = _fresh_doc()
@@ -649,7 +659,7 @@ def test_missing_forward_key_does_not_inherit_unit_scalar(monkeypatch):
     monkeypatch.setattr("papertrace.spine.retrieve_bidirectional", _unit_scalar_only)
     doc, model = _fresh_doc()
     attach_paper(doc, PAPER, model)
-    assert backend.calls == 4  # 判定的桩确实被走到（t0 命中第一个 yes 就早退）
+    assert backend.calls == 8  # R168：判定的桩确实被走到（每组 t0 命中第一个 yes 就早退）
     for anchor in doc["anchors"]:
         assert anchor["signals"]["s_retr"] == 0.0
         assert anchor["tier"] == "yellow"
@@ -741,11 +751,13 @@ def test_structural_duplicate_is_a_build_error(monkeypatch):
     """R144：结构路径（fallback=False）出现重复节点是**契约错误**，响亮报错。
 
     回退路径的跨项重复是正常输入（R144 明确只守结构路径），所以这里把
-    pairs_or_fallback 钉成非回退 + 重复候选，单独验证守门本身。
+    struct_signal 钉成一组 + 组内重复候选，单独验证逐组守门本身（R162）。
     """
+    pairs = [(0, "root/@037"), (1, "root/@037")]  # 同一组内两项指同一个算子
     monkeypatch.setattr(
-        "papertrace.spine.pairs_or_fallback",
-        lambda signal, terms, nodes: ({0: ["root/@037"], 1: ["root/@037"]}, False),
+        "papertrace.spine.struct_signal",
+        lambda nodes, terms, config: StructSignal(
+            0.8, [], [], pairs, (StructMatch("root/transformer.h.0.attn", pairs),)),
     )
     doc, model = _fresh_doc()
     with pytest.raises(BuildError, match="一个算子只归一个公式项"):
@@ -858,7 +870,7 @@ def test_structural_path_anchors_are_the_golden_four(monkeypatch):
     """GC16：同一公式单元内，任意两条 anchor 的 code_expr_range 不共享节点。
 
     走**结构路径**（不替换 struct_signal）：四项同构命中、judge 全答 yes，
-    anchor 的 code_expr_range 是 judge 确认的那一个节点 id，四条必须互不相同。
+    anchor 的 code_expr_range 是 judge 确认的那一个节点 id，八条（两层 × 四项）必须互不相同。
     """
     monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
     monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
@@ -868,9 +880,10 @@ def test_structural_path_anchors_are_the_golden_four(monkeypatch):
     attach_paper(doc, PAPER, model)
     assert backend.calls >= 1
     ranges = [str(a["code_expr_range"]) for a in doc["anchors"]]
-    assert len(ranges) == 4, ranges
+    assert len(ranges) == 8, ranges  # R168：两层 × 四项
     assert len(set(ranges)) == len(ranges), "两条 anchor 认领了同一个算子：%r" % (ranges,)
-    assert ranges == ["root/@037", "root/@038", "root/@043", "root/@045"], ranges
+    assert ranges == ["root/@037", "root/@038", "root/@043", "root/@045",
+                      "root/@071", "root/@072", "root/@077", "root/@079"], ranges
     validate_trace(doc)
 
 
@@ -987,7 +1000,8 @@ def test_two_units_may_share_a_node(monkeypatch):
         + repr(sorted(reasons)))
     # ⑤ 反向对照：同单元独占仍然成立（一个算子至多归一个公式项）
     for unit_id, ranges in by_unit.items():
-        terms = {a["formula_term_index"] for a in anchors
+        # R162：逐层后同单元 8 条 anchor 分属两个组，独占口径改按「单元 × 组」
+        terms = {(a["formula_term_index"], a.get("code_group")) for a in anchors
                  if a["paper_unit_id"] == unit_id}
         assert len(ranges) == len(terms), (
             "同一单元内一个算子至多归一个公式项：%s -> %r" % (unit_id, sorted(ranges)))
@@ -1012,7 +1026,7 @@ def test_yellow_alternatives_exclude_claimed(monkeypatch):
 
     pairs 与期望值都不硬编码节点 id：向量由 sha256(text) 决定，而 text 里带
     loc（本机绝对路径），换一台机器 top-k 会变。期望值用产品自己的
-    retrieve_bidirectional 现算，装配口径与 spine.py:105-110 逐字相同。
+    retrieve_bidirectional 现算，装配口径与 spine.py:101-102 逐字相同。
     """
     monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
     monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
@@ -1042,7 +1056,8 @@ def test_yellow_alternatives_exclude_claimed(monkeypatch):
     def _two_pairs(nodes, terms, config):
         # s_struct=0.40 < GREEN_STRUCT_MIN(0.50)：分数本身够绿，被门压成黄线
         # （R151 只长在黄线上，绿线没有备选）
-        return StructSignal(0.4, [], ["结构同构命中前两项（测试自喂）"], pairs)
+        return StructSignal(0.4, [], ["结构同构命中前两项（测试自喂）"], pairs,
+                            (StructMatch("root/transformer.h.0.attn", pairs),))  # R170：一组
 
     monkeypatch.setattr("papertrace.spine.struct_signal", _two_pairs)
     attach_paper(doc, PAPER, model)
@@ -1072,3 +1087,143 @@ def test_yellow_alternatives_exclude_claimed(monkeypatch):
     assert without_claim != expected, (
         "claimed 过滤器没改变任何结果，① 不可能红：%r" % (without_claim,))
     validate_trace(doc)
+
+# ------------------------------------------- L3 逐层展开：每组一条 anchor（GC17 / GC18）
+
+#: 夹具两层 attention 的组 id（brief 照抄）：struct_signal 的 groups[0] / groups[1]。
+LAYER_GROUPS = ("root/transformer.h.0.attn", "root/transformer.h.1.attn")
+#: 第二层（h.1）的黄金 pairs：真夹具实测值，与 h.0 的 GOLD_PAIRS 一一对应。
+GOLD_PAIRS_LAYER_1 = [(0, "root/@071"), (1, "root/@072"), (2, "root/@077"), (3, "root/@079")]
+
+
+def _attached(monkeypatch, stub=None) -> tuple[dict, object]:
+    """黄金夹具 + 假 yes 后端跑一次 attach_paper；`stub` 给定时替换结构信号。"""
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    backend = _YesBackend()
+    monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
+    if stub is not None:
+        monkeypatch.setattr("papertrace.spine.struct_signal", stub)
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    return doc, backend
+
+
+def test_structural_path_anchors_cover_every_layer(monkeypatch):
+    """GC17：同构结构命中的**每个** group 都要出一条 anchor，不止第一层。"""
+    doc, _ = _attached(monkeypatch)
+    anchors = doc["anchors"]
+    assert len(anchors) == 8, (
+        "两层同构结构本该各出 4 条（4 项 × 2 层），实得 %d：%r"
+        % (len(anchors), [(a["formula_term_index"], a["code_expr_range"])
+                          for a in anchors]))
+    assert {a["code_group"] for a in anchors} == set(LAYER_GROUPS), (
+        "每条 anchor 都要写明自己属于哪个组：%r"
+        % {a.get("code_group") for a in anchors})
+    # 逐层展开：先 h.0 的 t0..t3，再 h.1 的 t0..t3
+    assert [(a["code_group"], a["formula_term_index"]) for a in anchors] == (
+        [(LAYER_GROUPS[0], i) for i in range(4)]
+        + [(LAYER_GROUPS[1], i) for i in range(4)]), [
+            (a["code_group"], a["formula_term_index"]) for a in anchors]
+    validate_trace(doc)
+
+
+def test_each_layer_gets_its_own_judge_call(monkeypatch):
+    """GC17：每个 group 单独问一次判断题——两层不问同一套，calls 随层数翻倍。"""
+    doc, backend = _attached(monkeypatch)
+    assert backend.calls == 8, (
+        "两组各问 4 次本该 8 次，实得 %d：逐层展开必须让每组都有自己的判断题"
+        % backend.calls)
+    per_term: dict[int, set[str]] = {}
+    for anchor in doc["anchors"]:
+        per_term.setdefault(anchor["formula_term_index"], set()).add(
+            str(anchor["code_expr_range"]))
+    assert set(per_term) == {0, 1, 2, 3}, "两层都该覆盖全部 4 个公式项：%r" % (sorted(per_term),)
+    for index, ranges in sorted(per_term.items()):
+        assert len(ranges) == 2, (
+            "公式项 %d 两层的 code_expr_range 相同：%r" % (index, sorted(ranges)))
+    by_group = {
+        group: {str(a["code_expr_range"]) for a in doc["anchors"] if a["code_group"] == group}
+        for group in LAYER_GROUPS}
+    assert {len(v) for v in by_group.values()} == {4}, by_group
+    assert not (by_group[LAYER_GROUPS[0]] & by_group[LAYER_GROUPS[1]]), (
+        "两层的锚串必须各自落在本层节点上，不许互相串门：%r" % (by_group,))
+
+
+def test_claims_are_isolated_per_layer(monkeypatch):
+    """GC18：claimed 按「单元 × 组」隔离——h.1 不因 h.0 已认领而判 CLAIMED。"""
+    # 真夹具两层节点相亥、锚串先验唯一：先钉住「每组内四条互不相同、八条全不同」
+    doc, _ = _attached(monkeypatch)
+    per_group: dict[str, set[str]] = {}
+    for anchor in doc["anchors"]:
+        per_group.setdefault(anchor["code_group"], set()).add(
+            str(anchor["code_expr_range"]))
+    assert {len(v) for v in per_group.values()} == {4}, per_group
+    assert len({r for v in per_group.values() for r in v}) == 8, per_group
+    assert not doc["unresolved"], "两层都该出线：%r" % (doc["unresolved"],)
+    # 自喂两组**共享节点**的桩：h.1 的 t0 与 h.0 的 t0 抢同一个算子 root/@037。
+    # claimed 只有提到组循环外隔离，这一项才不会被判成「已被认领」。
+    shared = [(0, "root/@037"), (1, "root/@038")]
+    later = [(0, "root/@037"), (1, "root/@039")]
+
+    def _overlapping_groups(nodes, terms, config):
+        return StructSignal(0.8, ["同构"], [], shared,
+                            (StructMatch(LAYER_GROUPS[0], shared),
+                             StructMatch(LAYER_GROUPS[1], later)))
+
+    doc2, _ = _attached(monkeypatch, stub=_overlapping_groups)
+    claimed = [u for u in doc2["unresolved"] if "认领" in u["reason"]]
+    assert not claimed, (
+        "h.1 的 t0 用了 h.0 认领过的 root/@037，但认领集合本该按组隔离：%r"
+        % (doc2["unresolved"],))
+    assert len(doc2["anchors"]) == 4, (
+        "两组各命中 t0/t1，本该出 4 条 anchor：%r"
+        % [(a["code_group"], a["formula_term_index"]) for a in doc2["anchors"]])
+    validate_trace(doc2)
+
+
+def test_offline_reports_every_layer_as_unresolved(monkeypatch):
+    """offline：每个组每个公式项都单独记一条 unresolved，一条 anchor 都不出。"""
+    doc, _ = _offline_build(monkeypatch)
+    assert doc["anchors"] == []
+    unresolved = doc["unresolved"]
+    assert len(unresolved) == 8, (
+        "两层各 4 项本该 8 条，实得 %d：%r"
+        % (len(unresolved), [u["ref"] for u in unresolved]))
+    assert {u["kind"] for u in unresolved} == {"paper_unit"}, unresolved
+    assert [u["ref"] for u in unresolved] == [
+        f"S3.2-eq-attn-t{i}" for i in range(4)] * 2, [u["ref"] for u in unresolved]
+    assert all(u["reason"].strip() for u in unresolved), "每条都要说清为什么对不上"
+
+
+def test_fallback_path_stays_single_layer(monkeypatch):
+    """回退路径保持原样：一组 4 条、不写 code_group、绝不逐层展开。"""
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    backend = _YesBackend()
+    monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
+    embedder = _SameVectorsBackend()
+    monkeypatch.setattr(embed_module, "get_llm", lambda: embedder)
+    monkeypatch.setattr("papertrace.spine.struct_signal", _no_isomorphism)
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    anchors = doc["anchors"]
+    assert len(anchors) == 4, "回退路径本该 4 条，实得 %d" % len(anchors)
+    assert doc["unresolved"] == []
+    for anchor in anchors:
+        assert "code_group" not in anchor, (
+            "回退路径没有同构组，不该写 code_group：%r" % (anchor,))
+        assert anchor["code_expr_range"].count(RANGE_SEP) == 0, (
+            "R117：回退路径只写一个节点 id：%r" % (anchor["code_expr_range"],))
+    # 这里不调 validate_trace：schema_anchor 只用 signals 重算 tier，不知道 R112 的
+    # 回退封顶（s_struct=0.60 + c=0.8429 重算是 green，落盘是 yellow）——这是 L3 之前
+    # 就有的既有差异（R115 那条用例同样只手工断言 tier），回退路径一字不改就不去动它。
+    assert all(a["tier"] == "yellow" for a in anchors), anchors
+
+
+def test_pairs_without_groups_is_refused(monkeypatch):
+    """R169：给了 pairs 却没给 groups → fail-closed，绝不静默降级成回退路径。"""
+    with pytest.raises(BuildError, match="没有 groups"):
+        _attached(monkeypatch, stub=lambda nodes, terms, config: StructSignal(
+            0.8, ["同构"], [], GOLD_PAIRS))
+

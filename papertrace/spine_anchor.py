@@ -33,8 +33,13 @@ EVIDENCE_LIMIT = 80     # schema anchor.evidence maxLength
 
 
 def attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id: dict,
-                fallback: bool, claimed: set[str]) -> None:
-    """一个公式项：三个信号 → confidence → tier → anchor 或 unresolved。"""
+                fallback: bool, claimed: set[str],
+                code_group: str | None = None) -> None:
+    """一个公式项：三个信号 → confidence → tier → anchor 或 unresolved。
+
+    R161/R163：code_group 非 None 时这条 anchor 属于某个同构组（结构路径）；
+    None（回退路径）时不写这个键——回退路径没有层可言。
+    """
     term_id = f"{unit.unit_id}-t{term.index}"
     # R85：逐项 s_retr 只取本项 forward 的最大分；缺键/空表 → 0.0（保守方向），
     # 绝不用单元级 retrieval["s_retr"]——兄弟项命中会把零检索的项抬上绿线
@@ -77,6 +82,8 @@ def attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id:
               "source": "model" if s_judge > 0 else "static",  # R67
               "evidence": evidence[:EVIDENCE_LIMIT] or FALLBACK_EVIDENCE,
               "direction": "paper_to_code"}
+    if code_group is not None:  # R163：结构路径必填，回退路径省略（None 就不写键）
+        anchor["code_group"] = code_group
     if level == "yellow":  # brief：黄线必须带备选（schema maxItems 2）
         picks = [h for h in (retrieval.get("forward") or {}).get(term_id) or []
                  if h.get("code_id") not in available

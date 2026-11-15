@@ -43,8 +43,9 @@ TEX = str(ROOT / "tests" / "fixtures" / "papers" / "vaswani2017" / "attention.te
 class _FixedVerdictBackend:
     """单实例假后端：embed 全同向量（逐项 s_retr=1.0），chat 回固定判定。
 
-    R84 控制器已验证配方：verdict=yes → 4 条 green c=0.862949；
-    verdict=no → 4 条 yellow c=0.460085 source=static alternatives 各 2。
+    R84 控制器已验证配方：verdict=yes → 8 条 green c=0.862949；
+    verdict=no → 8 条 yellow c=0.460085 source=static alternatives 各 2。
+    （R161 逐层展开：里层 × 4 项）
     """
 
     name = "fake-s10"
@@ -179,8 +180,8 @@ def test_green_and_yellow_are_visually_distinct(base_doc, monkeypatch):
     # 注入的假后端必须真的被走到（否则测的是 offline 兜底，结论是假的）
     assert green_backend.chat_calls >= 1 and green_backend.embed_calls >= 1
     assert yellow_backend.chat_calls >= 1 and yellow_backend.embed_calls >= 1
-    assert [a["tier"] for a in green_doc["anchors"]] == ["green"] * 4
-    assert [a["tier"] for a in yellow_doc["anchors"]] == ["yellow"] * 4
+    assert [a["tier"] for a in green_doc["anchors"]] == ["green"] * 8  # R168：两层 × 4 项
+    assert [a["tier"] for a in yellow_doc["anchors"]] == ["yellow"] * 8
 
     green_html = render_html(green_doc)
     yellow_html = render_html(yellow_doc)

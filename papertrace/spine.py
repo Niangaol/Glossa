@@ -100,14 +100,30 @@ def _attach_unit(doc: dict, unit, model, by_id: dict) -> None:
                   and n.get("kind") == "op" and n.get("id")]
     retrieval = retrieve_bidirectional(code_units, [
         {"term_id": f"{unit.unit_id}-t{t.index}", "text": t.latex} for t in terms])
-    grouped, fallback = pairs_or_fallback(signal, terms, doc["nodes"])  # R112
-    dups = duplicate_claims(grouped)  # R144：只守结构路径——回退候选本来就跨项重复
-    if dups and not fallback:
-        raise BuildError(f"结构配对出现重复节点，一个算子只归一个公式项：{dups}")
-    claimed: set[str] = set()  # R135/R147：同单元独占，跨单元共享
-    for term in terms:
-        attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []),
-                     by_id, fallback, claimed)
+    if signal.pairs and not signal.groups:  # R169：产品永远 pairs 与 groups 一致
+        # 只给 pairs 说明同构信号被截断；静默走回退会把结构路径伪装成「没命中」——
+        # 宁可炸，也不猜
+        raise BuildError(
+            "结构信号给了 pairs 却没有 groups：拒绝把结构路径静默降级成回退路径")
+    if signal.groups:  # R161：逐层展开只发生在结构同构路径，回退路径没有层可言
+        passes = [(m.group, {i: [nid for i2, nid in m.pairs if i2 == i]
+                             for i in range(len(terms))})
+                  for m in signal.groups]
+        for _, grouped in passes:  # R144/R162：重复守门也按组，不能跨组合表
+            dups = duplicate_claims(grouped)
+            if dups:
+                raise BuildError(
+                    f"结构配对出现重复节点，一个算子只归一个公式项：{dups}")
+        fallback = False
+    else:  # R112：回退路径一字不改——每个 term 一条 anchor，无层可言
+        grouped, _ = pairs_or_fallback(signal, terms, doc["nodes"])
+        passes = [(None, grouped)]
+        fallback = True
+    for code_group, grouped in passes:
+        claimed: set[str] = set()  # R135/R147/R162：同单元同组独占，跨组跨单元共享
+        for term in terms:
+            attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []),
+                         by_id, fallback, claimed, code_group)
 
 
 def _model_meta() -> dict:
