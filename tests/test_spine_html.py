@@ -259,7 +259,8 @@ def test_real_shapes_appear(offline_doc):
     svgs = re.findall(r"<svg\b.*?</svg>", html, re.S)
     assert svgs and any("(2, 4, 8, 8)" in svg for svg in svgs)
     assert "(2,4,8,8)" not in html  # 不许退化成无空格 repr
-    # 没有数据入参的画 -，不是 (?)
+    # 没有数据入参的画 -，不是 (?)。R96：inputs 三态的 - 仍然合法
+    # （print_ops 口径），只有 shape 的空列表要改成 ()。
     assert "- → (8)" in block or "- → (64, 32)" in block
 
 
@@ -320,4 +321,100 @@ def test_write_html_overwrites_without_force(offline_doc):
     first.write_text(stale, encoding="utf-8")
     second = write_html(offline_doc, out_dir)
     assert second == first
-    assert "旧产物" not in second.read_text(encoding="utf-8")
+    assert "旧产物" not in second.read_text(encoding="utf-8")# ==================================================== fix round 1（R96 / R97 / R98）
+def _note(html: str, section_name: str) -> str:
+    """取出某节的说明文字（<p class="sub">…</p>）：R97 要钉住「说明与数据一致」。"""
+    block = _section(html, section_name)
+    start = block.index('<p class="sub">')
+    return block[start : block.index("</p>", start)]
+def test_fmt_shape_matches_report():
+    """R96：render_html.fmt_shape 必须与 report.fmt_shape 逐输入一致。
+
+    R96 取代 R71 的空列表条款：report.py:17 docstring 明写「() 是 0 维标量；
+    (?) 是形状未知。两者不能混为一谈」，而 render 侧曾把 [] 渲染成「-」——
+    那是 print_ops 的 **inputs（数据入参列表）** 三态，不是 shape 的口径。
+    不许 import report 进 render_html（report 顶层 import build_trace，会把 torch
+    拖进纯渲染器的 import 图），所以用这条测试把两个口径钉在一起。
+    """
+    from papertrace.render_html import fmt_shape as render_fmt_shape
+    from papertrace.report import fmt_shape as report_fmt_shape
+
+    for shape in (None, [], [2, 4], [2, 4, 8, 8], [1]):
+        assert render_fmt_shape(shape) == report_fmt_shape(shape), shape
+    # R96 核心条款显式钉住：空列表是 0 维标量，不是「没有数据」
+    assert render_fmt_shape([]) == "()"
+    assert render_fmt_shape(None) == "(?)"
+def test_header_shows_provenance(offline_doc):
+    """R98：页眉必须显示 meta.schema_version / meta.created_at，不许渲染成空。
+
+    模板曾写 doc.schema_version / doc.created_at（顶层 doc 没有这两个键），
+    Jinja 默认 Undefined 静默渲染空串 → 每页页眉都是「schema v · 生成于 」。
+    """
+    html = render_html(offline_doc)
+    meta = offline_doc["meta"]
+    assert "schema v" + str(meta["schema_version"]) in html
+    assert "生成于 " + str(meta["created_at"]) in html
+    # R70 可追溯性：prompt_version 以前在页面里完全不出现
+    assert str(meta["model"]["prompt_version"]) in html
+def test_strict_undefined_raises_on_bad_path(offline_doc):
+    """R98：Environment 必须配 StrictUndefined——路径笔误要响亮抛错，不许静默吞。"""
+    import papertrace.render_html as render_module
+    from jinja2 import StrictUndefined
+    from jinja2.exceptions import UndefinedError
+
+    assert render_module._ENV.undefined is StrictUndefined
+    broken = copy.deepcopy(offline_doc)
+    broken.pop("meta")  # doc.meta.* 全部不可解析
+    with pytest.raises(UndefinedError):
+        render_html(broken)
+def test_symbol_note_matches_mapping_status():
+    """R97：符号表说明文字必须与真实 mapping status 一致，不许说反。
+
+    实测骨架 + 论文的映射是 paper_only（symbols/mapping.py:47-52 回填
+    code_var=Dh），模板说明却写 code_only——两者含义相反
+    （code_only = 论文侧缺；paper_only = 代码侧缺）。
+    数据忠于 trace，失真只在说明文字，但说明失实与数据失实同族（R76）。
+    """
+    doc = skeleton_trace(repo_url=REPO, commit=repo_commit(REPO))
+    attach_paper(doc, TEX, None)  # CLI 的 --skeleton --paper 正是这条路径
+    statuses = {str(m.get("status")) for m in doc["symbols"]["mapping"] if m.get("status")}
+    assert statuses, "骨架 + 论文本该产出映射行"
+    html = render_html(doc)
+    note = _note(html, "symbols")
+    for status in sorted(statuses):
+        assert status in note, f"说明文字漏说了真实状态 {status}"
+    assert "code_only" not in note
+def test_cli_writes_index_html_for_skeleton():
+    """R73：--skeleton 也要写 index.html（R83 两路径汇合处，不只真实 build 路径）。"""
+    out_dir = scratch_dir("s10-fix1-skel-cli")
+    result = _run_cli(
+        "build", "--repo", REPO, "--skeleton", "--out", str(out_dir), "--force"
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    index = out_dir / "index.html"
+    assert index.is_file()
+    html = index.read_text(encoding="utf-8")
+    assert "骨架模式没有算子图" in html
+    assert "schema v1.0.0" in html  # R98：骨架页眉也不许渲染成空
+    body = re.sub(r'\s+xmlns(?::\w+)?="[^"]*"', "", html)
+    assert not re.search(r"https?://", body)
+    assert "Traceback" not in result.stderr
+def test_skeleton_with_paper_renders_unresolved_kinds():
+    """R92 场景三：--skeleton --paper → nodes=0/unresolved=9，两种 kind 都显示。"""
+    out_dir = scratch_dir("s10-fix1-skel-paper-cli")
+    result = _run_cli(
+        "build", "--repo", REPO, "--paper", TEX, "--skeleton",
+        "--out", str(out_dir), "--force",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    doc = load_trace(out_dir / "trace.json")
+    assert doc["nodes"] == [] and doc["edges"] == [] and doc["anchors"] == []
+    assert len(doc["unresolved"]) == 9
+    kinds = {str(u["kind"]) for u in doc["unresolved"]}
+    assert kinds == {"symbol", "paper_unit"}
+    html = (out_dir / "index.html").read_text(encoding="utf-8")
+    block = _section(html, "unresolved")
+    assert "symbol" in block and "paper_unit" in block  # 不许只过滤 paper_unit
+    for entry in doc["unresolved"]:
+        assert str(escape(entry["ref"])) in block
+        assert str(escape(entry["reason"])) in block

@@ -2,7 +2,8 @@
 
 五块：meta 契约来源 / 代码算子图（静态 SVG，按 parent_id 分组，标真实形状，
 anchor 画彩线）/ 论文公式项清单 / 未对齐清单 / 符号表。
-裁决口径：R71 形状三态（与 report.py 的 print_ops 一致）、R75 xmlns 是命名空间标识符
+裁决口径：R96 形状口径（fmt_shape 与 report.fmt_shape 逐输入一致：None → (?)、
+[] → () 是 0 维标量；inputs 数据入参三态照抄 print_ops）、R75 xmlns 是命名空间标识符
 不是资源引用、R82 项清单取并集、R83 超 HTML_MAX_BYTES 抛 BuildError 绝不静默截断。
 完整裁决记录见 .superpowers/sdd/2026-11-14-papertrace-spine/task-S10-report.md。
 """
@@ -12,7 +13,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
 from papertrace.constants import HTML_MAX_BYTES
 from papertrace.exceptions import BuildError
@@ -21,6 +22,8 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 _ENV = Environment(
     loader=FileSystemLoader(str(_TEMPLATE_DIR)),
     autoescape=select_autoescape(enabled_extensions=("html", "htm", "j2")),
+    # R98：模板路径笔误必须响亮抛 UndefinedError，不许静默渲染成空串
+    undefined=StrictUndefined,
 )
 
 _TERM_REF = re.compile(r"^(?P<unit>.+)-t(?P<index>\d+)$")
@@ -29,11 +32,18 @@ _TIER_STYLE = {"green": ("lnk-green", "#1a7f37", False), "yellow": ("lnk-yellow"
 
 
 def fmt_shape(shape) -> str:
-    """R71：int 列表 → Python tuple repr；None → (?)；空列表 → -。"""
+    """R96：int 列表 → Python tuple repr；None → (?)；空列表 → ()（0 维标量）。
+
+    R96 取代 R71 的空列表条款：必须与 papertrace/report.py 的 fmt_shape
+    逐输入一致。「-」只属于 inputs（数据入参列表）的三态，绝不属于 shape——
+    report.py:17 docstring：() 是 0 维标量；(?) 是形状未知。两者不能混为一谈。
+    一致性由 test_spine_html.py::test_fmt_shape_matches_report 钉住；不许
+    import report（它顶层 import build_trace，会把 torch 拖进纯渲染器的 import 图）。
+    """
     if shape is None:
         return "(?)"
     if not shape:
-        return "-"
+        return "()"
     return "(" + ", ".join(str(dim) for dim in shape) + ")"
 
 
@@ -45,7 +55,7 @@ def _node_label(node: dict) -> str:
 
 
 def _shape_texts(node: dict) -> tuple[str, str]:
-    """R71：口径与 papertrace/report.py 的 print_ops 三态逐字一致。"""
+    """inputs 三态口径与 papertrace/report.py 的 print_ops 逐字一致（R71 这半句没错）。"""
     known_out = bool(node.get("outputs")) or bool(node.get("shape_out"))
     shown_out = fmt_shape(node.get("shape_out")) if known_out else "(?)"
     if node.get("kind") != "op":

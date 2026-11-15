@@ -40,7 +40,7 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 <body>
 <header>
 <h1>PaperTrace · {{ repo_name }}</h1>
-<p>单文件离线报告 · 只画 trace.json 里已写下的东西 · 零外部引用 · schema v{{ doc.schema_version }} · 生成于 {{ doc.created_at }}</p>
+<p>单文件离线报告 · 只画 trace.json 里已写下的东西 · 零外部引用 · schema v{{ doc.meta.schema_version | default("未记录", true) }} · 生成于 {{ doc.meta.created_at | default("未记录", true) }}</p>
 </header>
 <main>
 
@@ -49,17 +49,17 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 <p class="sub">仓库、提交、模型入口、论文与运行时全部照抄 trace.json；没记下来的字段写「未记录」，不猜。</p>
 <table>
 <tr><th>字段</th><th>值</th></tr>
-<tr><td>仓库 / 提交</td><td class="mono">{{ doc.meta.repo.url or "未记录" }} @ {{ doc.meta.repo.commit or "未记录" }}</td></tr>
-<tr><td>模型入口</td><td class="mono">{{ doc.meta.model.name or "未记录" }}{% if doc.meta.model.embed_model %} · embed {{ doc.meta.model.embed_model }}{% endif %}</td></tr>
-<tr><td>论文</td><td>{% if doc.meta.paper and doc.meta.paper.title %}{{ doc.meta.paper.title }}<span class="mono"> · {{ doc.meta.paper.source }}</span>{% else %}本次 build 没有附论文（--paper 未给）{% endif %}</td></tr>
-<tr><td>运行时</td><td class="mono">{% if doc.meta.runtime and doc.meta.runtime.real_execution %}torch {{ doc.meta.runtime.torch_version or "未记录" }} · device {{ doc.meta.runtime.device or "未记录" }} · real_execution {{ "ok" if doc.meta.runtime.real_execution.ok else "未通过" }} · batch {{ doc.meta.runtime.batch }} seq_len {{ doc.meta.runtime.seq_len }}{% else %}骨架模式，没有真实执行{% endif %}</td></tr>
+<tr><td>仓库 / 提交</td><td class="mono">{{ doc.meta.repo.url | default("未记录", true) }} @ {{ doc.meta.repo.commit | default("未记录", true) }}</td></tr>
+<tr><td>模型入口</td><td class="mono">{{ doc.meta.model.name | default("未记录", true) }}{% if doc.meta.model.embed_model | default("", true) %} · embed {{ doc.meta.model.embed_model }}{% endif %} · prompt_version {{ doc.meta.model.prompt_version | default("未记录", true) }}</td></tr>
+<tr><td>论文</td><td>{% if doc.meta.paper | default(none, true) and doc.meta.paper.title | default("", true) %}{{ doc.meta.paper.title }}<span class="mono"> · {{ doc.meta.paper.source | default("未记录", true) }}</span>{% else %}本次 build 没有附论文（--paper 未给）{% endif %}</td></tr>
+<tr><td>运行时</td><td class="mono">{% if doc.meta.runtime and doc.meta.runtime.real_execution | default(none, true) %}torch {{ doc.meta.runtime.torch_version | default("未记录", true) }} · device {{ doc.meta.runtime.device | default("未记录", true) }} · real_execution {{ "ok" if doc.meta.runtime.real_execution.ok else "未通过" }} · batch {{ doc.meta.runtime.batch | default("未记录", true) }} seq_len {{ doc.meta.runtime.seq_len | default("未记录", true) }}{% else %}骨架模式，没有真实执行{% endif %}</td></tr>
 <tr><td>算子图规模</td><td>节点 {{ doc.nodes | length }} · 边 {{ doc.edges | length }} · anchors {{ doc.anchors | length }} · 未对齐 {{ doc.unresolved | length }} · mismatches {{ doc.mismatches | length }}</td></tr>
 </table>
 </section>
 
 <section id="ops">
 <h2>② 代码算子图</h2>
-<p class="sub">按 parent_id 分组；形状格式化成 Python tuple repr，逗号后一个空格。空列表记作 -（确实没有数据入参），(?) 只留给缺 inputs 字段的老格式。</p>
+<p class="sub">按 parent_id 分组；形状格式化成 Python tuple repr，逗号后一个空格。空形状列表记作 ()（0 维标量）；没有数据入参记作 -（确实没有数据输入）；(?) 只留给缺 inputs 字段的老格式与形状未知。</p>
 {% if groups %}
 <div class="opsgrid">
 {% for g in groups %}
@@ -116,7 +116,7 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 
 <section id="symbols">
 <h2>⑤ 符号表</h2>
-<p class="sub">代码侧符号、论文侧符号与它们的映射；骨架模式下代码侧为空，映射会显示 code_only。</p>
+<p class="sub">代码侧符号、论文侧符号与它们的映射；骨架模式下代码侧为空，映射会显示 paper_only（论文侧有符号、代码侧没观测到）。code_var 记的是冻结语义表里的对应变量，不是观测到的代码符号。</p>
 <table>
 <tr><th>side</th><th>symbol</th><th>value</th><th>status / 含义</th><th>defined_at / first_seen</th><th>maps to</th></tr>
 {% for s in symbol_rows %}
