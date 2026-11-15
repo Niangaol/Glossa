@@ -22,6 +22,7 @@ import jinja2
 
 from papertrace.build_trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
+from papertrace.paths import relativize_doc
 from papertrace.render_html import write_html
 from papertrace.report import (
     print_build_summary,
@@ -119,11 +120,16 @@ def _cmd_build(args: argparse.Namespace) -> int:
             except BuildError as exc:
                 print(f"papertrace build：{exc}", file=sys.stderr)
                 return UNIMPLEMENTED
-        attach_paper(doc, args.paper, model)
+        try:
+            attach_paper(doc, args.paper, model)
+        except BuildError as exc:  # R148：契约错误（如结构配对重复）报一行，不冒 traceback
+            print(f"papertrace build：{exc}", file=sys.stderr)
+            return UNIMPLEMENTED
         print(
             f"  论文脊柱：anchors={len(doc['anchors'])} "
             f"unresolved={len(doc['unresolved'])}（{args.paper}）"
         )
+    relativize_doc(doc)  # R139/R140：写盘前一次性把本机绝对路径改成相对构建目录
     try:
         validate_trace(doc)
     except TraceSchemaError as exc:

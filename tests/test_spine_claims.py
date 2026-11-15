@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from papertrace.llm.client import ChatResult
-from papertrace.spine import _node_text as spine_node_text
+from papertrace import spine
 from papertrace.spine_claims import (
     CLAIMED_REASON,
     duplicate_claims,
@@ -60,10 +60,11 @@ def yes_backend(monkeypatch) -> YesBackend:
     return backend
 
 
-def test_node_text_matches_spine_exactly():
-    """真节点与畸形节点，node_text 都与 spine._node_text 逐字相等。"""
-    for node in (REAL_NODE, MALFORMED_NODE):
-        assert node_text(node) == spine_node_text(node)
+def test_node_text_keeps_the_frozen_spine_format():
+    """逐字钉住搬走前的格式（R152：helper 从 spine.py 搬到 spine_claims.py，输出不许变）。"""
+    assert node_text(REAL_NODE) == "matmul matmul_1 net.py:42 in=[[2, 4], [4, 2]] out=[[2, 2]]"
+    assert node_text(MALFORMED_NODE) == "in=None out=None"
+    assert not hasattr(spine, "_node_text"), "helper 只留一份，别在 spine.py 里复活"
 
 
 def test_unclaimed_keeps_order_and_does_not_mutate():

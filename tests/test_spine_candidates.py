@@ -8,8 +8,9 @@
 - 排序 = `lexical_rank(term.latex, node)` 降序，同分按 `node["id"]` 升序——两个实现者
   必须产出同一份 trace.json。
 - 预算按 `term.index` 升序分配，与 terms 入参顺序无关；被截断的 term 只记一条 miss。
-- 不做跨 term 唯一性约束：term0（QK^{T}, matmul）与 term3（V, matmul）候选集相同
-  是正确行为（同一算子可服务两个公式项）。
+- 生成器本身不做跨 term 唯一性约束：term0（QK^{T}, matmul）与 term3（V, matmul）
+  候选集相同是正确行为（生成器只按 kind + 词法排序给候选）；「一个算子至多归属
+  一个公式项」由 papertrace/spine_claims.py 在编排层保证（R135）。
 - hits/misses 只是给人看的中文短句，spine 不消费（spine 只消费 pairs）。
 """
 
@@ -107,7 +108,7 @@ def test_softmax_term_ranks_real_softmax_first(real):
 
 
 def test_matmul_terms_share_the_same_candidate_set(real):
-    """诚实性：term0 与 term3 同为 matmul，候选集相同是正确行为。"""
+    """诚实性：term0 与 term3 同为 matmul，生成器给出相同候选集；独占由 spine_claims 保证。"""
     nodes, terms = real
     cands = candidate_pairs(terms, nodes, per_term_limit=99, total_limit=999)
     s0 = {nid for i, nid in cands.pairs if i == 0}

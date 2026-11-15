@@ -22,13 +22,14 @@ from papertrace.align import judge as judge_module
 from papertrace.align.score import confidence
 from papertrace.align.struct_signal import StructSignal
 from papertrace.build_trace import build_trace, load_entry
-from papertrace.exceptions import LLMUnavailable
+from papertrace.exceptions import BuildError, LLMUnavailable
 from papertrace.ingest.paper import IngestError, ingest_paper
 from papertrace.llm.client import ChatResult
 from papertrace.llm.prompts import JUDGE_PROMPT_VERSION
 from papertrace.parse_paper.split_terms import split_formula
 from papertrace.schema_validate import load_trace, validate_trace
 from papertrace.spine import attach_paper
+from papertrace.spine_claims import CLAIMED_REASON
 from papertrace.spine_fallback import RANGE_SEP, pairs_or_fallback
 from tests._tmp import scratch_dir
 
@@ -201,7 +202,11 @@ def test_meta_paper_is_tex(monkeypatch):
     paper = doc["meta"]["paper"]
     assert paper["ingest_mode"] == "tex"
     assert paper["unit_count"] == 1
-    assert paper["source"] == PAPER
+    source = paper["source"]
+    # R140/R145：写出的是相对构建目录（cwd）的便携路径，不是发件人机器的绝对路径
+    assert not Path(source).is_absolute(), source
+    assert "\\" not in source, source
+    assert (Path.cwd() / source).resolve() == Path(PAPER).resolve(), source
 
 
 def test_symbols_are_filled(monkeypatch):
@@ -277,7 +282,9 @@ def test_code_expr_range_uses_node_ids_not_source_lines(monkeypatch):
     monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
 
     def _two_nodes_for_first_term(nodes, terms, config):
-        pairs = [(0, "root/@037"), (0, "root/@038")] + GOLD_PAIRS[1:]
+        # R135：同一算子至多归一个公式项，所以 t0 的两个节点不能和 t1 的候选重叠
+        pairs = [(0, "root/@037"), (0, "root/@038"), (1, "root/@039"),
+                 (2, "root/@043"), (3, "root/@045")]
         return StructSignal(0.8, ["同构"], [], pairs)
 
     monkeypatch.setattr("papertrace.spine.struct_signal", _two_nodes_for_first_term)
@@ -288,10 +295,12 @@ def test_code_expr_range_uses_node_ids_not_source_lines(monkeypatch):
     assert anchor["aten_ops"] == ["matmul", "mul"]
     assert "model.GPT" not in anchor["code_expr_range"]
     assert ":" not in anchor["code_expr_range"]
+    expected = {0: "root/@037..root/@038", 1: "root/@039", 2: "root/@043", 3: "root/@045"}
     others = [a for a in doc["anchors"] if a["formula_term_index"] != 0]
-    assert all(a["code_expr_range"] == dict(GOLD_PAIRS)[a["formula_term_index"]] for a in others)
-    # t0 有两个候选节点，但 _judge_pairs 命中第一个 yes 就早退（省 API、
-    # M1b 多项候选时取第一个 yes 的依据），所以总共只调 4 次而不是 5 次。
+    assert {a["formula_term_index"] for a in others} == {1, 2, 3}, "四项都该出线"
+    assert all(a["code_expr_range"] == expected[a["formula_term_index"]] for a in others)
+    # t0 有两个候选节点，但 spine_claims.judge_first_yes 命中第一个 yes 就早退
+    # （省 API），所以总共只调 4 次而不是 5 次。
     assert backend.calls == 4
 
 
@@ -407,7 +416,7 @@ def test_structural_miss_falls_back_to_kind_candidates_but_never_green(monkeypat
     assert doc["unresolved"] == []
     # R117：回退路径只写 judge 确认的那**一个**节点 id。期望值用产品自己的候选生成器
     # 算出来（不手捏 anchor、不硬编码节点 id）：假后端对每个候选都答 yes，所以
-    # judge 确认的就是该 term 候选组里的第一个节点。
+    # judge 确认的是该 term 组里第一个**还没被前序项认领**的节点（R135/R147）。
     expected_first: dict[str, str] = {}
     for unit in ingest_paper(PAPER).units:
         unit_terms = split_formula(unit.latex)
@@ -416,10 +425,12 @@ def test_structural_miss_falls_back_to_kind_candidates_but_never_green(monkeypat
         signal = _no_isomorphism(doc["nodes"], unit_terms, None)
         grouped, is_fallback = pairs_or_fallback(signal, unit_terms, doc["nodes"])
         assert is_fallback, "这条测试必须走在退路径上"
+        claimed: set[str] = set()  # 认领状态按公式单元重置（R136：跨单元共享）
         for term in unit_terms:
-            group = grouped.get(term.index) or []
-            assert group, "每个公式项都该有回退候选"
+            group = [nid for nid in grouped.get(term.index) or [] if nid not in claimed]
+            assert group, "每个公式项都该有未被认领的回退候选"
             expected_first["%s-t%s" % (unit.unit_id, term.index)] = group[0]
+            claimed.add(group[0])
     node_ids = {str(n["id"]) for n in doc["nodes"]}
     for anchor in doc["anchors"]:
         assert anchor["tier"] == "yellow", "R112：回退产的线最高到黄"
@@ -604,3 +615,156 @@ def test_ingest_failure_records_backend_meta_not_default_zero(monkeypatch):
     assert doc["meta"]["paper"]["ingest_mode"] == "none"
     validate_trace(doc)
     assert len(doc["nodes"]) == GC8_NODES
+
+
+# ------------------------------------------- S20 认领唯一性 / S21 路径便携化（R135–R151）
+
+
+def test_two_terms_never_claim_the_same_node(monkeypatch):
+    """R135：同单元内两个 kind 相同的项绝不连到同一个算子。
+
+    回退路径上 QK^T（t0）与 V（t3）的候选列表**逐字相同**（candidates.py 只按
+    kind + 词法排序给候选，不做跨项唯一性）。认领后 t0 拿走候选组第一个，
+    t3 只能拿下一个——这正是上一片演示暴露的「两项都指 root/@037」不许再发生。
+    """
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    backend = _YesBackend()
+    monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
+    monkeypatch.setattr("papertrace.spine.struct_signal", _no_isomorphism)
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    assert backend.calls >= 1, "假后端必须真的被问到，否则测的是 offline 兜底"
+    by_index = {a["formula_term_index"]: str(a["code_expr_range"]) for a in doc["anchors"]}
+    assert set(by_index) == {0, 1, 2, 3}, by_index
+    assert by_index[0] == "root/@037", by_index
+    assert by_index[3] == "root/@045", "t3 的候选组被 t0 占掉第一个后应取下一个"
+    assert by_index[0] != by_index[3]
+    assert len(set(by_index.values())) == len(by_index), "一个算子至多归属一个公式项"
+
+
+def test_exhausted_candidates_report_claim_not_absence(monkeypatch):
+    """R137/R146：候选全被前序项认领时，理由必须说「认领」，不能说「没候选」。
+
+    两条 matmul 项都被指到**同一个**节点 root/@037：t0 先问并认领它，t3 的
+    可用候选为空。这时若走 _record_unresolved 会被包成「置信度 < 0.45」，
+    用户读到的是「分数不够」，真相是「候选被占了」——两件事结论完全不同。
+    """
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    backend = _YesBackend()
+    monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
+    monkeypatch.setattr(
+        "papertrace.spine.struct_signal",
+        lambda nodes, terms, config: StructSignal(0.6, [], ["结构同构未命中"], []),
+    )
+    monkeypatch.setattr(
+        "papertrace.spine.pairs_or_fallback",
+        lambda signal, terms, nodes: ({0: ["root/@037"], 3: ["root/@037"]}, True),
+    )
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    assert backend.calls == 1, "只该为 t0 问一次；t3 没有可用候选就不许再问"
+    claimed = [a for a in doc["anchors"] if a["formula_term_index"] == 0]
+    assert len(claimed) == 1 and claimed[0]["code_expr_range"] == "root/@037"
+    reasons = {u["ref"]: u["reason"] for u in doc["unresolved"]}
+    t3 = reasons["S3.2-eq-attn-t3"]
+    assert t3 == CLAIMED_REASON, t3
+    assert "认领" in t3
+    assert "置信度" not in t3, "别把「候选被占」写成「分数不够」"
+
+
+def test_structural_duplicate_is_a_build_error(monkeypatch):
+    """R144：结构路径（fallback=False）出现重复节点是**契约错误**，响亮报错。
+
+    回退路径的跨项重复是正常输入（R144 明确只守结构路径），所以这里把
+    pairs_or_fallback 钉成非回退 + 重复候选，单独验证守门本身。
+    """
+    monkeypatch.setattr(
+        "papertrace.spine.pairs_or_fallback",
+        lambda signal, terms, nodes: ({0: ["root/@037"], 1: ["root/@037"]}, False),
+    )
+    doc, model = _fresh_doc()
+    with pytest.raises(BuildError, match="一个算子只归一个公式项"):
+        attach_paper(doc, PAPER, model)
+
+
+def test_cli_duplicate_claim_is_reported_not_a_traceback(monkeypatch, capsys):
+    """R148：契约错误走到 CLI 时是一行人话 + exit 2，不是裸 traceback。"""
+    from papertrace import cli
+
+    def _boom(doc, paper_src, model):
+        raise BuildError("结构配对出现重复节点，一个算子只归一个公式项：['root/@037']")
+
+    monkeypatch.setattr(cli, "attach_paper", _boom)
+    out_dir = scratch_dir("s20-cli-dup")
+    code = cli.main([
+        "build", "--repo", FIXTURE, "--paper", PAPER, "--out", str(out_dir), "--force",
+    ])
+    captured = capsys.readouterr()
+    assert code == 2, captured.out + captured.err
+    assert "一个算子只归一个公式项" in captured.err
+    assert "Traceback" not in captured.err
+    assert not (out_dir / "trace.json").is_file(), "契约错误不写 trace"
+
+
+def test_cli_trace_has_no_drive_letters(monkeypatch):
+    """GC14/R139-R141：写盘的 trace.json 里不许有本机绝对路径。
+
+    四处路径字段（meta.repo.url / meta.paper.source / nodes[*].loc /
+    symbols.code[*].defined_at）在 dump 前统一相对化；盘符与反斜杠是
+    「把发件人机器的目录结构送出去」的直接证据。cwd 钉在仓库根（R150）。
+    """
+    import re
+
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    out_dir = scratch_dir("s21-no-drive")
+    root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    env.pop("PAPERTRACE_LLM_BACKEND", None)
+    env.pop("PAPERTRACE_LLM", None)
+    result = subprocess.run(
+        [sys.executable, "-m", "papertrace", "build", "--repo",
+         "tests/fixtures/nanogpt", "--paper",
+         "tests/fixtures/papers/vaswani2017/attention.tex",
+         "--out", str(out_dir), "--force"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=env, cwd=str(root),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    raw = (out_dir / "trace.json").read_text(encoding="utf-8")
+    assert re.findall(r"[A-Za-z]:[\\/]", raw) == [], "trace.json 里出现了盘符"
+    doc = load_trace(out_dir / "trace.json")
+    assert doc["meta"]["paper"]["source"] == "tests/fixtures/papers/vaswani2017/attention.tex"
+    assert doc["meta"]["repo"]["url"] == "tests/fixtures/nanogpt"
+    locs = {n["loc"] for n in doc["nodes"]}
+    assert "tests/fixtures/nanogpt/model.py:142" in locs, sorted(locs)[:5]
+    defined = {s["defined_at"] for s in doc["symbols"]["code"]}
+    assert defined and all(not Path(d.split(":")[0]).is_absolute() for d in defined), defined
+    # 反斜杠只在 JSON 转义里合法（论文标题里有引号）；路径字段本身必须是 / 分隔
+    for value in [doc["meta"]["repo"]["url"], doc["meta"]["paper"]["source"]] + sorted(locs) + sorted(defined):
+        assert "\\" not in value, value
+    validate_trace(doc)
+
+
+def test_gc16_anchors_do_not_share_nodes(monkeypatch):
+    """GC16：同一公式单元内，任意两条 anchor 的 code_expr_range 不共享节点。
+
+    走**结构路径**（不替换 struct_signal）：四项同构命中、judge 全答 yes，
+    anchor 的 code_expr_range 是 judge 确认的那一个节点 id，四条必须互不相同。
+    """
+    monkeypatch.delenv("PAPERTRACE_LLM_BACKEND", raising=False)
+    monkeypatch.delenv("PAPERTRACE_LLM", raising=False)
+    backend = _YesBackend()
+    monkeypatch.setattr(judge_module, "get_llm", lambda: backend)
+    doc, model = _fresh_doc()
+    attach_paper(doc, PAPER, model)
+    assert backend.calls >= 1
+    ranges = [str(a["code_expr_range"]) for a in doc["anchors"]]
+    assert len(ranges) == 4, ranges
+    assert len(set(ranges)) == len(ranges), "两条 anchor 认领了同一个算子：%r" % (ranges,)
+    assert ranges == ["root/@037", "root/@038", "root/@043", "root/@045"], ranges
+    validate_trace(doc)

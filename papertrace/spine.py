@@ -17,13 +17,12 @@ judge 只对 pairs 里的配对调用。S15：结构未命中时退到算子类�
 
 from __future__ import annotations
 
-from papertrace.align.judge import judge, judge_score
 from papertrace.align.retrieve import retrieve_bidirectional
 from papertrace.align.score import confidence
 from papertrace.align.struct_signal import struct_signal
 from papertrace.align.tier import tier, tier_reason
 from papertrace.constants import CONF_YELLOW
-from papertrace.exceptions import IngestError, LLMUnavailable
+from papertrace.exceptions import BuildError, IngestError, LLMUnavailable
 from papertrace.ingest.paper import ingest_paper
 from papertrace.llm.client import get_llm
 from papertrace.llm.prompts import JUDGE_PROMPT_VERSION
@@ -31,7 +30,15 @@ from papertrace.parse_paper.split_terms import split_formula
 from papertrace.symbols.code_table import _FROZEN_SYMBOLS, build_code_symbols
 from papertrace.symbols.mapping import map_symbols
 from papertrace.symbols.paper_table import build_paper_symbols
-from papertrace.spine_fallback import cap_tier, none_cause, pairs_or_fallback, resolve_code_range
+from papertrace.spine_claims import (
+    CLAIMED_REASON,
+    duplicate_claims,
+    judge_first_yes,
+    node_text,
+    unclaimed,
+)
+from papertrace.spine_fallback import (
+    cap_tier, claimed_nodes, none_cause, pairs_or_fallback, resolve_code_range)
 
 #: 本模块用到的字面量与预算（裁决编号见模块 docstring）
 UNSPLITTABLE_REASON = "公式拆不出项（超出白名单文法），不猜项"   # R78
@@ -76,9 +83,7 @@ def attach_paper(doc: dict, paper_src: str, model) -> dict:
     symbols["paper"] = paper_symbols
     symbols["mapping"] = map_symbols(code_symbols, paper_symbols)
     found = {row.get("symbol") for row in code_symbols or []}
-    for name in _FROZEN_SYMBOLS:  # R21：差集记 unresolved，不猜值
-        if name in found:
-            continue
+    for name in (n for n in _FROZEN_SYMBOLS if n not in found):  # R21：差集记 unresolved，不猜值
         reason = ("骨架模式（--skeleton）没有模型实例，抽不到代码侧符号" if model is None
                   else f"代码侧没抽到 {name}：config 缺字段、值为 None 或定义点定位失败（不猜值）")
         doc["unresolved"].append({"kind": "symbol", "ref": name, "reason": reason})
@@ -98,17 +103,23 @@ def _attach_unit(doc: dict, unit, model, by_id: dict) -> None:
         return
     signal = struct_signal(doc["nodes"], terms, getattr(model, "config", None))
     # S6 的 code_units 与 S5 同口径：level=='op' 且 kind=='op' 的算子节点
-    code_units = [{"code_id": n["id"], "text": _node_text(n)} for n in doc["nodes"] or []
+    code_units = [{"code_id": n["id"], "text": node_text(n)} for n in doc["nodes"] or []
                   if isinstance(n, dict) and n.get("level") == "op"
                   and n.get("kind") == "op" and n.get("id")]
     retrieval = retrieve_bidirectional(code_units, [
         {"term_id": f"{unit.unit_id}-t{t.index}", "text": t.latex} for t in terms])
     grouped, fallback = pairs_or_fallback(signal, terms, doc["nodes"])  # R112
+    dups = duplicate_claims(grouped)  # R144：只守结构路径——回退候选本来就跨项重复
+    if dups and not fallback:
+        raise BuildError(f"结构配对出现重复节点，一个算子只归一个公式项：{dups}")
+    claimed: set[str] = set()  # R135/R147：同单元独占，跨单元共享
     for term in terms:
-        _attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []), by_id, fallback)
+        _attach_term(doc, unit, term, signal, retrieval, grouped.get(term.index, []),
+                     by_id, fallback, claimed)
 
 
-def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id: dict, fallback: bool) -> None:
+def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id: dict,
+                 fallback: bool, claimed: set[str]) -> None:
     """一个公式项：三个信号 → confidence → tier → anchor 或 unresolved。"""
     term_id = f"{unit.unit_id}-t{term.index}"
     # R85：逐项 s_retr 只取本项 forward 的最大分；缺键/空表 → 0.0（保守方向），
@@ -124,7 +135,12 @@ def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id
         _record_unresolved(doc, term_id, NO_CANDIDATE_REASON, retrieval,
                            {"s_retr": s_retr, "s_judge": 0.0, "s_struct": s_struct})
         return
-    s_judge, verdict, confirmed = _judge_pairs(term, node_ids, by_id)
+    available = unclaimed(node_ids, claimed)  # R135：跳过已被别的项认领的节点
+    if not available:  # R137/R146：成因是「被占了」不是「没有候选」，文案分开
+        doc["unresolved"].append({"kind": "paper_unit", "ref": term_id,
+                                  "reason": CLAIMED_REASON})  # R146：不走 _record_unresolved
+        return
+    s_judge, verdict, confirmed = judge_first_yes(term.latex, available, by_id, claimed)
     # R69：同一份 signals 既喂 confidence() 又写进 anchor.signals，不分别算、不取整
     signals = {"s_retr": s_retr, "s_judge": s_judge, "s_struct": s_struct}
     score = confidence(signals["s_retr"], signals["s_judge"], signals["s_struct"])
@@ -133,7 +149,7 @@ def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id
         _record_unresolved(doc, term_id, none_cause(fallback), retrieval, signals)
         return
     # R68/R117：结构路径填首尾区间；回退路径只填 judge 确认的那一个节点
-    code_range = resolve_code_range(node_ids, confirmed, fallback)
+    code_range = resolve_code_range(available, confirmed, fallback)
     evidence = "；".join(p.strip() for p in (verdict, tier_reason(score, s_struct))
                         if p and p.strip())
     if fallback:  # R112：候选不是结构对上的，必须写在用户看得见的地方
@@ -142,18 +158,20 @@ def _attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list, by_id
         evidence = f"{evidence}；{FALLBACK_EVIDENCE}" if evidence else FALLBACK_EVIDENCE
     anchor = {"paper_unit_id": unit.unit_id, "formula_term_index": term.index,
               "code_expr_range": code_range,
-              "aten_ops": [by_id[n]["op"] for n in node_ids if n in by_id and by_id[n].get("op")],
+              "aten_ops": [by_id[n]["op"] for n in available if n in by_id and by_id[n].get("op")],
               "confidence": score, "tier": level, "signals": signals,
               "source": "model" if s_judge > 0 else "static",  # R67
               "evidence": evidence[:EVIDENCE_LIMIT] or FALLBACK_EVIDENCE,
               "direction": "paper_to_code"}
     if level == "yellow":  # brief：黄线必须带备选（schema maxItems 2）
         picks = [h for h in (retrieval.get("forward") or {}).get(term_id) or []
-                 if h.get("code_id") not in node_ids][:ALTERNATIVE_LIMIT]
+                 if h.get("code_id") not in available
+                 and h.get("code_id") not in claimed][:ALTERNATIVE_LIMIT]  # R151
         anchor["alternatives"] = [
             {"code_id": h["code_id"], "op": (by_id.get(h["code_id"]) or {}).get("op", ""),
              "score": h.get("score")} for h in picks]
     doc["anchors"].append(anchor)
+    claimed.update(claimed_nodes(available, confirmed, fallback))  # R147：占住已产出的节点
 
 
 def _record_unresolved(doc: dict, term_id: str, cause: str, retrieval: dict, signals: dict) -> None:
@@ -167,24 +185,6 @@ def _record_unresolved(doc: dict, term_id: str, cause: str, retrieval: dict, sig
         signals["s_retr"], signals["s_judge"], signals["s_struct"]))
     doc["unresolved"].append({"kind": "paper_unit", "ref": term_id,
                               "reason": "；".join(parts)})
-
-
-def _judge_pairs(term, node_ids: list, by_id: dict) -> tuple[float, str, str | None]:
-    """R37/R118：只对候选里的配对调 judge；任一是 → s_judge=1.0，并交出那个 node_id。"""
-    for node_id in node_ids:
-        node = by_id.get(node_id)
-        if node is None:
-            continue
-        result = judge(term.latex, _node_text(node))
-        if judge_score(result) > 0:
-            return 1.0, (result.evidence or "").strip(), node_id
-    return 0.0, "", None
-
-
-def _node_text(node: dict) -> str:
-    """算子节点的一段自描述文本（喂给检索与判断题）。"""
-    return (f"{node.get('op', '')} {node.get('label', '')} {node.get('loc', '')} "
-            f"in={node.get('shape_in')} out={node.get('shape_out')}").strip()
 
 
 def _model_meta() -> dict:

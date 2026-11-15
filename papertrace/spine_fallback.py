@@ -8,7 +8,7 @@
 - **R117 只指认一个节点**：回退时 judge 在候选里挑，挑中的那**一个**节点才是 code_expr_range。
   不按首尾区间猜 —— 实测本仓夹具上那个区间含 35 个真实节点，会画 35 条没审过的假彩线。
   结构路径（pairs 非空）完全不动，仍是 first..last（既有测试钉着这个格式）。
-- **R118**：judge 确认的节点 id 由 spine._judge_pairs 返回；本模块只负责消费它拼 range。
+- **R118**：judge 确认的节点 id 由 spine_claims.judge_first_yes 返回；本模块只负责消费它拼 range。
 """
 
 from __future__ import annotations
@@ -52,6 +52,13 @@ def resolve_code_range(node_ids: list[str], confirmed_id: str | None, fallback: 
     if len(node_ids) == 1:
         return str(node_ids[0])
     return f"{node_ids[0]}{RANGE_SEP}{node_ids[-1]}"
+
+
+def claimed_nodes(node_ids: list[str], confirmed_id: str | None, fallback: bool) -> list[str]:
+    """R147：code_expr_range 覆盖的节点——回退只覆盖 judge 确认的那一个（R117），结构路径整段。"""
+    if fallback and confirmed_id:
+        return [str(confirmed_id)]
+    return list(node_ids)
 
 
 def none_cause(fallback: bool) -> str:

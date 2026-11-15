@@ -55,6 +55,8 @@ MODULES = [
     "papertrace.detail.stale",
     "papertrace.detail.annotations",
     "papertrace.spine_fallback",
+    "papertrace.spine_claims",
+    "papertrace.paths",
 ]
 
 
