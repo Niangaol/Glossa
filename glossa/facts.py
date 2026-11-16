@@ -4,7 +4,8 @@ R292：graph 占位（T7 填真值）→ totals 的 edges/cycles/unreachable 都
 R296：url 相对 cwd，仍在 cwd 之外 → 只登记 root.name + degraded；R297：commit 只读 .git/HEAD 与 refs 文件，绝不起 subprocess。
 R299：单文件失败 fail-open（parse='skipped' + degraded），root 不存在/不是目录抛 BuildError。
 R367：python 的 main_guard 只信 parse；行正则只在解析被 skipped 时兜底，且记 degraded。
-R339：excluded.files = scan 的 files + pruned_files（被剪目录内文件总数），bytes 不伪造。
+R388：excluded.files 恒等于 scan.excluded.files（ext 白名单外 / ignore 命中 / oversize 三类直接归因），
+不用被剪目录的数字凑；R339 的 pruned_files 是并列的 listing 计数，原样保留、不并入任何分子，bytes 不伪造。
 顺序偏差（计划 Step 4 是 portable_doc→build_facts）：这里反过来——fact id 的路径是 scan 的 relpath（天然相对），portable 放最后才能连 fact:source 摘录里的本机路径一起洗掉。
 """
 
@@ -142,8 +143,7 @@ def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20
     imports = list(resolve.resolve_imports(plain, packages, projects or None)) if plain else []
     if sharp:
         imports += list(resolve_cs.resolve_usings(sharp, projects))
-    ex = dict(sc.get("excluded") or {})                      # R339：files 合流 pruned_files
-    ex["files"] = int(ex.get("files") or 0) + int(ex.get("pruned_files") or 0)
+    ex = dict(sc.get("excluded") or {})                      # R388：files 只认 scan 的直接归因
     ex["secrets_seen"] = [str(item.get("path") if isinstance(item, dict) else item)  # GC30：绝不带内容
                           for item in sc.get("secrets_seen") or []]
     for key, default in (("rules", []), ("bytes", 0), ("oversize", []), ("truncated", False),

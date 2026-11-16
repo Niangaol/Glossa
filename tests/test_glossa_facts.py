@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from glossa import fact_ids, facts, repo_paths, schema_repo
+from glossa import fact_ids, facts, repo_paths, scan, schema_repo
 from papertrace.exceptions import BuildError, TraceSchemaError
 from tests._tmp import scratch_dir
 
@@ -150,7 +150,10 @@ def test_excluded_and_degraded_are_carried_into_doc():
     (root / "big.ts").write_bytes(b"x" * 1_000_001)
     doc = facts.build_repo_doc(root)
     ex = doc["excluded"]
-    assert ex["files"] >= 3                 # node_modules / third_party / pythoncore
+    # R388：excluded.files 恒等于 scan.excluded.files（ext/ignore/oversize 三类直接归因），不许并入 pruned_files。
+    assert ex["files"] == scan.scan_repo(root)["excluded"]["files"]
+    # 三个被剪目录（node_modules / third_party / pythoncore）按 R339 只计 pruned_files。
+    assert ex["files"] + ex["pruned_files"] >= 3
     assert len(ex["oversize"]) == 1
     assert ex["oversize"][0]["path"] == "big.ts"
     assert ".env.local" in ex["secrets_seen"]
