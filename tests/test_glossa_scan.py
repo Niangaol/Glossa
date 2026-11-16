@@ -116,3 +116,32 @@ def test_oversize_file_is_never_read(monkeypatch):
     r = scan.scan_repo(root)
     assert "big.ts" not in reads
     assert {o["path"] for o in r["excluded"]["oversize"]} == {"big.ts"}
+
+
+def test_cache_dirs_are_pruned_and_counted():
+    root = _copy("vendored-mix")
+    cache = root / "src" / "cache"
+    cache.mkdir(parents=True)
+    (cache / "a.json").write_text("{}", encoding="utf-8")
+    (cache / "b.json").write_text("{}", encoding="utf-8")
+    dot = root / ".cache"
+    dot.mkdir()
+    (dot / "c.json").write_text("{}", encoding="utf-8")
+    r = scan.scan_repo(root)
+    rules = _rules(r)
+    assert rules["dir:cache"] == 1, rules
+    assert rules["dir:.cache"] == 1, rules
+    assert r["excluded"]["pruned_files"] == 6, r["excluded"]
+    assert r["excluded"]["pruned_files_partial"] is False
+    assert _paths(r) == {"README.md", "src/app.ts", "skipme/hidden.ts"}
+
+
+def test_max_files_must_be_positive():
+    root = _copy("py-mini")
+    for bad in (0, -1):
+        try:
+            scan.scan_repo(root, max_files=bad)
+        except ValueError as exc:
+            assert "max_files" in str(exc), str(exc)
+        else:
+            raise AssertionError("max_files=%d 应响亮拒绝，却静默返回了结果" % bad)

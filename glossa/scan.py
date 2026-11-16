@@ -56,6 +56,8 @@ def _count_files_inside(path: pathlib.Path) -> tuple[int, bool]:
 def scan_repo(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20_000,
               use_default_excludes: bool = True, extra_ignore: list[str] | None = None) -> dict:
     """扫仓库，返回 files / excluded / secrets_seen / language_counts；不含 parse 键（R264）。"""
+    if max_files < 1:                      # R350：未定义行为必须响亮拒绝，不许静默扫一个
+        raise ValueError(f"max_files 必须 >= 1（收到 {max_files}）")
     root = pathlib.Path(root)
     ignore = exclude.load_glossaignore(root) + list(extra_ignore or [])
     files: list[dict] = []

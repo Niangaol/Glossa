@@ -19,7 +19,7 @@ DEFAULT_EXCLUDED_DIRS: frozenset[str] = frozenset({
     "publish", ".tmp", "tmp", "var", "snapshots", "qdrant-config",
     "qdrant-storage", ".next", ".nuxt", "coverage", ".pytest_cache",
     ".mypy_cache", ".ruff_cache", ".idea", ".vscode", ".agent-teams",
-    ".chorography", ".video_agent", ".zcode", ".test-tmp",
+    ".chorography", ".video_agent", ".zcode", ".test-tmp", "cache", ".cache",  # R348
 })
 
 LANG_BY_EXT: dict[str, str] = {
