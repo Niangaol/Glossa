@@ -1,9 +1,12 @@
-r"""受限 markdown（R306/R410）：只支持 ##/### 标题、空行分段、- 与 1. 列表、
+r"""受限 markdown（R306/R410/R421）：只支持 ##/### 标题、空行分段、- 与 1. 列表、
 **粗体**、单反引号行内代码；块与块之间用 "\n" 连接。
 
 链接、图片、裸 HTML、表格、脚注、引用、分隔线、单个 # 或四级以上标题一律不支持：
 整段当纯文本（先 HTML 转义）保留，并**每种构造记一条 note**（按首次出现顺序）。
 顺序铁律：先整体转义，再插标签——反了就会把用户写的 <b> 变成真标签。
+R421：标题不再要求独占一块——块首行是标题就出 <h2>/<h3>，余下行照常按段落/列表渲染；
+列表按连续前缀切成 <ul>/<ol>（列表后的剩余行同理进段落），不让字面 "-" 漏到页面上。
+CRLF/裸 CR 先归一成 LF（M1：否则回车会被写进 <h2>/<li>）。
 """
 from __future__ import annotations
 
@@ -51,24 +54,45 @@ def _render_list(lines: list[str], pattern: re.Pattern, tag: str) -> str:
     return "<%s>%s</%s>" % (tag, items, tag)
 
 
+def _render_lines(lines: list[str]) -> list[str]:
+    """R421：连续列表项成 <ul>/<ol>，其余连续行合成段落。"""
+    out: list[str] = []
+    start = 0
+    while start < len(lines):
+        if _UL.match(lines[start]):
+            pattern, tag = _UL, "ul"
+        elif _OL.match(lines[start]):
+            pattern, tag = _OL, "ol"
+        else:
+            pattern, tag = None, ""
+        end = start
+        if pattern is not None:
+            while end < len(lines) and pattern.match(lines[end]):
+                end += 1
+            out.append(_render_list(lines[start:end], pattern, tag))
+        else:
+            while end < len(lines) and not (_UL.match(lines[end]) or _OL.match(lines[end])):
+                end += 1
+            out.append("<p>%s</p>" % _inline(" ".join(ln.strip() for ln in lines[start:end])))
+        start = end
+    return out
+
+
 def render_markdown(text: str) -> tuple[str, list[str]]:
     """把模型写的 markdown 子集渲染成 HTML；不支持的构造保留原文并进 notes。"""
     if not text or not text.strip():
         return "", []
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     notes = _notes(text)
     rendered: list[str] = []
     for block in re.split(r"\n\s*\n", text.strip()):
         lines = [ln for ln in block.split("\n") if ln.strip()]
         if not lines:
             continue
-        head = _HEADING.match(lines[0]) if len(lines) == 1 else None
+        head = _HEADING.match(lines[0])          # R421：标题与正文可同块
         if head:
             level = len(head.group(1))
             rendered.append("<h%d>%s</h%d>" % (level, _inline(head.group(2)), level))
-        elif all(_UL.match(ln) for ln in lines):
-            rendered.append(_render_list(lines, _UL, "ul"))
-        elif all(_OL.match(ln) for ln in lines):
-            rendered.append(_render_list(lines, _OL, "ol"))
-        else:
-            rendered.append("<p>%s</p>" % _inline(" ".join(ln.strip() for ln in lines)))
+            lines = lines[1:]
+        rendered.extend(_render_lines(lines))
     return "\n".join(rendered), notes
