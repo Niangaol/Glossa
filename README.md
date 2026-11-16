@@ -607,3 +607,18 @@ python -m papertrace build --repo tests/fixtures/nanogpt --out output/demo/code-
 - `detail` 只追加不覆盖；子结论与父结论矛盾时写 `conflicts` 并把父节点标记 `stale`。
 - 多输出算子（如 `split`）必须标 `degraded=true` 并说明原因，不能假装形状完整；多输出节点的边形状按 `getitem` 的索引逐项解析。
 - 融合算子（`scaled_dot_product_attention` 等）必须标 degraded 并在 stderr 警告：它把论文里好几个公式项吞成了一个 aten 算子，安静通过等于漏检。
+
+## 笺疏 Glossa：任意代码仓库的解析与讲解
+
+`python -m glossa` 是这条流水线的新入口：把任意代码仓库扫成一份**可复算的 JSON 事实台账**，再把它讲成一张**单文件、离线、无脚本**的 HTML 讲解页。**没有 API key 也能用**——程序版讲解的每个数字都能在台账里指出来源，页头写「本页有 0 处数字未溯源」。完整说明（退出码、语言精确度、排除规则、14 种 fact id、七块骨架、已知局限）在 [docs/glossa.md](docs/glossa.md)。
+
+```powershell
+cd D:\AgentPrograms\PaperTrace
+$env:PYTHONPATH='D:\AgentPrograms\PaperTrace;D:\AgentPrograms\PaperTrace\pydeps'
+
+python -m glossa analyze --repo D:\path\to\repo --out output\glossa    # 写 repo.json
+python -m glossa explain --repo D:\path\to\repo --out output\glossa    # 写 explain.html
+python -m glossa facts   --repo D:\path\to\repo --kind file --limit 20 # 翻台账
+```
+
+三个子命令的退出码：0 成功 / 1 repo.json 过不了 schema / 2 渲染失败 / 3 输出已存在且没 `--force` / 4 缺运行时或 `--llm` 后端不可用（**绝不静默降级**）/ 5 `--repo` 不存在。
