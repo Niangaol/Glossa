@@ -1,0 +1,185 @@
+"""Task C2 守卫：模块角色识别（只看直接子节点，GC20）。
+
+这一组测试钉住的是「无论文模式」回答「这个模块在干什么」的方式：
+角色只能来自模块自己的直接子节点，绝不跨子树聚合（否则 root / Block 都会被
+误判成 mlp），也绝不看类名或模块 id 里的字符串（R202）——所以测试 8 把所
+有类名涂成 "Foo" 后角色必须逐条不变。
+"""
+
+import copy
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("torch", reason="真夹具追踪需要 torch（CPU 版即可）")
+
+from papertrace.analyze_roles import module_roles  # noqa: E402
+from papertrace.build_trace import build_trace  # noqa: E402
+
+FIXTURE = str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "nanogpt")
+ENTRY = "model:build_model"
+
+# R196：冻结的角色分布是实测值，改它等于改需求
+FROZEN_SUMMARY = {
+    "attention": 2,
+    "mlp": 2,
+    "layernorm": 5,
+    "embedding": 2,
+    "linear": 9,
+    "dropout": 7,
+    "activation": 2,
+    "residual": 2,
+    "stage": 3,
+    "unknown": 0,
+}
+
+ROLE_KEYS = {"module_id", "class", "role", "evidence", "op_count"}
+
+
+@pytest.fixture(scope="module")
+def nodes():
+    return build_trace(FIXTURE, entry=ENTRY)["nodes"]
+
+
+@pytest.fixture(scope="module")
+def roles(nodes):
+    return {r["module_id"]: r for r in module_roles(nodes)}
+
+
+def _synth_nodes():
+    """合成一份最小 trace：一个模块，直接算子只有 foo / bar，没有子模块。"""
+    return [
+        {
+            "id": "root",
+            "parent_id": None,
+            "level": "module",
+            "op": "Mystery",
+            "label": "root",
+            "loc": "model.Mystery",
+            "kind": None,
+            "shape_in": [],
+            "inputs": [],
+            "shape_out": [],
+            "outputs": [],
+            "dtype": "float32",
+            "inplace": False,
+            "source": "runtime",
+            "degraded": False,
+            "degraded_reason": None,
+            "repeat": 1,
+            "stale": False,
+        },
+        {
+            "id": "root/@001",
+            "parent_id": "root",
+            "level": "op",
+            "op": "foo",
+            "label": "foo",
+            "loc": "model.Mystery",
+            "kind": "op",
+            "shape_in": [2, 8, 32],
+            "inputs": [[2, 8, 32]],
+            "shape_out": [2, 8, 32],
+            "outputs": [[2, 8, 32]],
+            "dtype": "float32",
+            "inplace": False,
+            "source": "runtime",
+            "degraded": False,
+            "degraded_reason": None,
+            "repeat": 1,
+            "stale": False,
+        },
+        {
+            "id": "root/@002",
+            "parent_id": "root",
+            "level": "op",
+            "op": "bar",
+            "label": "bar",
+            "loc": "model.Mystery",
+            "kind": "op",
+            "shape_in": [2, 8, 32],
+            "inputs": [[2, 8, 32]],
+            "shape_out": [2, 8, 32],
+            "outputs": [[2, 8, 32]],
+            "dtype": "float32",
+            "inplace": False,
+            "source": "runtime",
+            "degraded": False,
+            "degraded_reason": None,
+            "repeat": 1,
+            "stale": False,
+        },
+    ]
+
+
+def test_attention_role_comes_from_the_matmul_softmax_matmul_pattern(roles):
+    for mid in ("root/transformer.h.0.attn", "root/transformer.h.1.attn"):
+        got = roles[mid]
+        assert got["role"] == "attention", f"{mid} 的角色是 {got['role']}"
+        assert got["op_count"] == 22, f"{mid} 的真算子数是 {got['op_count']}"
+        assert "matmul" in got["evidence"] and "softmax" in got["evidence"]
+
+
+def test_block_is_not_an_mlp(roles):
+    """子树聚合会把 Block 误判成 mlp（GC20）；root 同理。"""
+    for mid in ("root/transformer.h.0", "root/transformer.h.1"):
+        assert roles[mid]["role"] != "mlp", f"{mid} 被误判成 mlp"
+    for mid in ("root", "root/transformer"):
+        assert roles[mid]["role"] != "mlp", f"{mid} 被误判成 mlp"
+
+
+def test_residual_requires_two_equal_inputs(roles):
+    for mid in ("root/transformer.h.0", "root/transformer.h.1"):
+        assert roles[mid]["role"] == "residual", f"{mid} 的角色是 {roles[mid]['role']}"
+    # root 的 add 只有 1 个输入（位置 id 相加），不构成 residual，只能落到 stage
+    assert roles["root"]["role"] == "stage", f"root 的角色是 {roles['root']['role']}"
+
+
+def test_mlp_container_is_recognized(roles):
+    for mid in ("root/transformer.h.0.mlp", "root/transformer.h.1.mlp"):
+        got = roles[mid]
+        assert got["role"] == "mlp", f"{mid} 的角色是 {got['role']}"
+        assert "linear" in got["evidence"] and "gelu" in got["evidence"]
+
+
+def test_unknown_is_reported_not_guessed():
+    """认不出来就必须写 unknown（R201 / GC21），还要说清为什么不猜。"""
+    out = module_roles(_synth_nodes())
+    assert len(out) == 1
+    got = out[0]
+    assert got["role"] == "unknown", f"合成了认不出的模块，却给了 {got['role']}"
+    assert got["evidence"] and "不猜" in got["evidence"]
+
+
+def test_roles_cover_every_module_exactly_once(nodes):
+    out = module_roles(nodes)
+    ids = [r["module_id"] for r in out]
+    assert len(out) == 34
+    assert len(set(ids)) == len(ids), "有模块被重复统计"
+    assert set(ids) == {n["id"] for n in nodes if n["level"] != "op"}
+    assert ids == sorted(ids), "结果没有按 module_id 升序"
+    for r in out:
+        assert set(r) == ROLE_KEYS, f"{r['module_id']} 的键是 {sorted(r)}"
+        assert r["role"] in FROZEN_SUMMARY, f"{r['module_id']} 的角色 {r['role']} 不在冻结枚举里"
+        assert r["evidence"], f"{r['module_id']} 的 evidence 是空串"
+
+
+def test_role_summary_for_the_fixture(roles):
+    # 先按冻结枚举零填充：unknown 0 也必须在统计里露面（R201）
+    got = {role: 0 for role in FROZEN_SUMMARY}
+    for r in roles.values():
+        got[r["role"]] = got.get(r["role"], 0) + 1
+    assert got == FROZEN_SUMMARY, f"角色分布 {got} 与冻结值不符"
+
+
+def test_roles_do_not_depend_on_class_names(nodes):
+    """R202：判据不许看类名 / 模块 id 里的字符串。"""
+    forged = copy.deepcopy(nodes)
+    for n in forged:
+        if n["level"] != "op":
+            n["op"] = "Foo"
+    before = {r["module_id"]: r["role"] for r in module_roles(nodes)}
+    after = {r["module_id"]: r["role"] for r in module_roles(forged)}
+    assert after == before, "涂掉类名后角色变了，说明判据偷看了类名"
+    # 探针有效性：class 字段确实被改写，证明上面这个相等不是空转
+    assert all(r["class"] == "Foo" for r in module_roles(forged))
