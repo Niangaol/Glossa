@@ -2,9 +2,10 @@
 
 R450：comp_repo.py 已顶到 200 行硬上限，四个图/入口组件连同 _svg / _panel 搬到这里；通用格式化
 （fmt / _table）仍在 comp_repo 头部，两个模块共用同一口径（comp_graph → comp_repo 单向依赖）。
-R437：孤立数与截断数分两句写；「其中 M 个是清单、文档等不产生 import 的文件」的 M 由本页从
-doc["files"] 的 lang 与 SYMBOL_LANGS 现算（不解析 degraded 的中文），截断数直接读
-doc["graph"]["truncated_nodes"]，两句互不相加、也不互相掩盖。
+R437：孤立数与截断数分两句写；「其中 M 个是清单、文档等不产生 import 的文件」的 M 与 degraded 句
+共用同一个数，截断数直接读 doc["graph"]["truncated_nodes"]，两句互不相加、也不互相掩盖。
+R485：M 只读 doc["graph"]["omitted_manifests"]（facts 层在截断前算一次），本页不再按截断后的节点集现算
+——那样截断恰好吃掉几个清单文件时，页面与 degraded 会给出两个不同的数。
 R439：target 为 None 时按 entry["note"] 分派文案，note 单独成列可见，不写死「复合命令」。
 R440：doc["entries"] 为空时只写「没有找到可解析的入口，可达性未计算」，绝不引用 unreachable。
 R447：hint 按 doc.graph.level 分派：project 级的边是 ProjectReference，不是 import。
@@ -17,7 +18,6 @@ from __future__ import annotations
 
 import math
 
-from glossa.exclude import SYMBOL_LANGS
 from glossa.explain.comp_repo import _table, fmt, package_finder
 from glossa.graph import MAX_GRAPH_NODES
 
@@ -123,15 +123,9 @@ def entry_list(doc, params):
             % (len(entries), "，这里只列前 %d 个" % len(shown) if len(shown) < len(entries) else "")
             + _table("入口清单（%d 条）" % len(shown), ("名字", "类型", "目标", "命令", "说明"), rows))
 
-def _strip(target: str) -> str:
-    """剥掉 file:/project: 前缀；没有前缀就原样返回（不猜）。"""
-    return target.split(":", 1)[1] if target.startswith(("file:", "project:")) else target
-
-def _manifests(doc, drawn, targets) -> int:
-    """没进图的文件里，有多少是清单/文档等不产生 import 的语言（R437：页面现算，不读中文）。"""
-    return sum(1 for row in doc.get("files") or []
-               if row.get("lang") not in SYMBOL_LANGS
-               and row.get("path") not in drawn and row.get("path") not in targets)
+def _manifests(doc) -> int:
+    """R485：只读 facts 层算好的 graph.omitted_manifests（页面不许拿截断后的节点集另算一套）。"""
+    return int((doc.get("graph") or {}).get("omitted_manifests") or 0)
 
 def _project_note(doc, rows) -> str:
     """R479：文件级图只画 import，项目引用边的条数与去向必须说出来（数与名字都取自 doc）。"""
@@ -172,10 +166,9 @@ def import_graph(doc, params):
                        % (len(unreachable), "、".join(fmt(item) for item in unreachable[:12]),
                           " 等 %d 个" % len(unreachable) if len(unreachable) > 12 else ""))
     if level != "project":             # R455：project 级的 N 与 M 口径不同，整句省略，不许混写
-        isolated = int(graph.get("omitted_isolated") or 0)
-        targets = {_strip(str(row["target"])) for row in entries if row.get("target")}
         out.append('<p class="note">%d 个文件没有进入关系图，其中 %d 个是清单、文档等不产生 import 的文件'
-                   '（未画进图是计数，不是丢了）。</p>' % (isolated, _manifests(doc, set(nodes), targets)))
+                   '（未画进图是计数，不是丢了）。</p>'
+                   % (int(graph.get("omitted_isolated") or 0), _manifests(doc)))
     if graph.get("truncated"):
         out.append('<p class="note">图已截断，只画了前 %d 个节点；另有 %d 个节点没有画'
                    '（截断是计数，不是丢了）。</p>'

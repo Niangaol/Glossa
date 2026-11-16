@@ -11,6 +11,8 @@ R393 项目级边：project:<name> 按 projects[i]['csproj'] 换成 id；>1 命�
 R406 file 级节点的 lang/package 由 doc.files 与 packages 的 path→name 映射填实（T9 按语言着色/按包分组）。
 R431 没有可解析的入口时 unreachable 不成立：置空并记 degraded（页面不显示不存在的「全部不可达」）。
 R432 omitted_isolated 的文案要说出其中有多少是清单、文档等不产生 import 的文件（口径不变，措辞不许错报）。
+R485「其中 M 个是清单」只在截断前的节点集上算一次、落成 graph.omitted_manifests；degraded 句与讲解页
+都只读这个键（页面不许拿自己那套截断后的节点集另算一份，两处数字必须相等）。
 R479 混合仓（有 csproj 又有文件级 import）：level 仍是二选一、两种边**不混画**，但项目引用边
 恒写入 graph.project_edges（空也写空数组），由 fact:graph 与讲解页如实披露，不许静默省略。
 """
@@ -46,7 +48,8 @@ def reachable(node_ids: list[str], edges: list[dict], starts: list[str]) -> list
 
 def build_graph_from(node_ids: list[str], edges: list[dict], *,
                      entries: list[dict], level: str,
-                     total_files: int, labels: dict | None = None) -> dict:
+                     total_files: int, labels: dict | None = None,
+                     omitted_manifests: int = 0) -> dict:
     """纯函数版：不依赖 doc，合成测试与真夹具走同一条代码路径。"""
     labels = labels or {}
     nodes = node_set(node_ids, edges)
@@ -73,7 +76,8 @@ def build_graph_from(node_ids: list[str], edges: list[dict], *,
             "unreachable": sorted(kept - set(found)) if found else [],   # R431
             "layers": longest_layers(keep, rows), "level": level,
             "truncated": truncated, "truncated_nodes": len(nodes) - len(keep),
-            "omitted_isolated": isolated}
+            "omitted_isolated": isolated,               # R485：孤立的 M 由 build_graph 截断前算好传进来
+            "omitted_manifests": int(omitted_manifests)}
 
 def _note(bucket: list[dict], scope: str, reason: str) -> None:
     """记一条 degraded；同 scope+reason 只记一次（build_graph 被调两次也不许翻倍）。"""
@@ -139,13 +143,14 @@ def build_graph(doc: dict) -> dict:
             if not entry.get("target") and entry.get("name"):
                 _note(doc["degraded"], "entries:reachability",
                       f"入口 {entry['name']} 是复合命令，未指向单文件，不作为可达性起点")
-        if graph["omitted_isolated"]:
+        if graph["omitted_isolated"]:                  # R485：M 在截断前算一次，页面只读这一个数
             drawn = node_set(node_ids, edges)          # 截断前节点集：孤立口径不受截断影响
-            manifests = sum(1 for row in files if row["path"] not in drawn
-                            and row.get("lang") not in SYMBOL_LANGS)
+            graph["omitted_manifests"] = sum(
+                1 for row in files if row["path"] not in drawn
+                and row.get("lang") not in SYMBOL_LANGS)
             _note(doc["degraded"], "graph.isolated",
                   f"{graph['omitted_isolated']} 个文件没有进入关系图"
-                  f"（其中 {manifests} 个是清单、文档等不产生 import 的文件）")
+                  f"（其中 {graph['omitted_manifests']} 个是清单、文档等不产生 import 的文件）")
     if graph["nodes"] and not graph["reachable_from_entries"]:        # R431
         _note(doc["degraded"], "graph.reachability", "仓里没有可解析的入口，unreachable 不适用")
     if graph["truncated"]:

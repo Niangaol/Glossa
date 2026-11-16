@@ -123,12 +123,13 @@ def test_project_graph_hint_talks_about_project_reference():
     assert "谁 import 谁" not in html
 
 
-# ---- R437：M 个清单文件由页面按 lang 现算 ----
+# ---- R437/R485：M 个清单文件读 graph.omitted_manifests（页面不再现算） ----
 
 def test_isolated_sentence_counts_manifests_by_language():
     doc = _doc()
     html = components.render_block(doc, {"component": "import_graph", "params": {}})
     assert doc["graph"]["omitted_isolated"] == 5
+    assert doc["graph"]["omitted_manifests"] == 3            # R485：这个数与 degraded 句同源
     assert "5 个文件没有进入关系图，其中 3 个是清单、文档等不产生 import 的文件" in html
 
 

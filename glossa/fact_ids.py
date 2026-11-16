@@ -38,6 +38,16 @@ def require(facts: dict, cites: list[str]) -> None:
         raise BuildError("事实台账里没有这些 fact id：" + "、".join(missing))
 
 
+def put_degraded(facts: dict, doc: dict) -> None:
+    """降级事实：条数与逐条计数都从 doc["degraded"] 现算（R493：build_facts 之后还可能多一条）。"""
+    degraded = doc.setdefault("degraded", [])
+    counts = [int(row.get("count") or 1) for row in degraded]
+    detail = f"（逐条计数 {'、'.join(str(c) for c in counts)}）" if counts else ""
+    facts["fact:degraded"] = {                  # 直接覆盖：_put 会往后追加 numbers，重算就重复了
+        "numbers": numbers_of([len(degraded)] + counts),
+        "text": f"共 {len(degraded)} 条降级说明{detail}，没看清的地方都记在这里。"}
+
+
 def _put(facts: dict, fact_id: str, numbers, text: str,
          srcs: dict | None = None, source: str | None = None) -> None:
     """登记一条事实；同 id 的后续来源由 fact_text.merge_into 同步 text 与 numbers（R426）。"""
@@ -131,12 +141,17 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
              f"{imp.get('kind')}，target={imp.get('target') or '无'}。")
     graph = doc.get("graph") or {}
     cut = int(graph.get("truncated_nodes") or 0) if graph.get("truncated") else 0
-    numbers = [len(graph.get("nodes") or []), len(graph.get("edges") or []),
-               len(graph.get("cycles") or []), len(graph.get("unreachable") or []),
-               len(graph.get("layers") or [])]
-    text = (f"依赖图（{graph.get('level')} 级）：{len(graph.get('nodes') or [])} 个节点、"
-            f"{len(graph.get('edges') or [])} 条边、{len(graph.get('cycles') or [])} 个环、"
-            f"{len(graph.get('unreachable') or [])} 个不可达文件，分 {len(graph.get('layers') or [])} 层。")
+    nodes_n, edges_n = len(graph.get("nodes") or []), len(graph.get("edges") or [])
+    cycles_n, layers_n = len(graph.get("cycles") or []), len(graph.get("layers") or [])
+    head = (f"依赖图（{graph.get('level')} 级）：{nodes_n} 个节点、{edges_n} 条边、{cycles_n} 个环")
+    if not graph.get("reachable_from_entries"):
+        # R488：没有可解析的入口 = 可达性没算过，不许写一个冒名的「0 个不可达文件」
+        numbers = [nodes_n, edges_n, cycles_n, layers_n]
+        text = f"{head}，分 {layers_n} 层；可达性未计算（没有可解析的入口）。"
+    else:
+        unreachable_n = len(graph.get("unreachable") or [])
+        numbers = [nodes_n, edges_n, cycles_n, unreachable_n, layers_n]
+        text = f"{head}、{unreachable_n} 个不可达文件，分 {layers_n} 层。"
     if cut:                                    # R477：截断缺口必须能在 numbers 里找到出处
         numbers.append(cut)
         text += f"其中 {cut} 个节点因截断未画（截断是计数，清单不在页面上）。"
@@ -153,10 +168,7 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
          f"命中 {len(excluded.get('rules') or [])} 条规则，{len(excluded.get('oversize') or [])} 个超限文件，"
          f"被剪目录 listing 计数 {excluded.get('pruned_files', 0)} 个文件。")
     degraded = doc.setdefault("degraded", [])
-    counts = [int(row.get("count") or 1) for row in degraded]
-    detail = f"（逐条计数 {'、'.join(str(c) for c in counts)}）" if counts else ""
-    _put(facts, "fact:degraded", [len(degraded)] + counts,
-         f"共 {len(degraded)} 条降级说明{detail}，没看清的地方都记在这里。")
+    put_degraded(facts, doc)
     if repo_root is not None:
         for fact_id, numbers, text in fact_text.source_facts(files, repo_root, degraded):
             _put(facts, fact_id, numbers, text)

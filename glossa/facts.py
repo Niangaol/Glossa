@@ -19,7 +19,8 @@ import pathlib
 import re
 
 from glossa import entries as entries_mod
-from glossa import fact_ids, facts_io, graph, lang, manifests, manifests_cs, resolve, resolve_cs, scan
+from glossa import (fact_ids, facts_io, graph, lang, manifests, manifests_cs, repo_paths,
+                    resolve, resolve_cs, scan)
 from glossa.lang import generic
 from papertrace.exceptions import BuildError
 from papertrace.paths import portable_path
@@ -145,6 +146,10 @@ def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20
         ex.setdefault(key, default)
     for row in list(man.get("degraded") or []) + list(cs.get("degraded") or []):
         facts_io.degrade(degraded, str(row.get("scope") or "manifest"), str(row.get("reason") or "未给出原因"))
+    sln = cs.get("sln") or {}                                 # R486：sln 里的文件夹不许静默丢
+    if int(sln.get("folders_dropped") or 0):
+        facts_io.degrade(degraded, "sln:" + str(sln.get("path") or "?"),
+                         f"sln 里有 {int(sln['folders_dropped'])} 个解决方案文件夹，未纳入项目列表")
     commit, reason = repo_commit(root)
     url = portable_path(str(root), base=pathlib.Path(root).parent)   # R461：恒为根目录名，不读 cwd
     if reason:
@@ -174,4 +179,12 @@ def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20
         doc["totals"] = totals_of(doc)
         doc["facts"]["fact:totals"] = fact_ids.totals_fact(doc["totals"])
     facts_io.make_portable(doc, root)                          # 最后统一便携化（含 facts.text）
+    leaks = repo_paths.leaked(doc, root)                       # R493：仓外绝对路径原样保留必须记账
+    if leaks:
+        facts_io.degrade(doc["degraded"], "repo:paths",
+                         f"台账里有 {len(leaks)} 处仓外绝对路径原样保留（来源文件自带）")
+        fact_ids.put_degraded(doc["facts"], doc)                # 降级表与事实台账不许各数一份
+    if doc["totals"]["degraded"] != len(doc["degraded"]):      # R398 M2：泄漏阶段新增的降级要追平 totals
+        doc["totals"] = totals_of(doc)
+        doc["facts"]["fact:totals"] = fact_ids.totals_fact(doc["totals"])
     return doc
