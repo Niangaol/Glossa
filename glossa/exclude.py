@@ -44,17 +44,28 @@ SECRET_PATTERNS: tuple[str, ...] = (
 
 
 def is_secret_name(name: str) -> bool:
-    """密钥文件名？命中只登记名与字节数，绝不读内容（R266 / GC30）。"""
-    return any(fnmatch.fnmatch(name, pat) for pat in SECRET_PATTERNS)
+    """密钥文件名？命中只登记名与字节数，绝不读内容（R266 / GC30）。
+
+    R364：大小写一律显式 lower + fnmatchcase，不依赖 os.path.normcase
+    （Windows 折叠大小写、POSIX 不折叠；依赖 OS 会在 Linux 上漏检
+    `SECRET.PEM` / `.ENV.PROD`，把密钥内容读进 repo.json = GC30 泄漏）。
+    """
+    low = name.lower()
+    return any(fnmatch.fnmatchcase(low, pat.lower()) for pat in SECRET_PATTERNS)
 
 
 def _ignore_hit(name: str, rel: str, ignore: list[str], is_dir: bool) -> str | None:
-    """.glossaignore 单条命中；`dir/` 形式只配目录，规则名 ignore:<行原文>。"""
+    """.glossaignore 单条命中；`dir/` 形式只配目录，规则名 ignore:<行原文>。
+
+    R364：大小写显式 lower + fnmatchcase，不依赖 os.path.normcase。
+    """
+    low_name, low_rel = name.lower(), rel.lower()
     for line in ignore:
         if line.endswith("/") and not is_dir:
             continue
         pat = line[:-1] if line.endswith("/") else line
-        if fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(rel, pat):
+        low_pat = pat.lower()
+        if fnmatch.fnmatchcase(low_name, low_pat) or fnmatch.fnmatchcase(low_rel, low_pat):
             return "ignore:" + line
     return None
 

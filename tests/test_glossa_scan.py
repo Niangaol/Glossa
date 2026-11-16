@@ -47,10 +47,15 @@ def test_oversize_file_is_skipped_and_recorded():
 def test_env_files_are_named_but_never_read():
     root = _copy("vendored-mix")
     (root / ".env.local").write_text("SECRET=abc123", encoding="utf-8")
+    (root / "SECRET.PEM").write_text("TOPSECRET-PEM", encoding="utf-8")   # R364
+    (root / ".ENV.PROD").write_text("TOPSECRET-ENV", encoding="utf-8")    # R364
     r = scan.scan_repo(root)
-    assert ".env.local" in {s["path"] for s in r["secrets_seen"]}
+    seen = {s["path"] for s in r["secrets_seen"]}
+    assert {".env.local", "SECRET.PEM", ".ENV.PROD"} <= seen, seen
     assert "abc123" not in repr(r)          # 递归整棵返回结构都不许出现内容
+    assert "TOPSECRET" not in repr(r)
     assert ".env.local" not in _paths(r)
+    assert not ({"SECRET.PEM", ".ENV.PROD"} & _paths(r))
 
 
 def test_binary_assets_are_counted_not_parsed():
@@ -88,17 +93,32 @@ def test_lines_and_bytes_use_read_bytes_semantics():
 
 def test_glossaignore_adds_rules():
     root = _copy("vendored-mix")
-    (root / ".glossaignore").write_text("skipme\n", encoding="utf-8")
+    # R362：裸名 / dir/ / *.ext 三种行型 + 注释与空行
+    (root / ".glossaignore").write_text("# comment\n\nskipme\nassets/\n*.png\n",
+                                        encoding="utf-8")
+    (root / "assets").mkdir()
+    (root / "assets" / "keep.ts").write_text("export const k = 1;\n", encoding="utf-8")
+    (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
     r = scan.scan_repo(root)
-    assert "skipme/hidden.ts" not in _paths(r)
-    assert "ignore:skipme" in _rules(r)
+    assert _paths(r) == {"README.md", "src/app.ts"}
+    rules = _rules(r)
+    assert rules["ignore:skipme"] == 1
+    assert rules["ignore:assets/"] == 1
+    assert rules["ignore:*.png"] == 1
+    assert r["excluded"]["pruned_files"] == 5   # 3 默认剪枝 + skipme 1 + assets 1
+    assert r["excluded"]["files"] == 2          # logo.png(ignore) + .glossaignore(ext:<none>)
+    logo = (root / "logo.png").stat().st_size
+    ignore_file = (root / ".glossaignore").stat().st_size
+    assert r["excluded"]["bytes"] == logo + ignore_file   # R365：ignore 也计字节
+    assert r["excluded"]["bytes"] >= logo
 
 
 def test_truncation_flag_is_false_when_nothing_was_cut():
     full = scan.scan_repo(_copy("py-mini"))
     n = len(full["files"])
+    assert n == 6, "py-mini 应有 6 个可保留文件（R363 字面量钉死）"   # R363
     r = scan.scan_repo(_copy("py-mini"), max_files=n)
-    assert len(r["files"]) == n
+    assert len(r["files"]) == 6
     assert r["excluded"]["truncated"] is False
 
 

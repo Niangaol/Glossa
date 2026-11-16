@@ -85,11 +85,12 @@ def scan_repo(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20_000,
         for name in sorted(filenames):
             rel = (pathlib.Path(dirpath) / name).relative_to(root).as_posix()
             rule = exclude.match_file_rule(name, rel, ignore)
+            size = (pathlib.Path(dirpath) / name).stat().st_size
             if rule is not None:
                 rules[rule] = rules.get(rule, 0) + 1
                 ex_files += 1
+                ex_bytes += size            # R365：ignore 排除与 ext 同口径计字节
                 continue
-            size = (pathlib.Path(dirpath) / name).stat().st_size
             if exclude.is_secret_name(name):
                 secrets.append({"path": rel, "bytes": size})
                 continue                         # R266 只登记不读
