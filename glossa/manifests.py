@@ -6,6 +6,7 @@ R344：packages 列表含根包与子包；workspace 键是 bool；workspace_map
 R347：没有任何 manifest 时仍返回完整三键；「没有」是正常事实不是降级。
 R360：workspace 通配候选只从 files 索引派生（不 iterdir 磁盘），被排除目录零 degraded。
 R366：不是字面目录、也不是恰好一个尾部 /* 的 workspace 形状记 degraded（不静默丢）。
+R373：取反形状（!pkg）归「第一版不支持」并原样点名，不再当成字面目录报「没有文件」。
 """
 
 from __future__ import annotations
@@ -42,12 +43,20 @@ def _workspace_dirs(patterns: list, paths: set[str], degraded: list[dict]) -> li
     局限（R366）：`packages/**`、`apps/*/pkg` 这类形状第一版不展开——既不猜目录
     凑数（零候选照旧），也不静默丢弃，而是记一条 degraded 说明该形状未被解析。
     不载明的话，页面会把「只解析到一个包」当成事实写进讲解。
+
+    R373：取反形状 `!pkg` 同样不解析（排除语义第一版不实现）——它本来就不是目录，
+    所以不许落进字面目录支路说「该目录里没有任何文件」：那是假事实。
     """
     out: list[str] = []
     for pat in patterns:
         raw = str(pat).strip()
         pat = raw.rstrip("/")
         if not pat:
+            continue
+        if pat.startswith("!"):
+            degraded.append({"scope": "package.json#workspaces",
+                             "reason": f"workspace 取反形状第一版不支持：{raw}",
+                             "count": 1})
             continue
         if "*" not in pat:
             out.append(pat)

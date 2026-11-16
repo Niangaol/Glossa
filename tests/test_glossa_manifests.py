@@ -102,6 +102,32 @@ def test_unsupported_workspace_glob_is_reported_not_ignored():
     assert manifests.workspace_map(m["packages"]) == manifests.workspace_map(base["packages"])
 
 
+def test_multi_level_and_negated_globs_are_reported():
+    """R373：多级通配与取反形状都记 degraded；取反不是目录，不许说「目录里没有文件」。
+
+    这条同时冻结 _workspace_dirs 的 count("*") == 1 守卫：守卫去掉后 packages/**/* 会被
+    当成一层通配（prefix=packages/**，零候选、零 degraded），下面断言立刻红。
+    """
+    root, sc = _scan("ts-monorepo")
+    base = manifests.read_manifests(root, sc["files"])
+    pkg = root / "package.json"
+    data = json.loads(pkg.read_text(encoding="utf-8"))
+    data["workspaces"] = ["packages/*", "packages/**/*", "!packages/legacy"]
+    pkg.write_text(json.dumps(data), encoding="utf-8")
+    sc = scan.scan_repo(root)
+    m = manifests.read_manifests(root, sc["files"])
+    hit = [d for d in m["degraded"] if d["scope"] == "package.json#workspaces"]
+    assert len(hit) == 2, m["degraded"]                 # 多级通配 + 取反，各一条
+    assert "packages/**/*" in hit[0]["reason"], hit[0]
+    assert hit[1]["reason"] == "workspace 取反形状第一版不支持：!packages/legacy", hit[1]
+    # 取反从来不是目录：不许再出现「该目录里没有任何文件」的假事实（scope 不许是路径）
+    assert not any("!packages/legacy" in d["scope"] for d in m["degraded"]), m["degraded"]
+    # 两条不支持形状各贡献 0 个候选：成员集与改前一致（packages/* 照旧展开 a、b）
+    assert manifests.workspace_map(m["packages"]) == manifests.workspace_map(base["packages"])
+    assert set(manifests.workspace_map(m["packages"])) == {"@x/a", "@x/b"}
+    assert len(m["packages"]) == len(base["packages"])   # 不猜目录：包数不变
+
+
 def test_missing_manifest_is_degraded_not_crash():
     root, sc = _scan("ts-monorepo")
     (root / "packages" / "b" / "package.json").unlink()
