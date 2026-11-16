@@ -155,12 +155,13 @@ scan（排除/大小/语言/密钥名）
 
 ## 12. 排除与安全
 
-- 默认排除目录（大小写不敏感）：node_modules、.git、bin、obj、dist、build、out、target、vendor、third_party、__pycache__、.venv、venv、.nuget-packages、publish、.tmp、tmp、var、snapshots、qdrant-config、qdrant-storage、.next、.nuxt、coverage、.pytest_cache、.mypy_cache、.ruff_cache、.idea、.vscode、.agent-teams、.chorography、.video_agent、.zcode、.test-tmp。
+- 默认排除目录（大小写不敏感）：node_modules、.git、bin、obj、dist、build、out、target、vendor、third_party、__pycache__、.venv、venv、.nuget-packages、publish、.tmp、tmp、var、snapshots、qdrant-config、qdrant-storage、.next、.nuxt、coverage、.pytest_cache、.mypy_cache、.ruff_cache、.idea、.vscode、.agent-teams、.chorography、.video_agent、.zcode、.test-tmp、cache、.cache（R348：数据缓存与浏览器 profile 缓存不是项目代码；PokemonData 实测剪掉 3,325 个 JSON 缓存后 kept 4,341→1,016，csharp 108 一个不少；真源码放在名为 cache 的目录会被剪，靠页面规则名 + pruned_files 披露与 --no-default-excludes 兜底）。
 - 目录前缀规则：pythoncore-*、python-3*（嵌入式运行时；**不匹配 python-***，那会误杀 python-bindings / python-utils 这类真源码目录 —— R343）；文件名含 -dataset-、-main 的数据集目录（PokemonData 的 pokemon-dataset-zh-main）→ 规则名 `dir:dataset`。
-- 大小守卫：单文件 >1,000,000 字节 → skipped + oversize 记录，**绝不 read_bytes**（R265，必须有计数桩守卫 R342）；保留文件数达 20,000 → 继续遍历但不再读内容，**只有确实还有本应保留的文件没扫时**才 truncated=true（R341；恰好扫完必须是 false），truncated=true 时页面明示计数不完整。
+- 大小守卫：单文件 >1,000,000 字节 → skipped + oversize 记录，**绝不 read_bytes**（R265，必须有计数桩守卫 R342）；保留文件数达 20,000 → 继续遍历但不再读内容，**只有确实还有本应保留的文件没扫时**才 truncated=true（R341；恰好扫完必须是 false），truncated=true 时页面明示计数不完整。保留文件数上限 max_files < 1 → 入口抛 ValueError（R350：静默保留 1 个文件是未定义行为里的假事实）。
 - 密钥名单：.env、.env.*、*.pem、*.key、*.pfx、*.p12、id_rsa、id_ed25519、*.keystore、secrets.*、credentials.* → **只登记名与字节数**。
 - .glossaignore：仓库根，每行一个 glob（支持 dir/ 与 *.ext），规则名 `ignore:<行>`。
 - 语言白名单之外的扩展名（png/dll/zip/pdf/pyd/h…）→ 只计数不解析。
+- 被剪目录内文件数（pruned_files）是 listing 计数：**符号链接内容未计入**，pruned_files_partial 只反映 OSError；页面必须静态写明这一点（R349；本机无特权创建符号链接，无法用真 symlink 写守卫测试）。
 
 ## 13. 事实台账：14 种 fact id
 
