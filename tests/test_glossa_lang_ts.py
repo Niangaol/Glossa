@@ -1,4 +1,5 @@
 """T4：TS/JS/Vue 近似解析。行号是实测冻结事实，不许改夹具凑数。"""
+import re
 from pathlib import Path
 
 from glossa.lang import masks, tsjs, vue
@@ -122,6 +123,23 @@ def test_unhandled_export_forms_are_recorded():
     hits = [d for d in r["degraded"] if "export 形态第一版未解析" in d]
     assert len(hits) == 2, r["degraded"]
     assert all("行号" in d for d in hits)
+
+
+def test_degraded_snippet_quotes_original_not_masked():
+    """R483：降级片段取自原文——掩码把字符串内容换成空格，读者必须看得到真实 specifier。"""
+    r = tsjs.parse_source('export * from "./m.js";\n', "m.ts")
+    reasons = [d for d in r["degraded"] if "export 形态第一版未解析" in d]
+    assert len(reasons) == 1, r["degraded"]
+    assert "./m.js" in reasons[0], reasons[0]
+    assert not re.search(r" {4,}", reasons[0]), reasons[0]
+
+
+def test_degraded_snippet_keeps_spaces_the_source_itself_has():
+    """R483 豁免：原文这行本来就含 4+ 连续空格，片段如实照抄，不许为了过断言去压空格。"""
+    r = tsjs.parse_source('export *    from "./m.js";\n', "spaced.ts")
+    reason = next(d for d in r["degraded"] if "export 形态第一版未解析" in d)
+    assert reason.split("：", 1)[1].split("（行号")[0] == 'export *    from "./m.js";', reason
+    assert "./m.js" in reason
 
 
 def test_crossline_script_tag_offset_and_dotted_import_call():

@@ -31,12 +31,22 @@ def _table(summary: str, headers, rows) -> str:
             '<tbody>%s</tbody></table></details>'
             % (summary, "".join("<th>%s</th>" % fmt(name) for name in headers), rows))
 
+def _root_readme(path: str) -> bool:
+    """R484：只有**根目录的 README**代表整仓；别的文件（连根目录脚本）都只代表它自己。"""
+    return "/" not in path and path.lower().startswith("readme")
+
 def _intro(doc):
-    """(人话简介, 来源)：取 docstring 并注明来源；R444 只说事实层没给 README 正文。"""
-    for row in doc.get("files") or []:
-        if line := str(row.get("doc_first_line") or "").strip():
-            return line, "事实层没有提供 README 正文；简介取的是模块 docstring（%s 第 1 行）" % row["path"]
-    return None, "事实层没有提供 README 正文，也没抓到任何模块 docstring"
+    """(人话简介, 来源)：R444 只说事实层没给 README 正文；R484 兜底句必须自带限定。"""
+    rows = [row for row in doc.get("files") or []
+            if str(row.get("doc_first_line") or "").strip()]
+    rows.sort(key=lambda row: not _root_readme(str(row.get("path") or "")))
+    if not rows:
+        return None, "事实层没有提供 README 正文，也没抓到任何模块 docstring"
+    path, line = str(rows[0].get("path") or ""), str(rows[0]["doc_first_line"]).strip()
+    if _root_readme(path):
+        return line, "简介取的是仓库根 README 的首段（%s 第 1 行）" % path
+    return ("（以下一句来自 %s 的模块注释，只代表这个文件）：%s" % (path, line),
+            "事实层没有提供 README 正文；简介取的是模块 docstring（%s 第 1 行）" % path)
 
 def overview(doc, params):
     """meta + 一句项目简介（R320：人话在前，明细在后；R444/R445）。"""

@@ -15,6 +15,8 @@ R376：export 抓不全是「静默省略」：补抓列表式 `export { a, b as
 R377：`export const enum Direction` 抓 name='Direction'、kind='enum'（关键字备选最长
       优先，const enum 单独一支），不许产出名为 enum 的符号。
 R379：`foo.import("./x")` 是普通方法调用，不是动态 import（前置 . / 标识符字符排除）。
+R483：degraded 里给读者看的片段取自**原文**同一行同一偏移（masks.same_span，≤40 字符），
+      掩码文本只用于解析与行号——否则字符串内容会显示成一片空格，看不出哪里没解析。
 R285 非目标：不抓 export ... from 的 re-export（但记 degraded，不静默）、不追 re-export
       链、不解析 JSX 内部、不做类型推断、不解析模板字符串里的 ${}。
 已知局限（如实声明）：
@@ -148,8 +150,8 @@ def _row(name: str, kind: str, line: int) -> dict:
             "end_line": None, "parent": None, "doc_first_line": None}
 
 
-def _symbols(masked: str) -> tuple[list[dict], list[str]]:
-    """R298/R376：export 符号 + 没解析的 export 形态（degraded），不许静默省略。"""
+def _symbols(masked: str, text: str) -> tuple[list[dict], list[str]]:
+    """R298/R376：export 符号 + 没解析的 export 形态（degraded），不许静默省略；R483 片段取原文。"""
     out: list[dict] = []
     covered: set[int] = set()
     for match in _EXPORT.finditer(masked):
@@ -176,8 +178,7 @@ def _symbols(masked: str) -> tuple[list[dict], list[str]]:
                 out.append(_row(name, "export_list", _line(masked, match.start())))
     out.sort(key=lambda row: row["line"])
     notes = ["export 形态第一版未解析：%s（行号 %d）" % (
-                 masked[h.start():h.start() + 40].split("\n", 1)[0].strip(),
-                 _line(masked, h.start()))
+                 masks.same_span(text, h.start()), _line(masked, h.start()))
              for h in _EXPORT_HEAD.finditer(masked) if h.start() not in covered]
     return out, notes
 
@@ -185,7 +186,7 @@ def _symbols(masked: str) -> tuple[list[dict], list[str]]:
 def parse_source(text: str, relpath: str) -> dict:
     """近似解析一份 TS/JS 源码；relpath 只用于调用方对齐，本函数不读盘。"""
     masked, spans, notes = masks.mask_source_notes(text)
-    symbols, export_notes = _symbols(masked)
+    symbols, export_notes = _symbols(masked, text)
     notes += export_notes
     if masked.count("{") != masked.count("}"):       # GC32：不猜缺失的那一半
         notes.append("花括号不配对：部分 export/import 可能漏抓（注释与字符串内的不算）")

@@ -173,3 +173,14 @@ def string_at(text: str, spans: list[tuple[int, int]], quote_pos: int) -> str | 
         if begin == quote_pos + 1:
             return text[begin:end]
     return None
+
+
+def same_span(text: str, pos: int, limit: int = 40) -> str:
+    """R483：masked 上的 pos → **原文**同一行同一偏移的 ≤limit 字符（去首尾空白）。
+
+    masked 与原文等长、换行位置逐一相同（R281 硬不变量），所以位置可以直接搬过来。
+    掩码只许用于解析与行号；写进 degraded/notes 的片段必须是读者能在源码里找到的原文，
+    否则字符串内容会显示成一片空格（SafeTrace 122 条里 61 条踩过这个坑）。
+    """
+    begin = text.rfind("\n", 0, pos) + 1
+    return text[begin:].split("\n", 1)[0][pos - begin:pos - begin + limit].strip()

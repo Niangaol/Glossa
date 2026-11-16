@@ -10,6 +10,8 @@ R381–R385（修复轮 1）：泛型约束绝不许写成基类（先剥 where�
       声明**（目标前缀 assembly:/module:/return:/param:、空行、语句、更深花括号一律整批丢弃）；
       泛型方法、一行方法体、Allman 属性、event/required/索引器/元组返回/operator 都要认；
       认不出的声明形态记 degraded「C# 声明形态第一版未解析」（GC31：宁可说没解析，不许静默省略）。
+R483：degraded 里给读者看的片段取自**原文**同行同偏移（masks.same_span，≤40 字符），
+      掩码只用于解析与行号——字符串内容被掩成空格后，读者看不出哪里没解析。
 为什么逐行扫 + 深度栈、而不是全文正则：块级 namespace 的 '}' 与类的 '}' 必须分开数——
 全文正则既会跨行误匹配，行号也会静默漂移（掩码等长那条硬不变量就是为行号而设的）。
 已知局限（如实声明，不假装支持）：
@@ -97,7 +99,9 @@ def parse_source(text: str, relpath: str) -> dict:
     pending: str | None = None                 # 已声明、等 '{' 的类型
     held: list[str] = []                       # 上一行攒下的 attribute（只贴紧邻下一行）
     held_depth = 0
+    cursor = 0                                 # R483：原文绝对位置 = 行首下标 + 列
     for idx, raw in enumerate(lines, 1):
+        line_base, cursor = cursor, cursor + len(raw) + 1
         line = raw
         fresh: list[str] = []
         while True:                            # 行首 attribute 剥掉再认声明
@@ -138,8 +142,9 @@ def parse_source(text: str, relpath: str) -> dict:
                 if got is not None:
                     symbols.append(got)
                 elif DECL.match(line) is not None:
+                    col = len(raw) - len(line.lstrip())   # body 在原文这一行里的列
                     degraded.append("C# 声明形态第一版未解析：%s（行号 %d）"
-                                    % (body[:40], idx))
+                                    % (masks.same_span(text, line_base + col), idx))
         for ch in line:
             if ch == "{":
                 depth += 1

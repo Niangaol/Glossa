@@ -4,6 +4,8 @@
 （派发书 task-T5-fix2-brief.md 授权拆 tests/test_glossa_lang_cs_attrs.py）。
 既有文件零改动，旧断言一条不放宽。
 """
+import re
+
 from glossa.lang import csharp
 
 
@@ -49,6 +51,24 @@ def test_held_attributes_are_consumed_by_exactly_one_symbol():
 # --- R402 m3：六个「第一版未实现」的前缀不许静默丢弃 ---
 
 _UNSUPPORTED = ("field", "event", "method", "property", "type", "typevar")
+
+
+# --- R483：降级片段必须取自原文，掩码的空格不许写进给读者看的字符串 ---
+
+
+def test_degraded_snippet_quotes_original_string_content():
+    """R483：PokemonData 的 `? value.GetString() ?? "" : "";` 续行也是「未解析声明」，
+    片段里必须看得到 GetString() 与原文的字符串内容，而不是掩码后的空格。"""
+    r = _parse("namespace N;\n"
+               "public class C\n"
+               "{\n"
+               "    public static string Str(JsonElement value)\n"
+               "        => value.ValueKind == JsonValueKind.String\n"
+               '            ? value.GetString() ?? "unknown" : "";\n'
+               "}\n")
+    reason = next(d for d in r["degraded"] if "声明形态" in d and "GetString" in d)
+    assert '"unknown"' in reason, reason
+    assert not re.search(r" {4,}", reason), reason
 
 
 def test_unsupported_attribute_target_prefixes_are_disclosed():
