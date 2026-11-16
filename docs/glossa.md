@@ -117,14 +117,18 @@ python -m glossa explain --repo <仓库路径> --out output\demo-glossa\<name> -
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | SafeTrace（TS/Vue 安全情报） | 485 | 1,019 | 1,955 | 8 | 0 | 53 | 123 | 233 | 37 | 0 | 0 / 0 |
 | PokemonData（.NET + Vue） | 1,016 | 3,348 | 913 | 2 | 5 | 16 | 256 | 2 | 38 | 0 | 0 / 0 |
-| PaperTrace 自举（本仓） | 540 | 1,990 | 1,141 | 3 | 2 | 10 | 8 | 66 | 38 | 0 | 0 / 0 |
+| PaperTrace 自举（本仓） | 556 | 2,032 | 1,163 | 3 | 2 | 10 | 10 | 69 | 38 | 0 | 0 / 0 |
 
 `exit` 列是 analyze / explain 两个退出码。三组都真跑完、产物都落盘，没有一组被跳过。
 
-自举那一行是 T11 修复轮用**绝对路径**重跑得到的（`--repo D:\AgentPrograms\PaperTrace`），比 T11 时点的 530
-多 10 个文件：本轮新增的 `glossa/explain/narrate_graph.py`、三个测试文件与 `.superpowers/` 下的过程文档都在
-同一棵树里，不是排除规则变了（`excluded.truncated=false` 未变）。SafeTrace 用新代码复跑过：files/symbols/
-imports/packages/projects/entries 与截断节点数逐项未变（485 / 1,019 / 1,955 / 8 / 0 / 53 / 233），仍 37 块、未溯源 0。
+三行数字都在 **2026-11-17 最终修复轮（R482–R497）之后**用绝对路径重跑取得（`--repo D:\AgentPrograms\PaperTrace`）。
+自举行比 T11 修复轮多 16 个文件，都是本轮新增的东西在同一棵树里：`glossa/explain/comp_graph.py`、
+`narrate_graph.py`、六个测试文件与 `.superpowers/` 下的过程文档——不是排除规则变了（`excluded.truncated=false` 未变）。
+`degraded` 8 → 10 的两条也是本轮的新规矩带来的：`sln:<夹具>` 的解决方案文件夹未纳入（R486）与
+`repo:paths` 的仓外绝对路径披露（R493，26 处，全部来自夹具与历史产物原文）；`图截断节点` 66 → 69 随文件数上涨
+（`truncated` 仍为 `false` 的是 `excluded`，图截断是 `graph.truncated=true`，两者不是一回事）。
+SafeTrace 与 PokemonData 两行与上一轮逐项一致（485 / 1,019 / 1,955 / 8 / 0 / 53 / 233 / 37 块、1,016 / 3,348 / 913 / 2 / 5 / 16 / 2 / 38 块），
+未溯源数字都是 0，退出码都是 0 / 0。
 
 几件值得记下来的事：
 
