@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<style>
+:root { --ink:#1f2430; --muted:#6b7280; --line:#d8dee9; --bg:#fbfbfd; --accent:#2b6cb0; --warn:#fff3bf; }
+* { box-sizing: border-box; }
+body { margin:0; padding:0 16px 56px; background:var(--bg); color:var(--ink);
+  font:16px/1.78 -apple-system, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif; }
+.page { max-width:900px; margin:0 auto; }
+header.page { padding:40px 0 10px; border-bottom:2px solid var(--line); }
+h1 { font-size:26px; line-height:1.35; margin:0 0 10px; letter-spacing:.5px; }
+h2 { font-size:19px; margin:0 0 12px; padding-left:10px; border-left:4px solid var(--accent); }
+h3 { font-size:15px; margin:18px 0 6px; color:var(--muted); }
+p { margin:8px 0; }
+p.src, p.note, p.muted, p.scope { color:var(--muted); font-size:13px; }
+p.scope { background:#eef2f7; border-radius:6px; padding:6px 10px; }
+p.card-path { font-family:ui-monospace, Consolas, monospace; font-size:14px; margin:0 0 4px; }
+p.removed { font-size:13px; color:#a1222e; background:#fde8e8; border-radius:4px; padding:4px 8px; }
+.badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:13px;
+  background:#e8f0fe; color:#1a4d8f; }
+.badge.model { background:#fde8e8; color:#a1222e; }
+.untraced-count { font-size:13px; color:var(--muted); margin-left:8px; }
+.untraced-count.warn { color:#8a5a00; background:var(--warn); border-radius:4px; padding:2px 8px; }
+.untraced-count.ok { color:#2f7d32; }
+main { padding-top:4px; }
+section.blk { margin:34px 0 0; scroll-margin-top:12px; }
+ul.plain, ul.tree { margin:8px 0; padding-left:20px; }
+ul.metrics { list-style:none; margin:10px 0; padding:0; display:flex; flex-wrap:wrap; gap:8px; }
+ul.metrics li { border:1px solid var(--line); border-radius:6px; padding:4px 10px; background:#fff; }
+ul.metrics .k { color:var(--muted); font-size:13px; margin-right:8px; }
+ul.metrics .v { font-weight:600; }
+ul.tree code { font-size:13px; }
+div.card { border:1px solid var(--line); border-radius:8px; padding:10px 14px; background:#fff; margin:12px 0; }
+details { margin:10px 0; }
+summary { cursor:pointer; color:var(--accent); font-size:14px; }
+table.grid { border-collapse:collapse; width:100%; font-size:13px; margin:8px 0; }
+table.grid th, table.grid td { border:1px solid var(--line); padding:4px 8px; text-align:left;
+  vertical-align:top; }
+table.grid th { background:#eef2f7; font-weight:600; }
+table.grid tr:nth-child(even) td { background:#fafbfd; }
+pre.code { overflow-x:auto; background:#1f2430; color:#e6e6e6; padding:12px 14px; border-radius:6px;
+  font:13px/1.55 ui-monospace, Consolas, "Courier New", monospace; }
+pre.code .ln { color:#7f8c9b; }
+mark.untraced { background:var(--warn); padding:0 2px; border-radius:2px; }
+svg.graph, figure.graph { max-width:100%; display:block; margin:12px 0; }
+svg.graph { height:auto; }
+figure.graph { margin:12px 0; }
+.prose code { background:#eef2f7; border-radius:3px; padding:1px 4px; font-size:13px; }
+footer.page { margin-top:44px; padding-top:14px; border-top:1px solid var(--line); }
+</style>
+</head>
+<body>
+<header class="page">
+  <h1>{{ title }}</h1>
+  <p><span class="badge {{ mode }}">{{ badge }}</span>
+    <span class="untraced-count {{ 'ok' if untraced == 0 else 'warn' }}">本页有 {{ untraced }} 处数字未溯源</span></p>
+  <p class="src">仓库 {{ repo_url }} · commit {{ commit }} · 主语言 {{ language }} · 生成于 {{ created_at }} · 由 {{ tool_name }} {{ tool_version }} 生成</p>
+</header>
+<main>
+{%- for section in sections %}
+  <section class="blk" data-component="{{ section.component }}">
+    <h2>{{ section.title }}</h2>
+    {{ section.html | safe }}
+  </section>
+{%- endfor %}
+</main>
+<footer class="page src">
+  <p>统计口径为 listing 计数，符号链接内容未计入。</p>
+  <p>目录被剪枝时，其中的文件只按 listing 计数，不会进入 files 列表。</p>
+  <p>本页是单文件离线页：零脚本、零外链，样式全部内联，唯一的 xmlns 命名空间串由 SVG 自身携带。</p>
+</footer>
+</body>
+</html>
