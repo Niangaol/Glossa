@@ -5,6 +5,7 @@ R273：读失败（JSON 坏/文件缺/TOML 坏）记 degraded，不抛。
 R344：packages 列表含根包与子包；workspace 键是 bool；workspace_map 只收子包。
 R347：没有任何 manifest 时仍返回完整三键；「没有」是正常事实不是降级。
 R360：workspace 通配候选只从 files 索引派生（不 iterdir 磁盘），被排除目录零 degraded。
+R366：不是字面目录、也不是恰好一个尾部 /* 的 workspace 形状记 degraded（不静默丢）。
 """
 
 from __future__ import annotations
@@ -35,19 +36,31 @@ def _pkg_entry(rel: str, data: dict, workspace: bool) -> dict:
             "workspace": workspace}
 
 
-def _workspace_dirs(patterns: list, paths: set[str]) -> list[str]:
-    """第一版只支持字面目录与 packages/* 一层通配；候选只从索引派生（R360）。"""
+def _workspace_dirs(patterns: list, paths: set[str], degraded: list[dict]) -> list[str]:
+    """第一版只支持字面目录与 packages/* 一层通配；候选只从索引派生（R360）。
+
+    局限（R366）：`packages/**`、`apps/*/pkg` 这类形状第一版不展开——既不猜目录
+    凑数（零候选照旧），也不静默丢弃，而是记一条 degraded 说明该形状未被解析。
+    不载明的话，页面会把「只解析到一个包」当成事实写进讲解。
+    """
     out: list[str] = []
     for pat in patterns:
-        pat = str(pat).strip().rstrip("/")
-        if pat.endswith("/*"):
+        raw = str(pat).strip()
+        pat = raw.rstrip("/")
+        if not pat:
+            continue
+        if "*" not in pat:
+            out.append(pat)
+        elif pat.endswith("/*") and pat.count("*") == 1:
             prefix = pat[:-2]
             head = prefix + "/"
             dirs = sorted({p[len(head):].split("/", 1)[0] for p in paths
                            if p.startswith(head) and "/" in p[len(head):]})
             out.extend(prefix + "/" + d for d in dirs)
-        elif pat:
-            out.append(pat)
+        else:
+            degraded.append({"scope": "package.json#workspaces",
+                             "reason": f"workspace 通配形状第一版不支持：{raw}（只支持字面目录与一层 *）",
+                             "count": 1})
     return list(dict.fromkeys(out))
 
 
@@ -108,7 +121,7 @@ def read_manifests(root: pathlib.Path, files: list[dict]) -> dict:
     ws = (root_data or {}).get("workspaces") or []
     if isinstance(ws, dict):
         ws = ws.get("packages") or []
-    for d in _workspace_dirs(ws, paths):
+    for d in _workspace_dirs(ws, paths, degraded):
         rel = d + "/package.json"
         if not any(p.startswith(d + "/") for p in paths):
             degraded.append({"scope": rel,

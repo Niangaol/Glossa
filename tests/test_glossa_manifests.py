@@ -81,6 +81,27 @@ def test_pyproject_scripts_and_main_guard_are_entries():
     es = entries.find_entries(root, sc['files'], m)
     assert ("main_guard", "nested.py") not in {(e["kind"], e["name"]) for e in es}
 
+def test_unsupported_workspace_glob_is_reported_not_ignored():
+    """R366：packages/** 这类形状不许静默零候选——记一条 degraded，且不猜目录凑数。"""
+    root, sc = _scan("ts-monorepo")
+    cli = root / "apps" / "cli"                       # 有真 package.json 的子目录
+    cli.mkdir(parents=True)
+    (cli / "package.json").write_text(json.dumps({"name": "@x/cli"}), encoding="utf-8")
+    sc = scan.scan_repo(root)
+    base = manifests.read_manifests(root, sc["files"])
+    pkg = root / "package.json"
+    data = json.loads(pkg.read_text(encoding="utf-8"))
+    data["workspaces"] = ["packages/*", "apps/**"]
+    pkg.write_text(json.dumps(data), encoding="utf-8")
+    sc = scan.scan_repo(root)
+    m = manifests.read_manifests(root, sc["files"])
+    hit = [d for d in m["degraded"] if d["scope"] == "package.json#workspaces"]
+    assert len(hit) == 1, m["degraded"]
+    assert "apps/**" in hit[0]["reason"], hit[0]
+    assert len(m["packages"]) == len(base["packages"])          # 不猜目录：包数不变
+    assert manifests.workspace_map(m["packages"]) == manifests.workspace_map(base["packages"])
+
+
 def test_missing_manifest_is_degraded_not_crash():
     root, sc = _scan("ts-monorepo")
     (root / "packages" / "b" / "package.json").unlink()
