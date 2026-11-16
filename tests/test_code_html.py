@@ -27,6 +27,7 @@ import pytest
 pytest.importorskip("torch", reason="真跑 CLI 追踪需要 torch（CPU 版即可）")
 
 from papertrace.code_analysis import METHOD_TEXT  # noqa: E402
+from papertrace.render_analysis import analysis_panel, role_counts  # noqa: E402
 from papertrace.render_html import render_html  # noqa: E402
 from tests._tmp import scratch_dir  # noqa: E402
 
@@ -90,6 +91,15 @@ def test_html_has_a_code_health_section(real_doc):
     assert '<td class="mono">27,808</td>' in block, "数据行的参数量没走千位分隔/mono"
     assert "粗估 FLOPs" in block, "列头必须自称粗估（GC19）"
     assert "计算量" not in block, "块内出现「计算量」：估算不自称估算了（GC19）"
+    # R241/M3：三列都要钉住——根行三个单元格都在块内（不是只有 summary 行有数字）
+    assert '<td class="mono">29,856</td>' in block, "根行参数量单元格没钉住"
+    assert '<td class="mono">2,048</td>' in block, "根行峰值激活单元格没钉住"
+    assert '<td class="mono">884,736</td>' in block, "根行粗估 FLOPs 单元格没钉住"
+    assert "粗估 FLOPs 884,736" in block, "总量行没自称粗估（GC19：去掉「粗估」必红）"
+    # 另一行（root/transformer.h.0.attn）：证明不是只有根行走千位分隔
+    assert '<td class="mono">4,352</td>' in block, "attn 行参数量没走千位分隔"
+    assert '<td class="mono">1,536</td>' in block, "attn 行峰值激活没走千位分隔"
+    assert '<td class="mono">147,456</td>' in block, "attn 行粗估 FLOPs 没走千位分隔"
     data_rows = len(re.findall(r"<tr><td", block))
     expected = len(real_doc["analysis"]["modules"])
     assert data_rows == expected, "模块表数据行 %d != 模块数 %d" % (data_rows, expected)
@@ -123,12 +133,25 @@ def test_html_lists_unknown_and_degraded(real_doc):
     assert "降级 2 个" in block, "降级计数没显示"
     assert reason in block, "降级原因原文没逐字出现"
     assert '<td class="mono">root/mystery</td>' in block, "unknown 模块行没进表"
+    # R240：HTML 层也要有排序网——精确分布串（count 相同按 role 升序）
+    assert "角色分布：linear 1 · unknown 1" in block, (
+        "角色分布不是「linear 1 · unknown 1」：%r" % block[:300])
+    assert "dropout" not in block, "不补 0：dropout 不在 roles 里却出现在块内（R207）"
 
 
 def test_html_shows_the_method_text(real_doc):
     """GC19：方法说明必须逐字上页，不许截断 / 改写 / 摘要成一句话。"""
     block = _section(render_html(real_doc), "analysis")
     assert METHOD_TEXT in block, "方法说明被截断或改写了"
+    assert "方法说明（逐字原文，不许截断）：" in block, "有原文时标签没自称逐字原文"
+    # R238 回落分支：method="" → 回落 METHOD_TEXT，但标签必须改口
+    doc = copy.deepcopy(real_doc)
+    doc["analysis"]["method"] = ""
+    fallback = _section(render_html(doc), "analysis")
+    assert METHOD_TEXT in fallback, "method 缺失时回落文本没显示"
+    assert "方法说明（内置默认文本，不是 trace 里的原文）：" in fallback, (
+        "回落时标签没改口（R238）")
+    assert "逐字原文" not in fallback, "回落时还自称逐字原文：provenance 过强（R238）"
 
 
 def test_symbols_table_says_there_is_no_paper(real_doc):
@@ -144,6 +167,16 @@ def test_symbols_table_says_there_is_no_paper(real_doc):
     assert '<td class="mono">n_embd</td>' in block and "<td>D</td>" in block, (
         "⑤ 符号表没有 D 的代码侧行")
     assert "没有论文" in block, "无论文时符号表没有如实说明"
+    # R242/R225 正分支：有论文的 doc 不许再说「没有论文」
+    doc = copy.deepcopy(real_doc)
+    doc["meta"]["paper"] = {
+        "source": "tests/fixtures/papers/vaswani2017/attention.tex",
+        "unit_count": 4,
+        "ingest_mode": "tex",
+        "title": "Attention",
+    }
+    with_paper = _section(render_html(doc), "symbols")
+    assert "没有论文" not in with_paper, "有论文时符号表还在说没有论文（R225 正分支）"
 
 
 def test_html_survives_a_trace_without_analysis(real_doc):
@@ -159,3 +192,74 @@ def test_html_survives_a_trace_without_analysis(real_doc):
     assert "Traceback" not in html
     block = _section(html, "analysis")
     assert "没有代码分析数据" in block, "空态没有如实说没有"
+
+
+def test_role_counts_sort_by_count_desc_then_role_asc():
+    """R223/R240：纯函数级排序钉子 + 不补 0 + bool 不当 int。
+
+    背景：评审自跑 M1/M7/M2 三条排序变异全绿（5 passed），R223 只有实现没有
+    回归网。这里直接调 role_counts 断言完整列表，不再依赖 HTML 子串。
+
+    直接调 role_counts 断言完整列表（按顺序，不是子串）：
+    {"unknown": 3, "linear": 2, "attention": 1, "mlp": 0}
+    → [("unknown",3),("linear",2),("attention",1),("mlp",0)]
+    排序键改成正序、两个键对调、过滤 unknown，这条都必须红（V1/V2/V3）。
+    """
+    panel = role_counts({"roles": {"unknown": 3, "linear": 2, "attention": 1, "mlp": 0}})
+    assert [(r["role"], r["count"]) for r in panel] == [
+        ("unknown", 3), ("linear", 2), ("attention", 1), ("mlp", 0)], (
+        "排序不是 count 降序 + role 升序：%r" % panel)
+    assert [r["role"] for r in panel] == ["unknown", "linear", "attention", "mlp"], (
+        "同 count 时不是 role 升序：%r" % panel)
+    for absent in ("dropout", "residual", "embedding", "layernorm"):
+        assert absent not in [r["role"] for r in panel], (
+            "不补 0：%s 不在 roles 里却出现了（R207）" % absent)
+    # R239：bool 是 int 子类，True 不许输出成 True
+    assert [(r["role"], r["count"]) for r in role_counts({"roles": {"linear": True}})] == [
+        ("linear", 0)], "bool 计数被当成 int 原样输出了（R239）"
+
+
+def test_html_is_honest_when_totals_are_missing(real_doc):
+    """R235/I1：totals 缺失时摘要不许伪造「0 个模块」，degraded 不许说「降级 0 个」。
+
+    合成 doc = 真 modules（34 行照旧渲染）+ 没有 totals 键。同时守 R237：
+    第一行模块挖掉 est_flops → 该单元格是 "-"，不是 0。
+    """
+    doc = copy.deepcopy(real_doc)
+    modules = copy.deepcopy(real_doc["analysis"]["modules"])
+    modules[0].pop("est_flops", None)
+    doc["analysis"] = {"modules": modules, "roles": {"linear": 9}, "method": METHOD_TEXT}
+    html = render_html(doc)
+    assert "Traceback" not in html
+    block = _section(html, "analysis")
+    assert "总计缺失" in block, "totals 不完整时摘要没有如实说缺失（R235）"
+    assert "0 个模块" not in block, "totals 缺失却伪造「0 个模块」（R235）"
+    assert "降级 0 个" not in block, "totals 缺失却伪造「降级 0 个」（R235）"
+    assert block.count("<tr><td") == 34, "totals 坏了不该把真实的模块行也藏了（R235）"
+    row = re.search(
+        r'<tr><td class="mono">' + re.escape(str(modules[0]["module_id"])) + r"</td>.*?</tr>",
+        block,
+    )
+    assert row, "第一行模块没渲染出来"
+    assert '<td class="mono">-</td>' in row.group(0), (
+        "缺 est_flops 的单元格不是 -（R237）：%r" % row.group(0))
+
+
+def test_panel_survives_a_non_dict_analysis(real_doc):
+    """R236/M1：analysis 是 int（或 list/str）时不许抛 AttributeError。
+
+    八个键都要齐全（模板 StrictUndefined，缺键即炸）。
+
+    归一化后 has is False，模板走 else 分支出 emptybox，不是炸在 .get 上。
+    """
+    panel = analysis_panel({"analysis": 5})
+    assert panel["has"] is False, "非 dict analysis 的 has 不是 False"
+    for key in ("has", "summary", "roles", "rows", "method", "degraded",
+                "symbols_note", "method_label"):
+        assert key in panel, "非 dict analysis 时缺键 %s（StrictUndefined 会炸）" % key
+    doc = copy.deepcopy(real_doc)
+    doc["analysis"] = 5
+    html = render_html(doc)  # 不抛就是过
+    assert "Traceback" not in html
+    assert "没有代码分析数据" in _section(html, "analysis"), (
+        "非 dict analysis 没走空态（R236）")

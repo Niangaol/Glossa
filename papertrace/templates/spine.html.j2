@@ -144,8 +144,8 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 {% else %}
 <p class="emptybox">没有模块行可列（骨架模式不加载模型，抽不到模块）。</p>
 {% endif %}
-<p class="sub">形状降级与异常：{{ analysis.degraded }}</p>
-<p class="sub">方法说明（逐字原文，不许截断）：{{ analysis.method }}</p>
+{% if analysis.degraded %}<p class="sub">形状降级与异常：{{ analysis.degraded }}</p>
+{% endif %}<p class="sub">{{ analysis.method_label }}{{ analysis.method }}</p>
 {% else %}
 <p class="emptybox">本次 build 没有代码分析数据（骨架模式或旧 trace）</p>
 {% endif %}
