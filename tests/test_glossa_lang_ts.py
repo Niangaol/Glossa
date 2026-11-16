@@ -139,3 +139,27 @@ def test_crossline_script_tag_offset_and_dotted_import_call():
     r = vue.parse_source(text, "Cross.vue")
     assert [(i["line"], i["specifier"]) for i in r["imports"]] == [(7, "./a.js")]
     assert [i for i in r["imports"] if i["dynamic"]] == []
+
+
+def test_multi_declarator_with_call_arguments_is_split_at_depth_zero():
+    """R380：多声明符按深度 0 切——裸 split(',') 会把 f(a, b) 的实参切成碎片名。"""
+    d = scratch_dir("glossa-t4-r380-multi")
+    f = d / "Pair.ts"
+    f.write_text("export const pair = f(a, b), z = 3;\n", encoding="utf-8")
+    r = tsjs.parse_source(f.read_text(encoding="utf-8"), "Pair.ts")
+    assert {s["name"] for s in r["symbols"]} == {"pair", "z"}, r["symbols"]
+    assert all(s["kind"] == "const" for s in r["symbols"]), r["symbols"]
+    assert [x for x in r["degraded"] if "export 形态第一版未解析" in x] == [], r["degraded"]
+
+
+def test_const_enum_symbol_is_named_after_enum():
+    """R377/R380：export const enum 抓 Direction、kind='enum'，不许产出名为 enum 的符号。"""
+    d = scratch_dir("glossa-t4-r380-enum")
+    f = d / "Direction.ts"
+    f.write_text("export const enum Direction { Up, Down }\n", encoding="utf-8")
+    r = tsjs.parse_source(f.read_text(encoding="utf-8"), "Direction.ts")
+    assert len(r["symbols"]) == 1, r["symbols"]
+    assert r["symbols"][0]["name"] == "Direction", r["symbols"]
+    assert r["symbols"][0]["kind"] == "enum", r["symbols"]
+    assert [s for s in r["symbols"] if s["name"] == "enum"] == [], r["symbols"]
+
