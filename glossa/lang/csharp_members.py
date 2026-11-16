@@ -1,30 +1,117 @@
-"""C# 成员/基类判定的辅助函数（T5 修复轮 1 从 csharp.py 拆出，守 GC1 的 ≤200 行）。
+r"""C# 成员/基类判定（T5 从 csharp.py 拆出，守 GC1 的 ≤200 行）。
 
-R381：where 泛型约束**先整段剥掉**再找基类冒号 —— bases 只许类型名，绝不许
-      class / struct / new() / notnull 这类约束关键字。
-R383/R384：方法判定允许 rest 以 '<'（泛型参数列表）开头再跟 '('；行尾判据加 '}'
-      （一行方法体 public void A() { }）；属性还认 Allman 形态（声明行 + 下一非空行以 '{' 开头）。
-R385：event→field、required→property、索引器→property/name 'this'、元组返回→method、
-      implicit/explicit operator（及运算符重载）→method/name 'operator'。
+R381：where 泛型约束先整段剥掉再找基类冒号 —— bases 只许类型名，绝不许 class /
+      struct / new() / notnull 这类约束关键字。
+R383/R384/R385：泛型方法、单行方法体、Allman 属性、event→field、required→property、
+      索引器 name=this、元组返回类型、operator 重载都按既有口径认。
 认不出的声明返回 None —— 调用方必须记 degraded（GC31：不静默省略）。
+
+R467/R468：DECL 从正则改成过程式扫描（_DeclPattern）。旧 _RET 正则在「构造器参数带
+可空/默认值」的行上指数回溯：PokemonData 单行 17.98s、三行 126.92s。扫描器把返回
+类型切成互不歧义的 token 再按「最长优先」回退一次，语言与旧正则一致、复杂度 O(行长)。
+唯一收窄：类型名尾随点（Foo.）不再算返回类型（C# 里也不是合法类型）。
 """
 
 from __future__ import annotations
 
 import re
+from typing import NamedTuple
 
-MODS = (r"(?:(?:public|internal|private|protected|static|abstract|sealed|partial|file"
-        r"|readonly|unsafe|extern|virtual|override|new|async|const|volatile|ref|event"
-        r"|required)\s+)*")
-_RET = r"(?:[A-Za-z_][\w.]*|\([^()]*\)|<[^<>]*(?:<[^<>]*>[^<>]*)*>|[\?\[\],])+"
+MODS_LIST = ("public", "internal", "private", "protected", "static", "abstract", "sealed",
+             "partial", "file", "readonly", "unsafe", "extern", "virtual", "override",
+             "new", "async", "const", "volatile", "ref", "event", "required")
+MODS = r"(?:(?:" + "|".join(MODS_LIST) + r")\s+)*"
 TYPE_DECL = re.compile(r"^\s*(?P<mods>" + MODS + r")"
                        r"(?P<kw>class|interface|record|struct|enum)"
                        r"\s+(?:(?:struct|class)\s+)?(?P<name>[A-Za-z_]\w*)")
-DECL = re.compile(r"^\s*(?P<mods>" + MODS + r")(?P<ret>" + _RET
-                  + r")\s+(?P<name>[A-Za-z_]\w*)(?P<rest>.*)$")
+
+_IDENT = re.compile(r"[A-Za-z_]\w*")
+_MODS_RE = re.compile(MODS)
+_RET_PUNCT = "?[],"
 _CONV = re.compile(r"^\s*(?P<mods>" + MODS + r")(?:implicit|explicit)\s+operator\b")
 _OVERLOAD = re.compile(r"^\s*(?P<mods>" + MODS + r")[\w.<>,?\[\]]+\s+operator\s*[^\w\s]")
 _PROP_OPEN = re.compile(r"\{\s*(?:get|set|init)\b")
+
+
+def _ident_end(text: str, start: int) -> int | None:
+    """标识符（含点分限定 A.B.C）；尾随点不收（R467）。"""
+    hit = _IDENT.match(text, start)
+    if hit is None:
+        return None
+    end = hit.end()
+    while end < len(text) and text[end] == ".":
+        nxt = _IDENT.match(text, end + 1)
+        if nxt is None:
+            break
+        end = nxt.end()
+    return end
+
+
+def _group_end(text: str, start: int) -> int | None:
+    """返回类型里的括号组：单层 ( ... ) 或最多两层的 < ... >（与旧 _RET 同形）。"""
+    if text[start] == "(":
+        close = text.find(")", start + 1)
+        return None if close < 0 or "(" in text[start + 1:close] else close + 1
+    depth, pos = 0, start
+    while pos < len(text):
+        ch = text[pos]
+        if ch == "<":
+            depth += 1
+            if depth > 2:
+                return None
+        elif ch == ">":
+            depth -= 1
+            if depth == 0:
+                return pos + 1
+        pos += 1
+    return None
+
+def _ret_ends(text: str, start: int) -> list[int]:
+    """返回类型在每个 token 边界上的候选终点（升序；空串不算）。"""
+    ends, pos = [], start
+    while pos < len(text) and not text[pos].isspace():
+        ch = text[pos]
+        if ch in _RET_PUNCT:
+            nxt: int | None = pos + 1
+        elif ch in "(<":
+            nxt = _group_end(text, pos)
+        else:
+            nxt = _ident_end(text, pos)
+        if nxt is None:
+            break
+        pos = nxt
+        ends.append(pos)
+    return ends
+
+class _Decl(NamedTuple):
+    """DECL.match 的返回值：mods/ret/name/rest，对应旧 match 的同名分组。"""
+
+    mods: str
+    ret: str
+    name: str
+    rest: str
+
+
+class _DeclPattern:
+    """R467：DECL 的确定性替身，.match(line) 与 re.Pattern 同名同用法。"""
+
+    def match(self, line: str) -> _Decl | None:
+        mods_start = len(line) - len(line.lstrip())
+        i = _MODS_RE.match(line, mods_start).end()
+        for end in reversed(_ret_ends(line, i)):
+            if not line[end:end + 1].isspace():
+                continue
+            k = end
+            while k < len(line) and line[k].isspace():
+                k += 1
+            name = _IDENT.match(line, k)
+            if name is not None:
+                return _Decl(line[mods_start:i], line[i:end], name.group(0),
+                             line[name.end():])
+        return None
+
+
+DECL = _DeclPattern()
 
 
 def row(name: str, kind: str, idx: int, ns: str | None, attrs: list[str],
@@ -94,9 +181,7 @@ def member(line: str, idx: int, ns: str | None, attrs: list[str],
     hit = DECL.match(line)
     if hit is None:
         return None
-    mods = hit.group("mods")
-    name = hit.group("name")
-    rest = hit.group("rest").lstrip()
+    mods, name, rest = hit.mods, hit.name, hit.rest.lstrip()
     if parent is not None and name == parent and (rest.startswith("(")
                                                   or _generic_call(rest)):
         return None                        # 构造器：不记符号（调用方记 degraded）
