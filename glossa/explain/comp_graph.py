@@ -10,6 +10,8 @@ R440：doc["entries"] 为空时只写「没有找到可解析的入口，可达�
 R447：hint 按 doc.graph.level 分派：project 级的边是 ProjectReference，不是 import。
 D11：cycles 只列前 3 个时补「等 N 个」。D13：SVG 节点优先 label，id 放 <title>。
 D14：layers 漏掉节点时补网格位置（与「无 layers」同一条回退），不许 KeyError。
+R479：混合仓的 level 仍是 file，但 graph.project_edges 非空时要补一句「另有 N 条项目引用…」；
+N 与项目名都从 doc 读（project_edges + projects 的 csproj→name），最多列 5 条，project 级整句不写。
 """
 from __future__ import annotations
 
@@ -131,6 +133,15 @@ def _manifests(doc, drawn, targets) -> int:
                if row.get("lang") not in SYMBOL_LANGS
                and row.get("path") not in drawn and row.get("path") not in targets)
 
+def _project_note(doc, rows) -> str:
+    """R479：文件级图只画 import，项目引用边的条数与去向必须说出来（数与名字都取自 doc）。"""
+    names = {str(row.get("csproj")): str(row.get("name")) for row in doc.get("projects") or []}
+    pairs = ["%s → %s" % (fmt(names.get(str(row["from"]), str(row["from"]))),
+                          fmt(names.get(str(row["to"]), str(row["to"])))) for row in rows[:5]]
+    tail = " 等 %d 条" % len(rows) if len(rows) > 5 else ""
+    return ("另有 %d 条项目引用（ProjectReference），本图只画文件级 import：%s%s"
+            % (len(rows), "、".join(pairs), tail))
+
 def import_graph(doc, params):
     """依赖图 SVG + 环 + 不可达清单 + R437 的孤立/截断两句披露。"""
     graph = doc.get("graph") or {}
@@ -144,6 +155,9 @@ def import_graph(doc, params):
            % (fmt(level), len(nodes), len(rows), arrow),
            _svg(nodes, edges, key="dep", title="依赖图",
                 layers=[[str(item) for item in row] for row in graph.get("layers") or []], labels=labels)]
+    hidden = graph.get("project_edges") or []
+    if level == "file" and hidden:      # R479：混合仓只画文件级图，项目引用边必须如实披露
+        out.append('<p class="note">%s。</p>' % _project_note(doc, hidden))
     rings = [" → ".join([str(item) for item in ring] + [str(ring[0])]) for ring in (graph.get("cycles") or [])[:3]]
     total = len(graph.get("cycles") or [])
     tail = " 等 %d 个" % total if total > 3 else ""

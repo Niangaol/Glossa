@@ -140,6 +140,10 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
     if cut:                                    # R477：截断缺口必须能在 numbers 里找到出处
         numbers.append(cut)
         text += f"其中 {cut} 个节点因截断未画（截断是计数，清单不在页面上）。"
+    project_edges = graph.get("project_edges") or []
+    if graph.get("level") == "file" and project_edges:   # R479：页面上的 N 必须能在这里溯源
+        numbers.append(len(project_edges))
+        text += f"另有 {len(project_edges)} 条项目引用（ProjectReference）没有画进图。"
     _put(facts, "fact:graph", numbers, text)
     excluded = doc.get("excluded") or {}
     _put(facts, "fact:excluded",

@@ -11,6 +11,8 @@ R393 项目级边：project:<name> 按 projects[i]['csproj'] 换成 id；>1 命�
 R406 file 级节点的 lang/package 由 doc.files 与 packages 的 path→name 映射填实（T9 按语言着色/按包分组）。
 R431 没有可解析的入口时 unreachable 不成立：置空并记 degraded（页面不显示不存在的「全部不可达」）。
 R432 omitted_isolated 的文案要说出其中有多少是清单、文档等不产生 import 的文件（口径不变，措辞不许错报）。
+R479 混合仓（有 csproj 又有文件级 import）：level 仍是二选一、两种边**不混画**，但项目引用边
+恒写入 graph.project_edges（空也写空数组），由 fact:graph 与讲解页如实披露，不许静默省略。
 """
 
 from __future__ import annotations
@@ -128,6 +130,7 @@ def build_graph(doc: dict) -> dict:
                              if e.get("target") and _strip(e["target"]) in known})
     graph = build_graph_from(node_ids, edges, entries=starts, level=level,
                              total_files=len(files), labels=labels)
+    graph["project_edges"] = project_edges        # R479：无论 level 都落盘，丢弃与混画都算谎报
     if level == "file":
         meta = facts_io.node_meta(files, doc.get("packages") or [])   # R406：lang/package 填实
         for row in graph["nodes"]:

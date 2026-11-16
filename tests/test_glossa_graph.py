@@ -150,3 +150,49 @@ def test_graph_fills_totals_and_still_passes_schema():
     schema_repo.validate_repo(doc)
     again = graph.build_graph(doc)
     assert again["layers"] == doc["graph"]["layers"]   # 可复现
+
+_MIXED = {
+    "src/App/App.csproj": '<Project><PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>'
+                          '<ItemGroup><ProjectReference Include="..\\Core\\Core.csproj" />'
+                          '<ProjectReference Include="..\\Tests\\Tests.csproj" />'
+                          "</ItemGroup></Project>",
+    "src/Tests/Tests.csproj": '<Project><ItemGroup>'
+                              '<ProjectReference Include="..\\Core\\Core.csproj" />'
+                              "</ItemGroup></Project>",
+    "src/Core/Core.csproj": "<Project />",
+    "web/a.ts": 'import { b } from "./b";\nexport const a = b;\n',
+    "web/b.ts": "export const b = 2;\n",
+}
+
+
+def _mixed():
+    """R479 夹具：PokemonData 式混合仓——csproj 有 ProjectReference，.ts 有文件级 import。"""
+    root = scratch_dir("glossa-r479-mixed")
+    for rel, body in _MIXED.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    return facts.build_repo_doc(root)
+
+
+def test_mixed_repo_keeps_project_edges_visible_while_drawing_files():
+    """R479：混合仓仍画文件级图，但 3 条项目引用边必须落进产物（静默省略就是谎报）。"""
+    doc = _mixed()
+    g = doc["graph"]
+    assert g["level"] == "file" and len(g["edges"]) == 1   # 决策不变，只画文件级 import
+    pairs = {(e["from"], e["to"]) for e in g["project_edges"]}
+    assert pairs == {("src/App/App.csproj", "src/Core/Core.csproj"),
+                     ("src/App/App.csproj", "src/Tests/Tests.csproj"),
+                     ("src/Tests/Tests.csproj", "src/Core/Core.csproj")}
+    assert {e["kind"] for e in g["project_edges"]} == {"internal_project"}
+    fact = doc["facts"]["fact:graph"]               # R479/R322：3 必须能在 fact 里溯源
+    assert 3 in fact["numbers"] and "另有 3 条项目引用（ProjectReference）没有画进图" in fact["text"]
+
+
+def test_project_edges_are_present_even_when_empty_or_project_level():
+    """R479：键恒在（空的也写空数组）；project 级时它就是 edges，Fact 里不再补那句。"""
+    assert _doc("ts-monorepo")["graph"]["project_edges"] == []
+    doc = _doc("cs-solution")
+    g = doc["graph"]
+    assert g["level"] == "project" and g["project_edges"] == g["edges"]
+    assert "项目引用（ProjectReference）没有画进图" not in doc["facts"]["fact:graph"]["text"]

@@ -95,9 +95,10 @@
       "namespace": {"$ref": "#/$defs/nullable_str"}, "line": {"type": ["integer", "null"]},
       "reason": {"$ref": "#/$defs/nullable_str"}, "type_only": {"type": "boolean"},
       "files": {"type": "array", "items": {"type": "string"}}}},
-    "graph": {"type": "object", "additionalProperties": false, "required": ["nodes", "edges", "cycles", "reachable_from_entries", "unreachable", "layers", "level", "truncated", "truncated_nodes", "omitted_isolated"], "properties": {
+    "graph": {"type": "object", "additionalProperties": false, "required": ["nodes", "edges", "project_edges", "cycles", "reachable_from_entries", "unreachable", "layers", "level", "truncated", "truncated_nodes", "omitted_isolated"], "properties": {
       "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
       "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
+      "project_edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
       "cycles": {"type": "array", "items": {"type": "array", "items": {"type": "string", "minLength": 1}}},
       "layers": {"type": "array", "items": {"type": "array", "items": {"type": "string", "minLength": 1}}},
       "reachable_from_entries": {"type": "array", "items": {"type": "string", "minLength": 1}},

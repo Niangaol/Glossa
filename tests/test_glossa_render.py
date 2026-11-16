@@ -151,3 +151,43 @@ def test_file_card_header_when_candidate_list_is_empty():
     assert "可讲解文件清单为空；本页只按你指定的路径讲了 1 个。" in html
     assert "共 0 个可讲解文件" not in html
 
+
+_TS = {"web/a.ts": 'import { b } from "./b";\n', "web/b.ts": "export const b = 2;\n"}
+
+
+def _mixed(name, csproj):
+    """R479 夹具：混合仓 = csproj 项目引用 + .ts 文件级 import（项目边条数随夹具变）。"""
+    root = scratch_dir("glossa-r479-" + name)
+    for rel, body in dict(_TS, **csproj).items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    return facts.build_repo_doc(root)
+
+
+def _import_graph(doc):
+    return render.render_explain(doc, [{"component": "import_graph", "params": {}}],
+                                 mode="program")
+
+
+def test_mixed_repo_page_discloses_the_project_edges_it_did_not_draw():
+    """R479：文件级图不许对「谁引用谁」一字不提；句子里的数与名字都来自 doc。"""
+    one = {"src/App/App.csproj": '<Project><ItemGroup>'
+                                 '<ProjectReference Include="..\\Core\\Core.csproj" />'
+                                 "</ItemGroup></Project>",
+           "src/Core/Core.csproj": "<Project />"}
+    html, report = _import_graph(_mixed("page-one", one))
+    assert "另有 1 条项目引用（ProjectReference），本图只画文件级 import：App → Core" in html
+    assert "没有项目引用" not in html
+    assert report["untraced"] == 0
+    # 句子里的数必须来自 doc：两条项目边的仓要写 2（写死 1 的话这里就红）
+    two = {"src/A/A.csproj": '<Project><ItemGroup>'
+                             '<ProjectReference Include="..\\B\\B.csproj" />'
+                             '<ProjectReference Include="..\\C\\C.csproj" />'
+                             "</ItemGroup></Project>",
+           "src/B/B.csproj": "<Project />", "src/C/C.csproj": "<Project />"}
+    html2, _ = _import_graph(_mixed("page-two", two))
+    assert "另有 2 条项目引用（ProjectReference）" in html2
+    assert "另有 1 条项目引用" not in html2
+    # project 级（cs-solution）：图本身就是项目图，这句整句不写
+    assert "另有" not in _import_graph(_doc("cs-solution"))[0]
