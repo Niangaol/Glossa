@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import pathlib
 
@@ -17,6 +18,22 @@ KINDS = ("file", "pkg", "project", "entry", "import", "symbol", "namespace",
          "graph", "excluded", "degraded", "source", "totals", "bonus")
 BUILD_FAIL = UNIMPLEMENTED          # 2：扫描或组装失败（BuildError）
 NO_REPO = UNTRACEABLE               # 5：--repo 不存在或不是目录
+
+
+def positive_int(text):
+    """--limit：正整数；非法值交给 argparse 以 2 退出（R460：不静默夹取）。"""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("--limit 必须是 ≥1 的整数，收到 %r" % text)
+    return value
+
+
+def non_negative_int(text):
+    """--offset：非负整数；同上（R460）。"""
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError("--offset 必须是 ≥0 的整数，收到 %r" % text)
+    return value
 
 
 def fail(code, message):
@@ -65,13 +82,17 @@ def run(args):
         return code
     rows = doc.get("facts") or {}
     picked = _pick(doc, args.kind)
-    total, offset = len(picked), max(0, args.offset or 0)
+    total, offset = len(picked), args.offset or 0
     stop = offset + (args.limit if args.limit is not None else total)
-    for fid in picked[offset:stop]:
+    shown = picked[offset:stop]
+    for fid in shown:
         row = rows[fid]
         numbers = ",".join(str(n) for n in row.get("numbers") or [])
         print("%s  [%s]  %s" % (fid, numbers, row.get("text") or ""))
-    shown = picked[offset:stop]
-    print("共 %d 条 fact 命中 kind=%s，本次显示第 %d–%d 条"
-          % (total, args.kind or "全部", offset + 1 if shown else 0, offset + len(shown)))
+    if not shown:                       # R460：offset 超出总数时不许写「第 0–999 条」
+        print("共 %d 条 fact 命中 kind=%s，本次显示 0 条（offset 超出共 %d 条）"
+              % (total, args.kind or "全部", total))
+    else:
+        print("共 %d 条 fact 命中 kind=%s，本次显示第 %d–%d 条"
+              % (total, args.kind or "全部", offset + 1, min(offset + len(shown), total)))
     return 0

@@ -1,4 +1,5 @@
 """T6：事实汇总与台账。数字全部来自真跑夹具。"""
+import datetime
 import json
 import shutil
 import subprocess
@@ -6,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from glossa import fact_ids, facts, repo_paths, scan, schema_repo
+from glossa import cli, fact_ids, facts, repo_paths, scan, schema_repo
 from papertrace.exceptions import BuildError, TraceSchemaError
 from tests._tmp import scratch_dir
 
@@ -175,3 +176,19 @@ def test_excluded_and_degraded_are_carried_into_doc():
     schema_repo.validate_repo(doc)
     assert "abc123" not in json.dumps(doc, ensure_ascii=False)   # GC30
     assert doc["totals"]["degraded"] == len(doc["degraded"])
+
+
+def test_meta_url_does_not_depend_on_cwd_and_bytes_are_stable(monkeypatch):
+    """R461：meta.repo.url 恒为仓库目录名；换 cwd 两次 analyze 产出逐字节相同（时钟冻结）。"""
+    root = _copy("ts-monorepo")
+    outs = [scratch_dir("glossa-t6-cwd-%d" % index) for index in (1, 2)]
+    frozen = datetime.datetime(2026, 11, 16, 8, 0, 0, tzinfo=datetime.timezone.utc)
+    monkeypatch.setattr(facts.datetime, "datetime", type(
+        "FrozenDatetime", (datetime.datetime,), {"now": classmethod(lambda cls, tz=None: frozen)}))
+    # 一个 cwd 是仓库目录的祖先（相对路径 "test-tmp/<name>"），一个是兄弟目录（留在 base 之外）。
+    for out, cwd in zip(outs, (root.parents[1], scratch_dir("glossa-t6-cwd-deep"))):
+        monkeypatch.chdir(cwd)
+        assert cli.main(["analyze", "--repo", str(root), "--out", str(out)]) == 0
+    first, second = [(out / "repo.json").read_bytes() for out in outs]
+    assert first == second, "换 cwd 后 repo.json 必须逐字节相同"
+    assert json.loads(first)["meta"]["repo"]["url"] == root.name

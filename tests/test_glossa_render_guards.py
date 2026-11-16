@@ -154,10 +154,13 @@ def test_isolated_and_truncated_counts_are_two_sentences():
     graph = doc["graph"]
     assert (len(doc["files"]), graph["omitted_isolated"], graph["truncated_nodes"]) == (136, 6, 10)
     html = components.render_block(doc, {"component": "import_graph", "params": {}})
-    assert "6 个文件没有进入关系图，其中 1 个是清单、文档等不产生 import 的文件" in html
+    assert ("6 个文件没有进入关系图，其中 1 个是清单、文档等不产生 import 的文件"
+            "（未画进图是计数，不是丢了）。") in html
+    # R458：断言绑完整句 + 反例数字。裸子串 "6 个…" 会被 "16 个…" 包含，M11 抓不住
+    assert "16 个文件没有进入关系图" not in html, "孤立数 + 截断数的合并句不许出现"
     assert "图已截断，只画了前 120 个节点；另有 10 个节点没有画" in html
     assert html.count("没有进入关系图") == 1 and html.count("图已截断") == 1
-    assert "126" not in html, "6 个孤立 + 120 个画出的合并数不许出现"
+    assert "126 个文件" not in html, "6 个孤立 + 120 个画出的合并数不许出现"
     assert "没有找到可解析的入口，可达性未计算" in html
 
 

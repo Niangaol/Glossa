@@ -1,10 +1,9 @@
 """程序版讲解（T10）：七块骨架，每个数字都有出处，没有 key 也能读懂。
 
-R322：每块都过注册表校验，cites 非空且全在 doc["facts"]；文字里每个数字都要落在 cites 的
-numbers 并集内（渲染后 untraced==0），取不到出处的句子整句不写。R324：build_prompt 是纯函数，
-七块 outline、真 fact id 与组件契约全从 outline / components 生成。R338：第⑤块逐个讲
-keyfiles.key_files(doc, 12)，「共 N 个、讲了 M 个」两个数字不在 numbers 里就改成无数字措辞并留
-notes。R323 的三态在 cli 落地；这里只问一次后端并解析，失败抛 LLMUnavailable / BuildError。
+R322：每块过注册表校验，cites 非空且全在 doc["facts"]，文字里每个数字都要落在 cites 的 numbers 并集内
+（渲染后 untraced==0），取不到出处的句子整句不写。R324：build_prompt 是纯函数，七块 outline、真 fact id
+与组件契约全从 outline / components 生成。R338：第⑤块逐个讲 keyfiles，两个数字不在 numbers 里就改成
+无数字措辞并留 notes。R323 的三态在 cli 落地，这里只问一次后端并解析，失败抛 LLMUnavailable / BuildError。
 """
 from __future__ import annotations
 
@@ -67,11 +66,13 @@ def program(doc):
     # ② 从哪进来
     entries = doc.get("entries") or []
     cites, numbers = _nums(doc, ["fact:totals"] + ["fact:entry:%s" % r.get("name") for r in entries])
-    composite = sum(1 for row in entries if not row.get("target"))
+    composite = sum(1 for row in entries if row.get("note") == "复合命令未指向单文件")   # R454：只认它
+    other = sum(1 for row in entries if not row.get("target")) - composite
     text = _join([
         _sentence(numbers, "共 {entries} 个入口。", entries=len(entries)),
         _sentence(numbers, "其中 {composite} 个是复合命令，没指向单个文件，所以不作为可达性起点。",
-                  composite=composite),
+                  composite=composite) if composite else None,
+        _sentence(numbers, "其中 {other} 个没解析到单文件目标，原因见入口表。", other=other) if other else None,
         "入口的名字、目标与可复制的命令逐条列在下面。"])
     blocks += [_block("text", {"text": text}, cites, 2), _block("entry_list", {}, cites, 2)]
     # ③ 分几块
@@ -84,25 +85,25 @@ def program(doc):
                   packages=len(packages), projects=len(projects)),
         "包依赖图与项目引用图只画仓内互相引用的边；目录树按文件路径造出来，都折叠在下面。"])
     blocks.append(_block("text", {"text": text}, cites, 3))
-    if packages:
-        blocks.append(_block("package_map", {},
-                             _nums(doc, ["fact:totals"] + ["fact:pkg:%s" % row.get("name")
-                                                           for row in packages])[0], 3))
-    if projects:
-        blocks.append(_block("project_map", {},
-                             _nums(doc, ["fact:totals"] + ["fact:project:%s" % row.get("name")
-                                                           for row in projects])[0], 3))
+    for kind, rows in (("package", packages), ("project", projects)):
+        if rows:
+            blocks.append(_block(kind + "_map", {}, _nums(doc, ["fact:totals"] + [
+                "fact:%s:%s" % (kind, row.get("name")) for row in rows])[0], 3))
     blocks.append(_block("dir_tree", {"max_depth": 3}, _nums(doc, ["fact:files"])[0], 3))
-    # ④ 谁依赖谁
+    # ④ 谁依赖谁（R459：unreachable 为空不许写 0；R456：页面不列折叠清单，截断只给计数口径）
     graph = doc.get("graph") or {}
     cites, numbers = _nums(doc, ["fact:graph", "fact:totals"])
+    unreachable, cut = len(graph.get("unreachable") or []), int(graph.get("truncated_nodes") or 0)
     text = _join([
         _sentence(numbers, "依赖图有 {nodes} 个节点、{edges} 条边、{cycles} 个环，分 {layers} 层。",
                   nodes=len(graph.get("nodes") or []), edges=len(graph.get("edges") or []),
                   cycles=len(graph.get("cycles") or []), layers=len(graph.get("layers") or [])),
-        _sentence(numbers, "从入口到不了 {unreachable} 个文件。", unreachable=len(graph.get("unreachable") or []))
-        if entries else "没有找到可解析的入口，可达性未计算。",   # R440：没入口就不许提可达性
-        "箭头的方向是「谁 import 谁」；一张图装不下的节点在折叠清单里。"])
+        "没有找到可解析的入口，可达性未计算。" if not entries else
+        _sentence(numbers, "从入口到不了 {unreachable} 个文件。", unreachable=unreachable)
+        if unreachable else None,
+        _sentence(numbers, "另有 {cut} 个节点没有画（截断是计数，本页不列这份清单）。", cut=cut)
+        or "图装不下的节点没画进这张图（截断是计数，本页不列这份清单）。" if cut else None,
+        "箭头的方向是「谁 import 谁」。"])
     blocks += [_block("text", {"text": text}, cites, 4),
                _block("import_graph", {}, _nums(doc, ["fact:graph"])[0], 4)]
     # ⑤ 关键文件逐个讲（R338）
@@ -148,8 +149,7 @@ def program(doc):
 
 def build_prompt(doc):
     """给模型的唯一约束（R324）：七块骨架 + 真 fact id + 组件契约 + 输出格式 + 三条禁令。"""
-    lines = ["你在给一台机器扫出来的代码仓库写中文讲解。事实只有下面这份台账，台账里没有的，你不知道。",
-             "", "## 七块骨架（顺序不许改）"]
+    lines = ["你在给一台机器扫出来的代码仓库写中文讲解。事实只有下面这份台账，台账里没有的，你不知道。", "", "## 七块骨架（顺序不许改）"]
     for row in outline.build_outline(doc):
         shown, rest = row["facts"], max(0, len(row["facts"]) - _FACT_LIMIT)
         lines.append("%d. %s · 可用组件：%s" % (row["index"], row["title"], "、".join(row["components"])))

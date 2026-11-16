@@ -156,10 +156,11 @@ def import_graph(doc, params):
             out.append('<p class="note">从入口到不了 %d 个文件：%s%s。</p>'
                        % (len(unreachable), "、".join(fmt(item) for item in unreachable[:12]),
                           " 等 %d 个" % len(unreachable) if len(unreachable) > 12 else ""))
-    isolated = int(graph.get("omitted_isolated") or 0)
-    targets = {_strip(str(row["target"])) for row in entries if row.get("target")}
-    out.append('<p class="note">%d 个文件没有进入关系图，其中 %d 个是清单、文档等不产生 import 的文件'
-               '（未画进图是计数，不是丢了）。</p>' % (isolated, _manifests(doc, set(nodes), targets)))
+    if level != "project":             # R455：project 级的 N 与 M 口径不同，整句省略，不许混写
+        isolated = int(graph.get("omitted_isolated") or 0)
+        targets = {_strip(str(row["target"])) for row in entries if row.get("target")}
+        out.append('<p class="note">%d 个文件没有进入关系图，其中 %d 个是清单、文档等不产生 import 的文件'
+                   '（未画进图是计数，不是丢了）。</p>' % (isolated, _manifests(doc, set(nodes), targets)))
     if graph.get("truncated"):
         out.append('<p class="note">图已截断，只画了前 %d 个节点；另有 %d 个节点没有画'
                    '（截断是计数，不是丢了）。</p>'

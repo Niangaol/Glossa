@@ -99,3 +99,22 @@ def test_llm_flag_three_states_are_honest(capsys, monkeypatch):
                      "--llm", "--force"])
     assert code == 4
     assert "后端不可用" in capsys.readouterr().out
+
+
+def test_llm_success_state_is_end_to_end(capsys, monkeypatch):
+    """R463：第③态（模型成功）——exit 0、徽章 model、模型名与「未溯源 0 处」都出自真接线。"""
+    from glossa.explain import narrate
+    root = _repo()
+    out = scratch_dir("glossa-t10c-out6")
+    monkeypatch.setenv("GLOSSA_LLM_BACKEND", "openai")
+    import glossa.explain.narrate as nmod
+    monkeypatch.setattr(nmod, "get_llm", lambda *a, **k: object())
+    monkeypatch.setattr(nmod, "ask",
+                        lambda doc, **kw: (narrate.program(doc), "stub-model-1"))
+    assert cli.main(["explain", "--repo", str(root), "--out", str(out), "--llm"]) == 0
+    printed = capsys.readouterr().out
+    assert "stub-model-1" in printed and "未溯源 0 处" in printed
+    page = (out / "explain.html").read_bytes().decode("utf-8")
+    assert 'class="badge model"' in page
+    assert "本页有 0 处数字未溯源" in page
+    assert "笺疏 · " + facts.build_repo_doc(root)["meta"]["repo"]["root_name"] in page

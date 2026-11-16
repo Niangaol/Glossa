@@ -12,13 +12,16 @@ $env:PYTHONPATH='D:\AgentPrograms\PaperTrace;D:\AgentPrograms\PaperTrace\pydeps'
 python -m glossa analyze --repo D:\path\to\repo --out output\glossa
 
 # 2) 写讲解页：<out>/explain.html（默认程序版；加 --llm 才是模型版）
-python -m glossa explain --repo D:\path\to\repo --out output\glossa --force
+python -m glossa explain --repo D:\path\to\repo --out output\glossa
 
 # 3) 按 kind 翻台账（可分页），13 类 kind 见 --help
 python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 ```
 
-常用开关：`--force` 覆盖已有输出（不带则 exit 3）、`--max-files N` 限制扫描文件数、`--no-default-excludes` 关掉默认排除、`--bonus-trace <旧 trace.json>` 与旧产物对账。
+常用开关：`--force` 只对 analyze 的 repo.json 生效、`--max-files N` 限制扫描文件数、`--no-default-excludes` 关掉默认排除、`--bonus-trace <旧 trace.json>` 与旧产物对账。
+
+退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74；--force 对 explain 无效）。
+参数错误由 argparse 以 2 退出，与构建失败同码、靠 stderr 区分。
 
 ## 两样产物
 
@@ -32,7 +35,7 @@ python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 | 0 | 成功 |
 | 1 | 生成或读到的 repo.json 过不了 schema |
 | 2 | 构建或渲染失败（BuildError；含解释页超过 HTML_MAX_BYTES） |
-| 3 | 输出已存在且没给 --force |
+| 3 | analyze 的 repo.json 已存在且没给 --force（explain 不受此码约束） |
 | 4 | 缺运行时，或 --llm 指定的模型后端不可用（**绝不静默降级**） |
 | 5 | --repo 不存在或不是目录 |
 
@@ -92,6 +95,7 @@ python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 9. **清单/文档文件不进关系图**：`package.json`、`.md`、`.toml` 等 `file_only` 文件没有 import 边，所以「N 个文件没有进入关系图（其中 M 个是清单、文档等不产生 import 的文件）」里的 M 不是 bug。
 10. **只认仓库根一份 `.glossaignore`**：不支持子目录各自的忽略文件，也不支持 gitignore 语法。
 11. **讲解页不带 JS**：折叠靠 `<details>`；整页超过 `HTML_MAX_BYTES` 时直接失败（exit 2）而不是截断——宁可不出页，也不出半张页。
+12. **`meta.repo.url` 只记仓库目录名**：不带父目录路径，换机器、换工作目录都一样；别指望用它定位仓库。
 
 ## 实测（2026-11-16，三个真实仓库）
 

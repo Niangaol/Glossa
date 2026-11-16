@@ -1,7 +1,9 @@
 """glossa 命令行（T10/T11）：analyze / explain / facts / serve。退出码 0–5 见 docs/glossa.md。
 
-analyze 写 repo.json（过 schema，1 失败 0 成功）；explain 写 explain.html（渲染失败 2）；输出
-已存在且没 --force 是 3；缺运行时或 --llm 后端不可用是 4（绝不降级）；--repo 不是目录是 5。
+analyze 写 repo.json（过 schema，1 失败 0 成功）；explain 写 explain.html（渲染失败 2）；缺运行时或
+--llm 后端不可用是 4（绝不降级）；--repo 不是目录是 5。
+退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74；--force 对 explain 无效）。
+参数错误由 argparse 以 2 退出，与构建失败同码、靠 stderr 区分。
 serve 是 T11 的 MCP 入口（R327：换行分隔 JSON-RPC 2.0 over stdio，stdout 只写协议流）。
 facts 子命令与「--repo → doc」闸门在 glossa/cli_facts.py（R452：本文件守住 200 行上限）。
 """
@@ -103,7 +105,8 @@ def _cmd_explain(args):
     except BuildError as exc:
         return fail(BUILD_FAIL, "glossa explain：解释页渲染失败：%s" % exc)
     report = render.render_explain(doc, blocks, mode=mode, model_name=name)[1]
-    print("讲解页：%s · %d 块 · 未溯源 %d 处" % (path, report["blocks"], report["untraced"]))
+    print("讲解页：%s · %d 块 · 未溯源 %d 处%s" % (path, report["blocks"], report["untraced"],
+                                            " · 模型 %s" % name if name else ""))
     return OK
 
 
@@ -127,8 +130,9 @@ def build_parser():
     facts_cmd = sub.add_parser("facts", help="按 kind 打印事实台账（可分页）")
     facts_cmd.add_argument("--repo", required=True, help="仓库根目录")
     facts_cmd.add_argument("--kind", choices=KINDS, help="只显示这一类 fact")
-    facts_cmd.add_argument("--offset", type=int, default=0, help="跳过前 N 条")
-    facts_cmd.add_argument("--limit", type=int, help="最多显示 N 条")
+    facts_cmd.add_argument("--offset", type=cli_facts.non_negative_int, default=0,
+                           help="跳过前 N 条（<0 由 argparse 以 2 退出）")
+    facts_cmd.add_argument("--limit", type=cli_facts.positive_int, help="最多显示 N 条（<1 同上）")
     sub.add_parser("serve", help="在 stdio 上起 MCP server（换行分隔 JSON-RPC 2.0）")
     return parser
 
@@ -136,7 +140,8 @@ def build_parser():
 def _common(parser):
     parser.add_argument("--repo", required=True, help="仓库根目录")
     parser.add_argument("--out", required=True, help="输出目录")
-    parser.add_argument("--force", action="store_true", help="允许覆盖已存在的 repo.json / explain.html")
+    parser.add_argument("--force", action="store_true",
+                        help="只对 analyze 生效：允许覆盖已存在的 repo.json（explain 每次覆盖，不看它）")
     parser.add_argument("--max-files", type=int, default=20_000, dest="max_files",
                         help="最多扫多少个文件（超出按连接数选点并记降级说明）")
     parser.add_argument("--no-default-excludes", action="store_true",

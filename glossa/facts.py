@@ -146,10 +146,10 @@ def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20
     for row in list(man.get("degraded") or []) + list(cs.get("degraded") or []):
         facts_io.degrade(degraded, str(row.get("scope") or "manifest"), str(row.get("reason") or "未给出原因"))
     commit, reason = repo_commit(root)
-    url = portable_path(str(root), base=pathlib.Path.cwd())
+    url = portable_path(str(root), base=pathlib.Path(root).parent)   # R461：恒为根目录名，不读 cwd
     if reason:
         facts_io.degrade(degraded, "meta.repo.commit", reason)
-    if pathlib.PurePath(url).is_absolute():                   # R296：base 之外原样返回
+    if pathlib.PurePath(url).is_absolute():                   # R296 兜底：base 之外原样返回
         facts_io.degrade(degraded, "meta.repo.url", "仓库在当前工作目录之外，只登记目录名")
         url = root.name
     langs = collections.Counter(row["lang"] for row in files)
