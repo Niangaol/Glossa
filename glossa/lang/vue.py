@@ -1,9 +1,9 @@
 """Vue 单文件组件：只切第一个 <script> 块交给 tsjs（T4，parse='approx'）。
 
 R282：只取**第一个** <script…> 块；出现第二个时 degraded 明说「只解析了第一个」。
-template/style 一律不解析。行号偏移 = 开标签之前那一行：切出的内容从开标签行的
-换行之后开始，所以内层第 N 行 = 绝对第 N + 开标签行 - 1（App.vue 开标签在第 4 行、
-内层 import 在第 2 行 → 第 5 行）。
+template/style 一律不解析。行号偏移取**开标签结束位置**之前的换行数（R378）：正文从
+`>` 之后开始，内层第 N 行 = 绝对第 N + 偏移；单行、跨行、正文与开标签同行三形态都对
+（App.vue 开标签在第 4 行结束、内层 import 在第 2 行 → 第 5 行）。
 R298：Vue 与 TS 同口径，只抓带 export 的符号；<script setup> 的顶层绑定没有 export
 关键字，所以不抓，并记 degraded 说清楚（只抓 import）——页面说某 Vue 文件有 N 个
 符号时，用户必须能在源码里找到那 N 个 export。
@@ -31,7 +31,7 @@ def parse_source(text: str, relpath: str) -> dict:
                 "degraded": ["没有 <script> 块：只登记文件，未解析符号与 import"]}
     close_tag = _CLOSE.search(text, open_tag.end())
     body = text[open_tag.end():close_tag.start() if close_tag else len(text)]
-    offset = text.count("\n", 0, open_tag.start())     # 开标签之前有几行
+    offset = text.count("\n", 0, open_tag.end())       # R378：开标签结束前有几行
     inner = tsjs.parse_source(body, relpath)
     degraded = list(inner["degraded"])
     if close_tag is None:

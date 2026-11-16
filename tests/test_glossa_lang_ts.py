@@ -83,3 +83,59 @@ def test_mask_keeps_length_and_newlines():
     q = masked.index(chr(34))                 # 第一个双引号
     got = masks.string_at(text, spans, q)
     assert got == "import { alsoFake } from './nope2.js'"
+
+def test_regex_literal_with_quotes_does_not_desync_masks():
+    """R375：正则字面量里的引号不许把掩码带跑偏（否则字符串里的假 import 会复活）。"""
+    src = '''const re = /['"]/;
+import { a } from "./real.js";
+const s = 'import { fake } from "./fake.js"';
+'''
+    r = tsjs.parse_source(src, "regex.ts")
+    assert [(i["specifier"], i["dynamic"]) for i in r["imports"]] == [("./real.js", False)]
+    assert r["degraded"] == []
+
+
+def test_unterminated_string_is_reported_not_silently_swallowed():
+    """R375：字符串未闭合到 EOF 必须记 degraded，不许静默把后半段掩成空格。"""
+    r = tsjs.parse_source("export const a = 1;\nconst s = 'abc", "broken.ts")
+    assert [s["name"] for s in r["symbols"]] == ["a"]
+    assert any("未闭合" in note for note in r["degraded"]), r["degraded"]
+    assert r["parse"] == "approx"
+
+
+def test_export_list_and_multi_declarator_are_both_captured():
+    """R376：列表式导出与多声明符都要抓全；名字取原名，列表式 kind='export_list'。"""
+    listed = tsjs.parse_source("function f1() {}\nfunction f2() {}\nexport { f1, f2 as g };\n",
+                               "list.ts")
+    assert [(s["name"], s["kind"]) for s in listed["symbols"]] == [
+        ("f1", "export_list"), ("f2", "export_list")]
+    multi = tsjs.parse_source("export const x = 1, y = new Map([['k', 1]]), z = 3;\n",
+                              "multi.ts")
+    assert [(s["name"], s["kind"]) for s in multi["symbols"]] == [
+        ("x", "const"), ("y", "const"), ("z", "const")]
+
+
+def test_unhandled_export_forms_are_recorded():
+    """R376：没被解析的 export 形态必须记 degraded（GC31），不许静默零产出。"""
+    r = tsjs.parse_source('export default 42;\nexport * from "./other";\n', "odd.ts")
+    assert r["symbols"] == []
+    hits = [d for d in r["degraded"] if "export 形态第一版未解析" in d]
+    assert len(hits) == 2, r["degraded"]
+    assert all("行号" in d for d in hits)
+
+
+def test_crossline_script_tag_offset_and_dotted_import_call():
+    """R378/R379：跨行开标签按结束位置算偏移；foo.import() 不是动态 import。"""
+    text = ('<template><div /></template>\n'
+            '\n'
+            '<script\n'
+            '  lang="ts"\n'
+            '  setup\n'
+            '>\n'
+            'import { a } from "./a.js";\n'
+            'const b = 1;\n'
+            'foo.import("./ghost.js");\n'
+            '</script>\n')
+    r = vue.parse_source(text, "Cross.vue")
+    assert [(i["line"], i["specifier"]) for i in r["imports"]] == [(7, "./a.js")]
+    assert [i for i in r["imports"] if i["dynamic"]] == []
