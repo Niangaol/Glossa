@@ -12,7 +12,7 @@ R412：块可选键 section(1–7) 只决定标题取七块骨架的哪一条，
 from __future__ import annotations
 
 from glossa import fact_ids
-from glossa.explain import comp_file, comp_repo, comp_text, guard, outline
+from glossa.explain import comp_file, comp_graph, comp_repo, comp_text, guard, outline
 from papertrace.exceptions import BuildError
 
 UNTRACED_MARK = '<mark class="untraced">'
@@ -28,10 +28,10 @@ COMPONENTS = {spec["name"]: spec for spec in (
     _spec("overview", comp_repo.overview, facts=("fact:totals", "fact:files"), section=1),
     _spec("metrics", comp_repo.metrics, ("keys",), facts=("fact:totals",), section=1),
     _spec("dir_tree", comp_repo.dir_tree, optional=("max_depth",), facts=("fact:files",), section=3),
-    _spec("package_map", comp_repo.package_map, facts=("fact:pkg:*",), section=3),
-    _spec("project_map", comp_repo.project_map, facts=("fact:project:*",), section=3),
-    _spec("entry_list", comp_repo.entry_list, optional=("limit",), facts=("fact:entry:*",), section=2),
-    _spec("import_graph", comp_repo.import_graph, facts=("fact:graph",), section=4),
+    _spec("package_map", comp_graph.package_map, facts=("fact:pkg:*",), section=3),
+    _spec("project_map", comp_graph.project_map, facts=("fact:project:*",), section=3),
+    _spec("entry_list", comp_graph.entry_list, optional=("limit",), facts=("fact:entry:*",), section=2),
+    _spec("import_graph", comp_graph.import_graph, facts=("fact:graph",), section=4),
     _spec("file_card", comp_file.file_card, ("path",), facts=("fact:file:<path>",), section=5),
     _spec("symbol_table", comp_file.symbol_table, ("path",), ("kind",), ("fact:symbol:<path>#*",), section=5),
     _spec("code", comp_file.code, ("path", "start", "end"), facts=("fact:source:<path>:*",), section=5),
@@ -71,9 +71,19 @@ def _check_params(doc, name, params):
         if unknown:
             raise BuildError("组件 metrics 不认识这些 totals 键：%s" % "、".join(map(str, unknown)))
 
+_BLOCK_KEYS = frozenset({"component", "params", "cites", "section", "title", "notes"})
+
 def validate_blocks(doc, blocks):
-    """逐块校验；任何一条不合契约都抛 BuildError（R313/R316），绝不静默跳过。"""
+    """逐块校验；任何一条不合契约都抛 BuildError（R313/R316），绝不静默跳过。
+
+    合法顶层键只有 component / params / cites / section / title / notes（R448-D16）：
+    多一个键就抛 BuildError，与「未知组件响亮报错」同口径（notes 是 narrate 的披露通道）。
+    """
     for index, block in enumerate(blocks or [], 1):
+        extra = [str(key) for key in block if key not in _BLOCK_KEYS] if isinstance(block, dict) else []
+        if extra:
+            raise BuildError("第 %d 块有不认识的顶层键：%s（合法键：%s）"
+                             % (index, "、".join(sorted(extra)), "、".join(sorted(_BLOCK_KEYS))))
         name = block.get("component") if isinstance(block, dict) else None
         spec = COMPONENTS.get(name)
         if spec is None:

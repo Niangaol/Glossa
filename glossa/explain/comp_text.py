@@ -4,6 +4,7 @@ R314：text 与 custom 的未溯源标记由 components.render_block 统一施�
 R307：custom 走 guard.sanitize_html；removed>0 时块顶插「本块已移除 N 处不允许的构造」，
 并把 N 同时写进 data-removed——页面写多少、render 的报告就是多少（同一份事实，不另算一遍）。
 R412：table 的列名按事实家族挑；列名不存在抛 BuildError 并列出可用列，绝不静默空列。
+D10：字典一律 sorted(items()) 再拼。D15：全仓只有这一份单元格格式化 cell()，comp_file 引用它。
 """
 from __future__ import annotations
 
@@ -36,13 +37,14 @@ def _plain(value) -> str:
         if value.get("name"):
             version = value.get("version")
             return str(value["name"]) + (" " + str(version) if version else "")
-        return "、".join("%s=%s" % (key, val) for key, val in value.items())
+        return "、".join("%s=%s" % (key, val) for key, val in sorted(value.items()))
     if isinstance(value, (list, tuple)):
         return "、".join(_plain(item) for item in value)
     return str(value)
 
 
-def _cell(value) -> str:
+def cell(value) -> str:
+    """唯一一份单元格格式化（D15）：空值给破折号、bool 给是否、int 千分位、其余转义。"""
     if value is None or value == "":
         return "—"
     if isinstance(value, bool):
@@ -140,7 +142,7 @@ def render_table(doc, params):
     if not rows:
         return '<p class="muted">%s 目前没有可列的行。</p>' % _esc(params.get("fact"))
     head = "".join("<th>%s</th>" % _esc(name) for name in picked)
-    body = "".join("<tr>%s</tr>" % "".join("<td>%s</td>" % _cell(row.get(name))
+    body = "".join("<tr>%s</tr>" % "".join("<td>%s</td>" % cell(row.get(name))
                                           for name in picked) for row in rows)
     more = "，只列前 %d 行" % len(rows) if len(rows) < total else ""
     return ('<details class="facts"><summary>%s（共 %d 行%s）</summary>'

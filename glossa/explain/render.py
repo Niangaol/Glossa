@@ -46,13 +46,21 @@ def _sections(doc, blocks):
     return out
 
 def _file_card_header(doc, sections):
-    """R412-3：第一个 file_card 的 section 顶部写清「共 N 个，讲了 M 个」+ 挑选规则。"""
+    """R412-3/R442：第一个 file_card 的 section 顶部写清「共 N 个，讲了 M 个」+ 挑选规则。
+
+    N 恒等于 len(keyfiles.candidate_files(doc))（不是 len(doc["files"])）；候选为 0 而调用方
+    显式指定了 file_card 时改写成「清单为空；只按你指定的路径讲了 M 个」，不写 0 讲了 1 的矛盾。
+    """
     cards = [item for item in sections if item["component"] == "file_card"]
     if not cards:
         return
-    cards[0]["html"] = ('<p class="scope">共 %d 个可讲解文件，本页逐个讲了 %d 个。'
-                        '挑选规则：入口目标优先 → 被依赖边数 → 符号数 → path 升序。</p>'
-                        % (len(keyfiles.candidate_files(doc)), len(cards))) + cards[0]["html"]
+    candidates = len(keyfiles.candidate_files(doc))
+    if candidates:
+        scope = ('<p class="scope">共 %d 个可讲解文件，本页逐个讲了 %d 个。'
+                 '挑选规则：入口目标优先 → 被依赖边数 → 符号数 → path 升序。</p>' % (candidates, len(cards)))
+    else:
+        scope = ('<p class="scope">可讲解文件清单为空；本页只按你指定的路径讲了 %d 个。</p>' % len(cards))
+    cards[0]["html"] = scope + cards[0]["html"]
 
 def _badge(mode, model_name):
     if mode == "model":

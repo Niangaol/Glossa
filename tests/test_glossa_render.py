@@ -113,3 +113,41 @@ def test_render_is_deterministic_and_size_guard_raises():
             render.render_explain(doc, _blocks())
     finally:
         rmod.HTML_MAX_BYTES = real
+
+
+# ---- R449-T1：Jinja autoescape 不能关 ----
+
+def test_autoescape_escapes_injected_markup_from_meta():
+    doc = _doc()
+    doc["meta"]["repo"]["root_name"] = '<script>alert("root")</script>'
+    html, report = render.render_explain(doc, _blocks())
+    assert "<script" not in html.lower()
+    assert "&lt;script&gt;alert" in html
+    assert report["blocks"] == 6
+
+
+# ---- R449-T5 / R442：头行 N = keyfiles.candidate_files(doc) ----
+
+def test_file_card_header_counts_candidates_not_all_files():
+    from glossa import keyfiles
+    doc = _doc()
+    html, _ = render.render_explain(doc, _blocks())
+    match = re.search(r"共 (\d+) 个可讲解文件，本页逐个讲了 (\d+) 个", html)
+    assert match, html[:200]
+    assert int(match.group(1)) == len(keyfiles.candidate_files(doc)) == 10
+    assert int(match.group(2)) == 1
+    assert "共 13 个可讲解文件" not in html          # 13 是 len(doc.files)，不许冒充候选数
+
+
+def test_file_card_header_when_candidate_list_is_empty():
+    from glossa import keyfiles
+    root = scratch_dir("glossa-t9r-none")
+    (root / "package.json").write_text('{"name": "n", "version": "1.0.0"}\n', encoding="utf-8")
+    (root / "README.md").write_text("# n\n\n说明。\n", encoding="utf-8")
+    doc = facts.build_repo_doc(root)
+    assert keyfiles.candidate_files(doc) == []
+    html, _ = render.render_explain(doc, [{"component": "file_card",
+                                           "params": {"path": "package.json"}}])
+    assert "可讲解文件清单为空；本页只按你指定的路径讲了 1 个。" in html
+    assert "共 0 个可讲解文件" not in html
+
