@@ -94,6 +94,8 @@ def read_source(args, state):
     start = int_arg(args.get("start"), "start", default=1, minimum=1)
     text = target.read_text(encoding="utf-8")        # 非 UTF-8 由 call_tool 如实报
     lines = text.splitlines()
+    if start > len(lines):              # R490：越界的是 start 就先报 start（别拿 end 背锅）
+        raise BuildError("start 超出文件共 %d 行（start=%d）：%s" % (len(lines), start, inside))
     end = args.get("end")
     if end is None:
         end = min(len(lines), start + MAX_SOURCE_LINES - 1) if lines else start
@@ -103,8 +105,6 @@ def read_source(args, state):
     if end - start + 1 > MAX_SOURCE_LINES:
         raise BuildError("单次最多读 %d 行，本次请求 %d–%d 共 %d 行；请分页（end <= start+%d）"
                          % (MAX_SOURCE_LINES, start, end, end - start + 1, MAX_SOURCE_LINES - 1))
-    if start > len(lines):
-        raise BuildError("start=%d 超出文件行数 %d：%s" % (start, len(lines), inside))
     if end > len(lines):
         raise BuildError("end=%d 超出文件行数 %d（R316：不静默截断）：%s" % (end, len(lines), inside))
     body = "\n".join("%d\t%s" % (n, lines[n - 1]) for n in range(start, end + 1))

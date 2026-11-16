@@ -17,6 +17,7 @@ include = ["papertrace*", "glossa*", "glossa.*"]
 
 [tool.setuptools.package-data]
 "glossa" = ["templates/*.j2", "schema/*.json"]
+"papertrace" = ["templates/*.j2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

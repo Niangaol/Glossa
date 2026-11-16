@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 from glossa import facts
-from glossa.explain import components, narrate, render
+from glossa.explain import components, narrate, narrate_graph, render
 from tests._tmp import scratch_dir
 
 FIX = Path(__file__).parent / "fixtures" / "repos"
@@ -127,6 +127,19 @@ def test_truncated_nodes_lives_in_fact_graph_and_page_keeps_one_form():
     assert "另有 %d 个节点没有画" % cut in text
     assert "图装不下的节点没画进这张图" not in text, "无数字的第二种形态必须删掉"
     assert _page(doc)[1]["untraced"] == 0
+
+
+def test_pruned_files_partial_is_reported_as_a_lower_bound():
+    """R494：listing 自己都不完整时只能说「至少 N 个」，完整时才报确数。"""
+    base = {"excluded": {"files": 0, "bytes": 0, "oversize": [], "rules": [], "pruned_files": 123},
+            "totals": {"unresolved": 0}, "degraded": []}
+    whole = narrate_graph.gaps_text(base, {0, 123})
+    assert "另有 123 个文件没进 files 列表" in whole, whole
+    assert "至少" not in whole, whole
+    part = dict(base, excluded=dict(base["excluded"], pruned_files_partial=True))
+    text = narrate_graph.gaps_text(part, {0, 123})
+    assert "至少 123 个文件没进 files 列表" in text, text
+    assert "listing 本身不完整" in text, text
 
 
 def test_empty_unreachable_is_not_written_as_zero():

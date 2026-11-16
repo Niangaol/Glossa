@@ -6,6 +6,7 @@ import fnmatch
 import pathlib
 import tomllib
 
+import pytest
 from setuptools import find_packages
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -68,9 +69,18 @@ def test_package_data_covers_template_and_schema():
         assert any(fnmatch.fnmatch(asset, pat) for pat in patterns), (asset, patterns)
 
 
-def test_every_glossa_runtime_asset_is_shipped():
-    patterns = _patterns("glossa")
-    assets = _assets("glossa")
+@pytest.mark.parametrize("package", ["glossa", "papertrace"])
+def test_every_runtime_asset_is_shipped(package):
+    """R495：rglob 覆盖检查扩到 papertrace/templates（spine.html.j2 之前不在 package-data 里）。"""
+    patterns = _patterns(package)
+    assets = _assets(package)
     uncovered = [a for a in assets if not any(fnmatch.fnmatch(a, pat) for pat in patterns)]
-    assert not uncovered, "这些资源不会进 wheel：%s（patterns=%s）" % (uncovered, patterns)
-    assert "templates/glossa.html.j2" in assets
+    assert not uncovered, "%s 的资源不会进 wheel：%s（patterns=%s）" % (package, uncovered, patterns)
+    assert assets, "包目录下没有可检查的资源：%s" % package
+
+
+def test_glossa_and_papertrace_templates_are_both_declared():
+    """R495：两个模板包各有且只认自己的 *.j2（glossa 的 schema 也必须在）。"""
+    assert any(fnmatch.fnmatch("templates/spine.html.j2", pat) for pat in _patterns("papertrace"))
+    assert any(fnmatch.fnmatch("templates/glossa.html.j2", pat) for pat in _patterns("glossa"))
+    assert (ROOT / "papertrace" / "templates" / "spine.html.j2").is_file()

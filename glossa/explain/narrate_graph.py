@@ -50,6 +50,13 @@ def graph_text(doc, numbers):
         "箭头的方向是「谁 import 谁」。"])
 
 
+def _pruned_sentence(excluded) -> str:
+    """R494：剪枝 listing 自己都不完整时，只能说「至少 N 个」，不许把下界报成确数。"""
+    if excluded.get("pruned_files_partial"):
+        return "被剪目录的 listing 不完整，至少 {pruned} 个文件没进 files 列表（listing 本身不完整）。"
+    return "被剪目录只按 listing 计数，另有 {pruned} 个文件没进 files 列表。"
+
+
 def gaps_text(doc, numbers):
     """⑥ 我没看清的地方：排除数、被剪目录 listing、未解析 import、降级条数（取不到出处就不写）。"""
     totals, excluded = doc.get("totals") or {}, doc.get("excluded") or {}
@@ -57,7 +64,7 @@ def gaps_text(doc, numbers):
         sentence(numbers, "排除 {files} 个文件 / {bytes} 字节，其中 {oversize} 个是超限文件。",
                  files=int(excluded.get("files") or 0), bytes=int(excluded.get("bytes") or 0),
                  oversize=len(excluded.get("oversize") or [])),
-        sentence(numbers, "被剪目录只按 listing 计数，另有 {pruned} 个文件没进 files 列表。",
+        sentence(numbers, _pruned_sentence(excluded),
                  pruned=int(excluded.get("pruned_files") or 0)),
         sentence(numbers, "还有 {unresolved} 条 import 没解析出来，理由都在台账里。",
                  unresolved=int(totals.get("unresolved") or 0)),

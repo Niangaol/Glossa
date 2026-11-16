@@ -131,6 +131,27 @@ def test_read_source_caps_at_200_lines():
     assert "circuit" in text and "1" in text
 
 
+def test_read_source_reports_start_overflow_before_end():
+    """R490（N1）：7 行文件传 start=99，要报 start 越界，不许拿 end 背锅。"""
+    root = scratch_dir("glossa-t11-r490")
+    (root / "mod.py").write_text("".join("x%d = %d\n" % (i, i) for i in range(7)), encoding="utf-8")
+    st = server.new_state()
+    _call("analyze_repo", {"repo": str(root)}, st)
+    r = _call("read_source", {"repo": str(root), "path": "mod.py", "start": 99}, st)
+    assert r["result"]["isError"] is True
+    msg = r["result"]["content"][0]["text"]
+    assert "start 超出文件共 7 行" in msg, msg
+    assert "end 必须" not in msg, msg
+
+
+def test_tools_call_works_without_initialize():
+    """R491（N2）：不强制握手——状态里没有 initialized 死标志，没 initialize 也能 tools/call。"""
+    st = server.new_state()
+    assert "initialized" not in st, st
+    r = _call("get_facts", {"repo": str(_repo("py-mini")), "kind": "totals"}, st)
+    assert r["result"]["isError"] is False, r
+
+
 def test_render_explain_rejects_fake_fact_id_with_iserror():
     root = _repo()
     st = server.new_state()

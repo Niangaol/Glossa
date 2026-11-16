@@ -31,8 +31,8 @@ class _Bad(Exception):
 
 
 def new_state():
-    """每个连接一份状态：{'repos': {abs_path: entry}, 'initialized': False}。"""
-    return {"repos": {}, "initialized": False}
+    """每个连接一份状态：{'repos': {abs_path: entry}}（R491：删掉写而不读的 initialized 死标志）。"""
+    return {"repos": {}}
 
 
 def _reply(rid, result):
@@ -44,7 +44,7 @@ def _error(rid, code, message):
 
 
 def _initialize(state):
-    state["initialized"] = True
+    """R491：不置任何标志——本 server 不强制握手，tools/call 没 initialize 也能用。"""
     return {"protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": dict(SERVER_INFO)}
@@ -80,7 +80,7 @@ def handle_message(msg, state):
         return None                       # R327：通知一律不回包
     try:
         if method == "initialize":
-            result = _initialize(state)
+            result = _initialize(state)   # 不强制握手（R491/R496）：tools/call 随时可用
         elif method == "ping":
             result = {}
         elif method == "tools/list":
