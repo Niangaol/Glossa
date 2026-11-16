@@ -57,7 +57,8 @@ python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 - 规则名协议（命中即计数，不静默）：`dir:<小写目录名>`、`dir:pythoncore`、`dir:dataset`、`ignore:<.glossaignore 行原文>`
 - `.glossaignore`：仓库根一份，每行一个 glob，`#` 开头是注释，`dir/` 形式只配目录
 - 密钥名单（`.env`、`*.pem`、`id_rsa` 等）**只登记文件名与字节数，内容一个字节都不读**
-- 每次排除都进 `excluded.files / excluded.bytes / excluded.by_rule`；超限进 `oversize`，截断选点进 `degraded`
+- 文件级排除逐条归因进 `excluded.rules`（`dir:*` / `ext:*` / `ignore:*`），汇总进 `excluded.files / excluded.bytes`；超限进 `oversize`，截断选点进 `degraded`
+- 密钥只登记 `secrets_seen`（路径 + 字节数），**不读内容、不计入 `excluded.files` / `excluded.bytes`**
 
 ## 14 种 fact id（讲解页每个数字的出处）
 
