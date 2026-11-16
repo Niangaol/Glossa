@@ -95,7 +95,8 @@
         "breadcrumb": { "type": "array", "items": { "type": "string" } },
         "zoom": { "enum": ["stage", "module", "op"] }
       }
-    }
+    },
+    "analysis": { "$ref": "#/$defs/analysis" }
   },
   "$defs": {
     "source": { "enum": ["runtime", "static", "model"] },
@@ -285,6 +286,53 @@
         "child_id": { "type": "string" },
         "parent_claim": { "type": "string" },
         "child_claim": { "type": "string" }
+      }
+    },
+    "analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modules", "totals", "roles", "method"],
+      "properties": {
+        "modules": { "type": "array", "items": { "$ref": "#/$defs/analysisModule" } },
+        "totals": { "$ref": "#/$defs/analysisTotals" },
+        "roles": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 } },
+        "method": { "type": "string", "minLength": 1 }
+      }
+    },
+    "analysisModule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "module_id", "class", "role", "evidence",
+        "op_count", "params", "max_activation", "est_flops"
+      ],
+      "properties": {
+        "module_id": { "type": "string" },
+        "class": { "type": "string" },
+        "role": {
+          "enum": [
+            "attention", "mlp", "layernorm", "embedding", "linear",
+            "dropout", "activation", "residual", "stage", "unknown"
+          ]
+        },
+        "evidence": { "type": "string", "minLength": 1 },
+        "op_count": { "type": "integer", "minimum": 0 },
+        "params": { "type": "integer", "minimum": 0 },
+        "max_activation": { "type": "integer", "minimum": 0 },
+        "est_flops": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "analysisTotals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["modules", "params", "max_activation", "est_flops", "degraded"],
+      "properties": {
+        "modules": { "type": "integer", "minimum": 0 },
+        "params": { "type": "integer", "minimum": 0 },
+        "max_activation": { "type": "integer", "minimum": 0 },
+        "est_flops": { "type": "integer", "minimum": 0 },
+        "degraded": { "type": "integer", "minimum": 0 },
+        "degraded_reasons": { "type": "array", "items": { "type": "string" } }
       }
     }
   }
