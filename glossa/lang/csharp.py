@@ -5,16 +5,17 @@ R286：掩码**复用** T4 的 masks.mask_source，绝不另写一套（两套�
       命中 @" 时记 degraded；$"…{expr}…" 的花括号内代码不解析（README 局限）。
 R287：namespace 两形态（file-scoped 的 ';'、块级 '{'）都认；一个文件多个 namespace 只取
       第一个 + degraded。实测 Pokemon.cs 是 file-scoped（行 3）、MainViewModel.cs 是块级（行 5）。
-R288：符号判据（防止把方法调用当声明）：成员只在「类型体层」认（depth == 当前类型体深度），
-      方法要求名字后紧跟 '(' 且行尾是 '{' 或 ';' 或下一非空行是 '{'；属性要求名字后是
-      '{ get' / '{ set' / '{ init' / '=>'；字段要求名字后是 ';' 或 '='（因而没有 '(' 也没有 '{'）；
-      attribute 记到**紧随其后的那个符号**（实测 ObservableProperty 行 7 → MainViewModel 行 8）。
+R288：符号判据（防止把方法调用当声明）：成员只在「类型体层」认（depth == 当前类型体深度）。
+R381–R385（修复轮 1）：泛型约束绝不许写成基类（先剥 where）；attribute 只贴**紧邻的下一行
+      声明**（目标前缀 assembly:/module:/return:/param:、空行、语句、更深花括号一律整批丢弃）；
+      泛型方法、一行方法体、Allman 属性、event/required/索引器/元组返回/operator 都要认；
+      认不出的声明形态记 degraded「C# 声明形态第一版未解析」（GC31：宁可说没解析，不许静默省略）。
 为什么逐行扫 + 深度栈、而不是全文正则：块级 namespace 的 '}' 与类的 '}' 必须分开数——
 全文正则既会跨行误匹配，行号也会静默漂移（掩码等长那条硬不变量就是为行号而设的）。
 已知局限（如实声明，不假装支持）：
-- 构造器（public Foo()）没有返回类型段，本版不记符号；
+- 构造器（public Foo()）不记符号，但会记 degraded（不静默省略，GC31）；
 - 嵌套类型只记最近一层 parent；局部变量与局部函数不记（它们不在类型体层）；
-- where 泛型约束整段丢弃；record 的位置参数列表不拆成符号（R288）。
+- record 的位置参数列表不拆成符号（R288）。
 """
 
 from __future__ import annotations
@@ -22,27 +23,27 @@ from __future__ import annotations
 import re
 
 from glossa.lang import masks
+from glossa.lang.csharp_members import (DECL, TYPE_DECL, bases, member,
+                                        next_body, row)
 
-_MODS = (r"(?:(?:public|internal|private|protected|static|abstract|sealed|partial|file"
-         r"|readonly|unsafe|extern|virtual|override|new|async|const|volatile|ref)\s+)*")
-_TYPE = re.compile(r"^\s*(?P<mods>" + _MODS + r")(?P<kw>class|interface|record|struct|enum)"
-                   r"\s+(?:(?:struct|class)\s+)?(?P<name>[A-Za-z_]\w*)")
-_DECL = re.compile(r"^\s*(?P<mods>" + _MODS + r")(?P<ret>[\w.<>,?\[\]]+)\s+(?P<name>[A-Za-z_]\w*)"
-                   r"(?P<rest>.*)$")
 _USING = re.compile(r"^\s*(?:global\s+)?using\s+(?:(?P<static>static)\s+)?"
                     r"(?:(?P<alias>[A-Za-z_]\w*)\s*=\s*)?(?P<spec>[\w.]+)\s*;\s*$")
 _NS_SEMI = re.compile(r"^\s*namespace\s+(?P<name>[\w.]+)\s*;\s*$")
 _NS_BLOCK = re.compile(r"^\s*namespace\s+(?P<name>[\w.]+)\s*\{?\s*$")
 _ATTR = re.compile(r"^\s*\[(?P<body>[^\[\]]*)\]")
-_PROP_OPEN = r"\{\s*(?:get|set|init)\b"
+_TARGETS = frozenset(("assembly", "module", "return", "param", "field", "event",
+                      "method", "property", "type", "typevar"))
 
 
 def _attr_names(body: str) -> list[str]:
-    """'[A]'、'[A, B]'、'[assembly: A(...)]' → 名字列表（剥命名空间前缀与参数）。"""
+    """'[A]'、'[A, B]' → 名字列表；带目标前缀（[assembly: …]）的整条丢弃（R382）。"""
     out: list[str] = []
     for part in body.split(","):
         piece = part.strip()
-        if ":" in piece:                       # [assembly: X] / [return: X]
+        if ":" in piece:
+            head = piece.split(":", 1)[0].strip()
+            if head in _TARGETS:               # 目标前缀不是符号的 attribute
+                continue
             piece = piece.split(":", 1)[1].strip()
         hit = re.match(r"[A-Za-z_][\w.]*", piece)
         if hit is not None:
@@ -50,56 +51,11 @@ def _attr_names(body: str) -> list[str]:
     return out
 
 
-def _bases(kw: str, rest: str) -> list[str]:
-    """class/record 名后 ':' 到 '{' / ';' / where 之间的基类与接口；剥泛型参数（近似）。"""
-    if kw not in ("class", "record") or ":" not in rest:
-        return []
-    seg = re.split(r"\{|;|\bwhere\b", rest.split(":", 1)[1])[0]
-    out: list[str] = []
-    for part in seg.split(","):
-        piece = part.split("<", 1)[0].strip()
-        if re.fullmatch(r"[A-Za-z_][\w.]*", piece):
-            out.append(piece)
-    return out
-
-
-def _next_open(lines: list[str], idx: int) -> bool:
-    """R288：方法声明允许把 '{' 放到下一非空行（实测 FindAsync 行 13 → '{' 行 14）。"""
-    for raw in lines[idx:]:
-        piece = raw.strip()
-        if piece:
-            return piece.startswith("{")
-    return False
-
-
-def _member(line: str, idx: int, ns: str | None, attrs: list[str],
-            parent: str | None, next_open: bool) -> dict | None:
-    """类型体层的一行声明 → method / property / field；认不出就 None（不猜）。"""
-    hit = _DECL.match(line)
-    if hit is None:
-        return None
-    mods, name, rest = hit.group("mods"), hit.group("name"), hit.group("rest").lstrip()
-    row = {"name": name, "kind": "", "line": idx, "namespace": ns, "partial": False,
-           "bases": [], "async": bool(re.search(r"\basync\b", mods)),
-           "attributes": list(attrs), "parent": parent}
-    if rest.startswith("("):
-        if not (line.rstrip().endswith(("{", ";")) or next_open):
-            return None                        # R288：调用的样子，不是声明
-        row["kind"] = "method"
-    elif rest.startswith("=>") or re.match(_PROP_OPEN, rest):
-        row["kind"] = "property"
-    elif rest.startswith((";", "=")):
-        row["kind"] = "field"
-    else:
-        return None
-    return row
-
-
 def _namespace(namespaces: list[dict], name: str, idx: int, style: str,
                degraded: list[str]) -> None:
     """R287：多个 namespace 只取第一个，并如实降级（不装作只有一个）。"""
     if namespaces:
-        note = "多命名空间只取第一个：" + namespaces[0]["name"]
+        note = "多个 namespace 只取第一个：" + namespaces[0]["name"]
         if note not in degraded:
             degraded.append(note)
         return
@@ -117,28 +73,34 @@ def parse_source(text: str, relpath: str) -> dict:
     depth = 0
     stack: list[tuple[str, int]] = []          # (类型名, 类型体所在的 depth)
     pending: str | None = None                 # 已声明、等 '{' 的类型
-    attrs: list[str] = []
+    held: list[str] = []                       # 上一行攒下的 attribute（只贴紧邻下一行）
+    held_depth = 0
     for idx, raw in enumerate(lines, 1):
         line = raw
-        while True:                            # 行首 attribute 一律剥掉再认声明
+        fresh: list[str] = []
+        while True:                            # 行首 attribute 剥掉再认声明
             hit = _ATTR.match(line)
             if hit is None:
                 break
-            attrs.extend(_attr_names(hit.group("body")))
+            fresh.extend(_attr_names(hit.group("body")))
             line = line[hit.end():]
-        if line.strip():
+        body = line.strip()
+        attrs = held if held and depth == held_depth else []
+        held = []
+        if fresh and not body:                 # 纯 attribute 行：只等紧邻的下一行声明
+            held, held_depth = attrs + fresh, depth
+        else:
+            attrs += fresh
+        if body:
             parent = stack[-1][0] if stack else None
             ns = namespaces[0]["name"] if namespaces else None
-            declared = _TYPE.match(line)
+            declared = TYPE_DECL.match(line)
             semi = _NS_SEMI.match(line)
             block = None if semi else _NS_BLOCK.match(line)
             if declared is not None:
-                symbols.append({"name": declared.group("name"), "kind": declared.group("kw"),
-                                "line": idx, "namespace": ns, "async": False,
-                                "partial": "partial" in declared.group("mods").split(),
-                                "bases": _bases(declared.group("kw"), line[declared.end():]),
-                                "attributes": list(attrs), "parent": parent})
-                attrs = []
+                symbols.append(row(declared.group("name"), declared.group("kw"), idx, ns,
+                                   attrs, parent, declared.group("mods"),
+                                   bases(declared.group("kw"), line[declared.end():])))
                 inline = "{" in line and line.count("{") == line.count("}")
                 pending = None if inline else declared.group("name")
             elif semi is not None or block is not None:
@@ -150,10 +112,12 @@ def parse_source(text: str, relpath: str) -> dict:
                                 "static": bool(used.group("static")),
                                 "alias": used.group("alias")})
             elif stack and depth == stack[-1][1]:
-                row = _member(line, idx, ns, attrs, parent, _next_open(lines, idx))
-                if row is not None:
-                    symbols.append(row)
-                    attrs = []
+                got = member(line, idx, ns, attrs, parent, next_body(lines, idx))
+                if got is not None:
+                    symbols.append(got)
+                elif DECL.match(line) is not None:
+                    degraded.append("C# 声明形态第一版未解析：%s（行号 %d）"
+                                    % (body[:40], idx))
         for ch in line:
             if ch == "{":
                 depth += 1
@@ -167,7 +131,7 @@ def parse_source(text: str, relpath: str) -> dict:
     if '@"' in masked:
         degraded.append('verbatim 字符串按近似处理："" 转义可能提前结束掩码')
     if masked.count("{") != masked.count("}"):
-        degraded.append("花括号不配对：类型体与 namespace 作用域可能判断不准")
+        degraded.append("花括号不配对，存在未闭合的花括号：类型体与 namespace 作用域可能判断不准")
     return {"symbols": symbols, "imports": imports, "namespaces": namespaces,
             "doc_first_line": None, "main_guard": False, "parse": "approx",
             "degraded": degraded}
