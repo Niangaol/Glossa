@@ -10,6 +10,19 @@
 
 **Spec:** docs/superpowers/specs/2026-11-16-papertrace-explain-design.md（逐条实现它；D-A/D-B/D-C 是控制器的默认裁决，用户可推翻）
 
+**Preflight 实测事实**（output/controller-probes/explain_preflight.md，派发前控制器真跑）：
+BASE render_html.py sha256 = 3b8104004c8e242282a3b0e719e8370606960e35e0e096ca3a3e66cd6df4dba6（GC24 比对基准）；
+nodes level 计数 op 94 / module 34，kind 计数 op 75 / param 18 / input 1 / 无 kind 34；唯一 input 节点 id = root/@018；
+图是 DAG（Kahn 覆盖 128/128），最长链 **56 步**，头 placeholder (2, 8) → embedding (2, 8, 32)，尾 linear (2, 8, 64)；
+totals 数值升序去重 = [2, 34, 2048, 29856, 884736]；
+root/transformer.h.0.attn 实测 op_count **22**、params 4352、max_activation 1536、est_flops 147456、
+evidence 原文「自身 22 个算子里有 matmul→…→softmax→…→matmul 子序列」；
+symbols.code 的 var = DEFAULT_BATCH/block_size/n_embd/n_head/Dh；
+meta.repo = {url: tests/fixtures/nanogpt（相对路径）, commit: dirty-subdir, entry_module: model:build_model}，created_at = 2026-11-16T05:04:18+00:00；
+三份演示 anchors：code-only 0 / with-paper 0（unresolved 8）/ fallback-yellow 4（全 yellow）；
+_groups(doc) 返回 30 组布局字典（键 parent/width/height/nodes），4 个模块没有算子组（root/transformer、root/transformer.h、root/transformer.h.0.mlp、root/transformer.h.1.mlp）；
+exit_codes 实测 UNIMPLEMENTED=2 / MISSING_RUNTIME=4 / UNTRACEABLE=5（**没有 6**），cli.py 里 trace 不合法 return 1、dump 冲突 return 3、HTML 渲染失败 return 2。
+
 ## Global Constraints
 
 - 单文件 ≤200 行（Python 产品源码，口径 len(Path(f).read_text(encoding='utf-8').splitlines())；测试不限）。
@@ -95,7 +108,7 @@ def test_chain_is_a_real_path_in_the_graph(real_doc):
     ids = [c['node_id'] for c in chain]
     edges = {(e['src'], e['dst']) for e in real_doc['edges']}
     assert all((a, b) in edges for a, b in zip(ids, ids[1:]))
-    assert len(chain) >= 5
+    assert len(chain) == 56  # preflight 实测真值，不是猜的
 def test_outline_groups_cover_all_34_modules(real_doc):
     o = outline(real_doc)
     assert sum(len(v) for v in o['groups'].values()) == 34
@@ -216,6 +229,7 @@ def test_module_card_carries_verbatim_evidence_and_human_name(real_ctx):
     html = render_block({'component': 'module_card', 'args': {'module_id': 'root/transformer.h.0.attn'}}, real_ctx)
     row = next(m for m in real_ctx.doc['analysis']['modules'] if m['module_id'] == 'root/transformer.h.0.attn')
     assert row['evidence'] in html and '4,352' in html and '147,456' in html and 'root/transformer.h.0.attn' in html
+    assert '22' in html  # op_count 实测 22，不是 6
 def test_metrics_uses_thousands_separators_and_method_text(real_ctx):
     html = render_block({'component': 'metrics', 'args': {}}, real_ctx)
     assert '29,856' in html and '884,736' in html and real_ctx.doc['analysis']['method'] in html
@@ -250,7 +264,7 @@ def test_component_numbers_are_never_marked(real_ctx):
 - Consumes: E1 outline.main_chain / get_facts；E3 Ctx / COMPONENTS；既有 render_html._groups（**只 import 调用，不改它**）与 render_html.fmt_shape。
 - Produces: comp_graph.flow_chain(ctx, max_steps=None) / ops_graph(ctx, module_id) / flow_edges(ctx, module_id=None, edge_ids=None) / callchain(ctx, root=None) -> str；comp_code.code(ctx, path, start, end) / paper_bonus(ctx) -> str。
   - flow_chain：SVG + 有序步骤列表，每步标 shape_out（用 fmt_shape 口径），顶部注明「程序算的最长链，不是唯一真相」。
-  - ops_graph：复用 _groups(doc) 后只取 parent == module_id 的那一组；找不到 → 返回一句如实说明（不抛）。
+  - ops_graph：复用 _groups(doc)（**返回的是布局字典**：parent/width/height/nodes，节点键 box_w/label/link/loc_full/loc_short/loc_x/shape_in/shape_out/y）后只取 parent == module_id 的那一组；SVG markup 抄 spine.html.j2:68-81 的口径并注明来源，**不改原模板**。找不到组 → 返回一句如实说明（不抛）；**真夹具里有 4 个模块没有算子组**（root/transformer、root/transformer.h、root/transformer.h.0.mlp、root/transformer.h.1.mlp），文案要说「该模块没有直接算子，算子挂在子模块下」。
   - code：只许读 ctx.repo_root 之下的路径（repo_root = Path(doc['meta']['repo']['url']).resolve()，由 E5/E7 传入），越界/不存在 → 抛 BuildError；单次 ≤200 行；输出带行号等宽块。
   - paper_bonus：doc['anchors'] 为空 → **返回空串**（E5 见空串整块不渲染）。
 
@@ -266,6 +280,9 @@ def test_ops_graph_only_contains_the_requested_module(real_ctx):
 def test_ops_graph_unknown_module_says_so_instead_of_crashing(real_ctx):
     html = render_block({'component': 'ops_graph', 'args': {'module_id': 'root/nope'}}, real_ctx)
     assert 'root/nope' in html and '<svg' not in html
+def test_ops_graph_module_without_direct_ops_says_so(real_ctx):
+    html = render_block({'component': 'ops_graph', 'args': {'module_id': 'root/transformer.h.0.mlp'}}, real_ctx)
+    assert '<svg' not in html and '子模块' in html
 def test_flow_edges_shows_producer_and_consumer_shapes(real_ctx):
     html = render_block({'component': 'flow_edges', 'args': {'module_id': 'root/transformer.h.0.attn'}}, real_ctx)
     assert '<table' in html and ('producer' in html.lower() or '生产' in html)
@@ -362,7 +379,7 @@ program_payload 是 E6 的 narrate.program_blocks；E5 阶段先用一个最小 
 - Produces:
   - narrate.program_blocks(doc: dict) -> dict：{"title": str, "blocks": [...]}。用 outline 的同一份骨架 + 如实模板句；**每个 text 块都带正确 cites**，每个数字都来自 facts；禁形容词性无出处判断。顺序：overview → metrics → flow_chain → 「先看这几个模块」（order 前 3 个 module_card）→ 逐角色分组叙述 → table(modules) → symbol_table → paper_bonus。
   - cli_explain.add_parser(sub) -> None：注册 explain 子命令，参数 --repo / --trace / --out（默认 output）/ --entry / --batch / --seq-len / --no-llm / --title。
-  - cli_explain.run(args) -> int：--repo 与 --trace 互斥且必填其一；--repo 先 build_trace + analyze_code（复用既有函数，不重写）；--no-llm 或 backend 非 openai → program_blocks；否则走 E8 的 model_blocks（E6 阶段先留一个明确的 NotImplementedError 分支并在 E8 接上，**不许静默兜底**）；渲染失败 exit 2、契约错 exit 4、缺运行要件 exit 6。
+  - cli_explain.run(args) -> int：--repo 与 --trace 互斥且必填其一；--repo 先 build_trace + analyze_code（复用既有函数，不重写）；--no-llm 或 backend 非 openai → program_blocks；否则走 E8 的 model_blocks（E6 阶段先留一个明确的 NotImplementedError 分支并在 E8 接上，**不许静默兜底**）；退出码沿用既有口径（实测 exit_codes：UNIMPLEMENTED=2 / MISSING_RUNTIME=4 / UNTRACEABLE=5，**没有 6**）：渲染失败 exit 2（同 cli.py:166）、trace 不合法 exit 1、缺 torch exit 4、追不动 exit 5、参数二选一错交给 argparse（exit 2）。
 
 - [ ] **Step 1: 写红测试**
 ```python

@@ -219,7 +219,7 @@ MCP 返回里逐条列出被移除的构造。理由：宽松口径要「照常�
 - 触发：`PAPERTRACE_LLM_BACKEND` 未设/offline，或显式 `--no-llm`。
 - 产出：用 `explain_outline` 的同一份事实骨架 + **如实模板句**组成 blocks，走同一条渲染路径。
   模板句例：「CausalSelfAttention（第 1 层注意力）：判定为 attention，判据原文『…』；
-  本模块 6 个算子，参数量 4,352，峰值激活 1,536 元素，粗估 FLOPs 147,456。」
+  本模块 22 个算子，参数量 4,352，峰值激活 1,536 元素，粗估 FLOPs 147,456。」
   ——**每个数字都来自 facts，不编一个形容词性的结论**（不许写「这是模型的核心」这类无出处判断）。
 - 页面顶部横幅：「**本页未使用模型**：文字由程序按事实模板生成。配好中转后可得模型撰写的讲解。」
 - 有 key 时：`explain/llm_explain.py` 复用 `papertrace/llm/openai_backend.py`（可注入 transport，测试不联网），
@@ -236,7 +236,9 @@ python -m papertrace.mcp            # MCP server（stdio）
 ```
 - `--repo` 与 `--trace` 二选一（都给 → 报错；都不给 → 报错）。`--repo` 内部先 build 再讲解。
 - `--no-llm` 强制降级；不给则按后端分派（§9）。
-- 退出码沿用 `papertrace/exit_codes.py`；渲染失败 exit 2、契约错 exit 4（UNIMPLEMENTED）、缺运行要件 exit 6。
+- 退出码沿用既有口径（实测 `papertrace/exit_codes.py`：UNIMPLEMENTED=2 / MISSING_RUNTIME=4 / UNTRACEABLE=5，**没有 6**）：
+  渲染失败 exit 2（与 `cli.py:166` 同口径）、trace 不合法 exit 1（`cli.py:147`）、缺 torch exit 4、追不动 exit 5、
+  参数二选一错由 argparse 自己处理（exit 2）。
 - **`cli.py` 现 182 行**，加子命令会破 200 → 新增 `papertrace/cli_explain.py` 承载
   `add_parser(sub)` 与 `run(args) -> int`，`cli.py` 只加 import + 两行分派（≤190 行）。
 
@@ -305,6 +307,12 @@ docs/explain-agent.md               讲解技能包（给模型的操作手册�
 `build_trace.py` / `spine*.py` / `align/*` / `parse_*/*`。
 `ops_graph` 复用 `render_html._groups`：**只 import 调用，不改它**（它是私有函数，
 在 `comp_graph.py` 里 import 使用，不改名不动实现；需要复用口径时抄口径并注明来源）。
+**preflight 实测**：`_groups(doc)` 返回 **30 组布局字典**（键 `parent/width/height/nodes`，
+节点键 `box_w/label/link/loc_full/loc_short/loc_x/shape_in/shape_out/y`），**不是原始节点**；
+SVG 的 markup 在 `spine.html.j2:68-81`，要抄那段口径并注明来源，不许改原模板。
+34 个模块里有 **4 个没有算子组**（`root/transformer`、`root/transformer.h`、
+`root/transformer.h.0.mlp`、`root/transformer.h.1.mlp`——算子挂在子模块下），
+`ops_graph` 遇到它们必须如实说「该模块没有直接算子，算子挂在子模块下」，不许画空图也不许崩。
 
 ## 13. 测试策略（TDD，每任务先红后绿）
 
