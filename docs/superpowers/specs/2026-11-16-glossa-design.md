@@ -78,6 +78,7 @@
 - **D12 C# using 分类四态**：builtin（System.* 等框架前缀）/ external（命中 csproj 的 PackageReference 名前缀）/ namespace（命中仓库内声明的命名空间）/ unresolved（其余）。**namespace 态 target 为 null**（不猜具体文件），但记 `namespace` 字段与命中文件数。
 - **D13 ImplicitUsings 记 degraded**：csproj 里 `<ImplicitUsings>enable</ImplicitUsings>` 意味着有一批隐式全局 using 看不见 → 该项目的 C# 文件 degraded 记「隐式全局 using 未展开，依赖可能少计」。
 - **D14 讲解页人话优先**：① 这项目是什么 ② 从哪进来 ③ 分几块（包/项目地图）④ 谁依赖谁（图）⑤ 关键文件逐个讲 ⑥ 我没看清的地方（排除/降级/未解析）⑦ 甜头（可选）。**事实表折叠在 <details> 里，不占首屏**。
+- **D15 只讲关键文件（用户 2026-11-16 拍板）**：第⑤块最多 12 个文件，挑选键 = (入口目标降序, 被依赖边数降序, 符号数降序, path 升序)，候选只含 SYMBOL_LANGS 文件；块首明写「共 N 个可讲解文件，本页逐个讲了 M 个」与规则，其余进折叠全量清单。理由：SafeTrace 255 个 ts/js、PokemonData 108 个 .cs，全量卡片会重演「读起来看不懂」。实现落在 glossa/keyfiles.py（T7，R334–R338）。
 
 ## 6. 目标 / 非目标 / 反目标
 
@@ -174,7 +175,7 @@ scan（排除/大小/语言/密钥名）
 | ② 从哪进来 | entry_list + text | 真实入口命令与目标文件；复合命令明示「未指向单文件」 |
 | ③ 分几块 | package_map / project_map + dir_tree | npm 包地图或 csproj 项目地图 + 目录树（折叠） |
 | ④ 谁依赖谁 | import_graph + text | 文件级（py/ts）或项目级（C#）SVG；环与不可达如实列出 |
-| ⑤ 关键文件逐个讲 | file_card + symbol_table + code + text | 每个关键文件：干什么、有哪些符号、关键行摘录 |
+| ⑤ 关键文件逐个讲 | file_card + symbol_table + code + text | **最多 12 个**（D15）：入口目标优先 → 被依赖边数 → 符号数 → path 升序；每个文件讲干什么、有哪些符号、关键行摘录，并显示「为什么挑它」；块首明写共 N 个讲了 M 个，其余进折叠全量清单 |
 | ⑥ 我没看清的地方 | table + text | 排除计数、oversize、degraded、unresolved 逐条原因 |
 | ⑦ 甜头（可选） | bonus | 仅当存在旧 trace.json：模型算子图与论文对账摘要，链回旧 index.html |
 
@@ -223,14 +224,15 @@ python -m glossa serve   # 等价 python -m glossa.mcp，stdio JSON-RPC
 ⑦ 甜头      （无旧 trace.json 时整层不出现）
 ```
 
-## 20. 文件清单（37 个新文件，每个 ≤200 行）
+## 20. 文件清单（38 个新文件，每个 ≤200 行）
 
 ```
 glossa/__init__.py 6            glossa/__main__.py 12        glossa/cli.py 170
 glossa/exclude.py 90            glossa/scan.py 150           glossa/manifests.py 150
 glossa/manifests_cs.py 130      glossa/entries.py 130        glossa/resolve.py 170
 glossa/resolve_cs.py 90         glossa/facts.py 180          glossa/fact_ids.py 90
-glossa/graph.py 150             glossa/schema/repo.json 200
+glossa/graph.py 150             glossa/keyfiles.py 80
+glossa/schema/repo.json 200
 glossa/schema_repo.py 70        glossa/repo_paths.py 60
 glossa/lang/__init__.py 40      glossa/lang/python.py 150    glossa/lang/tsjs.py 190
 glossa/lang/masks.py 80         glossa/lang/vue.py 60        glossa/lang/csharp.py 190
