@@ -484,7 +484,8 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
   `nodes[].shapes` 与 `meta.runtime`；HTML 第 ⑤ 块会把这张表画出来。
 - **模块角色表**（`analysis.modules`，34 条）：每个模块一个角色 + 一条**点名判据**的
   `evidence`。角色是冻结的**十种**枚举（`papertrace/analyze_roles.py` 的 `ROLES`，
-  顺序即优先级）：`attention` / `mlp` / `layernorm` / `embedding` / `linear` /
+  顺序是 schema enum 的固定写法，**不是**判据优先级；判据优先级见下文）：
+  `attention` / `mlp` / `layernorm` / `embedding` / `linear` /
   `activation` / `dropout` / `residual` / `stage` / `unknown`。判据只认**直接子节点里
   的算子名**（GC20 不跨子树聚合、R202 不认类名）：`matmul→…→softmax→…→matmul`
   子序列判 attention；直接算子含 `layer_norm` / `embedding` 判对应角色；所有 `add`

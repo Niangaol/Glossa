@@ -13,7 +13,13 @@ import pytest
 
 pytest.importorskip("torch", reason="真夹具追踪需要 torch（CPU 版即可）")
 
-from papertrace.analyze_roles import module_roles  # noqa: E402
+from papertrace.analyze_roles import (  # noqa: E402
+    _child_modules,
+    _children_by_parent,
+    _direct_ops,
+    _mlp_child_hits,
+    module_roles,
+)
 from papertrace.build_trace import build_trace  # noqa: E402
 
 FIXTURE = str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "nanogpt")
@@ -262,3 +268,48 @@ def test_mlp_excludes_modules_that_do_softmax_themselves():
     got = _role_of("m", nodes)
     assert got["role"] == "stage", f"自身有 softmax 却被判成 {got['role']}"
     assert "2 个直接子模块" in got["evidence"]
+
+
+def test_residual_needs_the_add_output_to_match_its_inputs():
+    """add 的输入彼此等形状，但 shape_out 与它们不等：不是 residual。
+
+    钉住 analyze_roles.py:94 的 `return shapes[0] == node.get("shape_out")`——
+    「≥2 项」「各项相同」两条子条件已有守卫，这是最后一个没被钉的；去掉它，
+    下面这条必红（输入 [2,8,32] 会漏判成 residual）。
+    """
+    nodes = [
+        _synth_node("m", None, "module", "Mystery", None),
+        _synth_node("m/@001", "m", "op", "add", "op",
+                    inputs=[[2, 8, 32], [2, 8, 32]], shape_out=[2, 16, 32]),
+    ]
+    got = _role_of("m", nodes)
+    assert got["role"] == "unknown", f"add 的输出形状与输入不等，却给了 {got['role']}"
+    assert "residual" not in got["evidence"], f"evidence 里出现了 residual：{got['evidence']}"
+
+
+def test_mlp_gate_also_refuses_layer_norm_and_embedding_modules():
+    """自身直接算子是 layer_norm / embedding：mlp 闸必须拒放行（两个名字都要有牙）。
+
+    为什么问到闸这一层：`_classify` 在 :137/:139 先把这两个名字判成 layernorm /
+    embedding，行为入口根本走不到 mlp 分派——所以只写「角色不是 mlp」的行为测试，
+    把闸里的名字删掉仍然全绿（收尾评审 V4）。这里用产品自己的切分函数取出该模块
+    的 ops / submods / children，直接钉 analyze_roles.py:112 的排除闸。
+    """
+    for own in ("layer_norm", "embedding"):
+        nodes = [
+            _synth_node("m", None, "module", "Mystery", None),
+            _synth_node("m/@001", "m", "op", own, "op"),
+            _synth_node("m/fc", "m", "module", "Foo", None),
+            _synth_node("m/fc/@linear", "m/fc", "op", "linear", "op"),
+            _synth_node("m/fc/@gelu", "m/fc", "op", "gelu", "op"),
+            _synth_node("m/proj", "m", "module", "Bar", None),
+            _synth_node("m/proj/@matmul", "m/proj", "op", "matmul", "op"),
+        ]
+        # 行为层：不是 mlp（layer_norm / embedding 各归自己的角色）
+        got = _role_of("m", nodes)
+        assert got["role"] != "mlp", f"自身有 {own} 却被判成 mlp"
+        # 守卫层：闸本身不认这个 mlp 形状的容器——删掉闸里任一名字，这里必红
+        children = _children_by_parent(nodes)
+        kids = children["m"]
+        assert _mlp_child_hits(_direct_ops(kids), _child_modules(kids), children) is None, (
+            f"闸放行了自己含 {own}、子模块像 mlp 的容器（analyze_roles.py:112）")

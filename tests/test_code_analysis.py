@@ -79,6 +79,11 @@ def test_analysis_has_every_module_once(model_and_doc):
         assert set(m) == MODULE_KEYS, f"{m['module_id']} 的键是 {sorted(m)}"
         assert m["role"] in ROLES, f"{m['module_id']} 的角色 {m['role']} 不在冻结枚举里"
         assert m["evidence"], f"{m['module_id']} 的 evidence 是空串"
+    # 收尾评审 M-2：roles 分布只列真出现过的角色、值都 ≥1。把它改成
+    # counts.get(role, 0) 补满十键，下面两条必须红（R207：不写零项）。
+    roles = raw["analysis"]["roles"]
+    assert set(roles) <= set(ROLES), f"roles 出现了冻结枚举之外的角色：{sorted(roles)}"
+    assert 0 not in roles.values(), f"roles 里补了 0 项：{roles}"
 
 
 def test_symbols_code_is_filled_without_a_paper(doc):

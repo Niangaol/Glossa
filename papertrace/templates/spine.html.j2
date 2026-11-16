@@ -147,7 +147,7 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 {% if analysis.degraded %}<p class="sub">形状降级与异常：{{ analysis.degraded }}</p>
 {% endif %}<p class="sub">{{ analysis.method_label }}{{ analysis.method }}</p>
 {% else %}
-<p class="emptybox">本次 build 没有代码分析数据（骨架模式或旧 trace）</p>
+<p class="emptybox">本次 build 没有代码分析数据（旧 trace，早于代码分析功能）</p>
 {% endif %}
 </section>
 

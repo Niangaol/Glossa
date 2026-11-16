@@ -11,7 +11,7 @@
 ACTIVATION_OPS = {"gelu", "relu", "silu", "sigmoid", "tanh", "mish"}
 LINEAR_OPS = {"linear", "matmul"}
 
-# 冻结枚举（10 个），顺序即优先级
+# 冻结枚举（10 个），顺序只决定 enum 写法，判据优先级见 _classify
 ROLES = (
     "attention",
     "mlp",

@@ -90,6 +90,9 @@ def test_html_has_a_code_health_section(real_doc):
     # 一起钉（去掉 _num 或去掉 class 都会让这条红）。
     assert '<td class="mono">27,808</td>' in block, "数据行的参数量没走千位分隔/mono"
     assert "粗估 FLOPs" in block, "列头必须自称粗估（GC19）"
+    # 收尾评审 M-1：上面那条子串断言被摘要行「粗估 FLOPs 884,736」满足，对列头是
+    # 恒真的（把 <th> 改成 FLOPs 全量仍 851 绿）。这里精确钉住列头那一格。
+    assert "<th>粗估 FLOPs</th>" in block, "表头列没自称粗估（GC19 列头钉子）"
     assert "计算量" not in block, "块内出现「计算量」：估算不自称估算了（GC19）"
     # R241/M3：三列都要钉住——根行三个单元格都在块内（不是只有 summary 行有数字）
     assert '<td class="mono">29,856</td>' in block, "根行参数量单元格没钉住"
@@ -321,4 +324,31 @@ def test_html_flags_count_mismatch_when_some_rows_are_listed(real_doc):
     assert block.count("<tr><td") == 34, "对不上账就把真实行藏了（R246）"
     assert "实际列出 34 行" in block, "没说出实际列出的行数（R246）"
     assert "40" in block, "没说出 totals 宣称的 40（R246）"
+
+
+def test_html_flags_incomplete_totals_key_by_key(real_doc):
+    """D3/M6：totals 缺一个键、或某个键不是真 int，摘要都要说「总计缺失」。
+
+    背景（收尾评审 M6/D3）：`_totals_ok` 末行改成 `return True`，全量 851 依然
+    全绿——唯一覆盖它的测试是把 totals 整个删掉，正好被外层 isinstance 挡住。
+    这里补两个真产物 deepcopy：① 缺 est_flops 键；② params 是 True（bool 是
+    int 子类，但不是真计数）。两种都必须说「总计缺失」，都不许伪造
+    「0 个模块」「降级 0 个」，34 行真模块行照旧渲染（R235/R237）。
+    """
+    cases = []
+    missing_key = copy.deepcopy(real_doc)
+    missing_key["analysis"]["totals"].pop("est_flops")
+    cases.append(("缺 est_flops 键", missing_key))
+    bool_value = copy.deepcopy(real_doc)
+    bool_value["analysis"]["totals"]["params"] = True
+    cases.append(("params 是 True", bool_value))
+    for label, doc in cases:
+        html = render_html(doc)
+        assert "Traceback" not in html
+        block = _section(html, "analysis")
+        assert "总计缺失（analysis.totals 不完整），摘要不可用" in block, (
+            "%s：摘要没有逐键判完整性（D3/M6）" % label)
+        assert "0 个模块" not in block, "%s 却伪造「0 个模块」（R235）" % label
+        assert "降级 0 个" not in block, "%s 却伪造「降级 0 个」（R235）" % label
+        assert block.count("<tr><td") == 34, "%s 把真模块行藏了（R235）" % label
 
