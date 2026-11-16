@@ -1,0 +1,8 @@
+{ "name": "ts-mono", "private": true, "type": "module",
+  "workspaces": ["packages/a", "packages/b"],
+  "scripts": {
+    "serve": "tsx packages/a/src/server.ts",
+    "check": "npm run typecheck && npm test",
+    "test": "node --test packages/b/src/index.test.ts" },
+  "dependencies": { "left-pad": "1.0.0" },
+  "devDependencies": { "tsx": "4.0.0", "typescript": "5.0.0" } }

@@ -1,0 +1,6 @@
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "src", "src", "{GUID-FOLDER}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Demo.Core", "src\Demo.Core\Demo.Core.csproj", "{GUID-1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Demo.App", "src\Demo.App\Demo.App.csproj", "{GUID-2}"
+EndProject
