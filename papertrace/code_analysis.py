@@ -17,7 +17,9 @@ from papertrace.symbols.code_table import build_code_symbols
 
 #: 粗估口径的自述：GC19 要求估算必须自称估算，禁止「精确计算量」「实测 FLOPs」。
 METHOD_TEXT = (
-    "参数量按权重张量元素数精确统计；FLOPs 只对 matmul/linear 估算"
+    "参数量按 kind == param 节点的元素数求和，含共享权重（weight tying 的同一份"
+    "权重挂在多个模块下会重复计数）与注册 buffer（fx 层把 BUFFER 也标成 param），"
+    "因此与 torch 的 unique named_parameters 口径不同；FLOPs 只对 matmul/linear 估算"
     "（2×输出元素数×输入最后一维），未考虑转置语义与逐元素算子，属于粗估，"
     "并随 batch/序列长度线性变化。"
 )

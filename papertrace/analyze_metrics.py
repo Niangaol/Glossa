@@ -2,7 +2,10 @@
 
 口径写死在这里，后来人要改口径，先改这段 docstring 再改测试（GC19：估算必须
 自称估算，禁止「精确计算量」「实测 FLOPs」这类说法）：
-- params：子树内 kind == "param" 节点 shape_out 乘积求和。**精确**，不估。
+- params：子树内 kind == "param" 节点 shape_out 乘积求和。这个口径**不是
+  torch 的 unique named_parameters**：共享权重（weight tying）挂在多个模块下会
+  重复计数，fx 层把注册 buffer 也标成 param，所以真夹具 root = 29856
+  = 27296 + 2048 + 512。
 - max_activation：子树内 kind == "op" 节点 shape_out 乘积最大值，**数的是元素
   个数不是字节**，param 节点绝不参与（R203：权重不是激活）。
 - est_flops：子树内 op in ("matmul", "linear") 的 2 * prod(shape_out) *
@@ -104,7 +107,7 @@ def _prod(shape) -> int:
 
 
 def _params(sub: list[dict]) -> int:
-    """子树内权重张量的元素数总和（精确）。"""
+    """子树内 kind == param 节点的元素数总和（含共享权重与注册 buffer）。"""
     return sum(_prod(n.get("shape_out")) for n in sub if n.get("kind") == "param")
 
 

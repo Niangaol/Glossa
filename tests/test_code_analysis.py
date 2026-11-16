@@ -19,10 +19,11 @@ import pytest
 
 pytest.importorskip("torch", reason="真夹具追踪需要 torch（CPU 版即可）")
 
+import papertrace.code_analysis as ca  # noqa: E402
 from papertrace.analyze_roles import ROLES  # noqa: E402
 from papertrace.build_trace import build_trace, load_entry  # noqa: E402
 from papertrace.code_analysis import METHOD_TEXT, analyze_code, empty_analysis  # noqa: E402
-from papertrace.exceptions import TraceSchemaError  # noqa: E402
+from papertrace.exceptions import BuildError, TraceSchemaError  # noqa: E402
 from papertrace.schema_validate import load_schema, minimal_trace, validate_trace  # noqa: E402
 
 REPO = str(Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "nanogpt")
@@ -120,3 +121,55 @@ def test_method_text_says_it_is_an_estimate(doc):
     # GC19：不许出现冒充实测的说法
     for banned in ("精确计算量", "实测 FLOPs"):
         assert banned not in METHOD_TEXT, f"GC19：METHOD_TEXT 里不许出现 {banned!r}"
+
+
+def test_merge_raises_when_the_two_tables_disagree(monkeypatch, model_and_doc):
+    """C4 I-1（Ruling R215）：R206 的 BuildError 分支要有守门。
+
+    两个方向都试：module_metrics 少返回一个模块、module_roles 少返回一个模块，
+    analyze_code 都必须抛 BuildError，且消息里点名那个缺失的 module_id——
+    绝不静默丢模块。砍表只砍一行（34→33），被测路径真被走到（计数器见断言）。
+    """
+    mod, raw = model_and_doc
+    missing = "root/transformer.wte"
+    metric_calls = []
+    real_metrics = ca.module_metrics
+
+    def fewer_metrics(nodes):
+        got = real_metrics(nodes)
+        metric_calls.append(len(got))
+        return [r for r in got if r["module_id"] != missing]
+
+    monkeypatch.setattr(ca, "module_metrics", fewer_metrics)
+    with pytest.raises(BuildError) as excinfo:
+        ca.analyze_code(copy.deepcopy(raw), mod)
+    assert missing in str(excinfo.value), f"错误信息没有点名缺失的模块：{excinfo.value}"
+    assert metric_calls == [34], f"module_metrics 的调用记录是 {metric_calls}"
+
+    # 先还原指标表，否则两个表同时少一个模块、又「对得上」了，就测不到反向分支
+    monkeypatch.setattr(ca, "module_metrics", real_metrics)
+
+    role_calls = []
+    real_roles = ca.module_roles
+
+    def fewer_roles(nodes):
+        got = real_roles(nodes)
+        role_calls.append(len(got))
+        return [r for r in got if r["module_id"] != missing]
+
+    monkeypatch.setattr(ca, "module_roles", fewer_roles)
+    with pytest.raises(BuildError) as excinfo:
+        ca.analyze_code(copy.deepcopy(raw), mod)
+    assert missing in str(excinfo.value), f"错误信息没有点名缺失的模块：{excinfo.value}"
+    assert role_calls == [34], f"module_roles 的调用记录是 {role_calls}"
+
+
+def test_method_text_names_weight_tying_and_buffers(doc):
+    """F1（C3 I-1）：params 的口径必须如实，不许再自称「精确统计」。
+
+    钉住两个词同时出现，防止有人把文案改回自夸；同时钉住旧的自夸句不许回来。
+    """
+    method = doc["analysis"]["method"]
+    assert "共享权重" in method, f"METHOD_TEXT 没交代共享权重会重复计数：{method!r}"
+    assert "buffer" in method, f"METHOD_TEXT 没交代注册 buffer 也按 param 计入：{method!r}"
+    assert "参数量按权重张量元素数精确统计" not in method, "自夸句又回来了"
