@@ -299,7 +299,7 @@ def test_degraded_reasons_sort_even_when_they_differ():
     z/y/m/a 逆序插入，再塞一个空串 reason（空串不是原因，必须被跳过）。
     期望 ['a 原因', 'm 原因', 'y 原因', 'z 原因']。
     注意：str 哈希随机化开着（没固定 PYTHONHASHSEED），只放两个 reason 的话，去掉
-    sorted() 后有 1/4 概率「碰巧升序」，变异探针会时红时绿；放 4 个 + 空串，
+    sorted() 后有 1/2 概率「碰巧升序」（两个元素的集合迭代两种次序等概，评审用 80 个 PYTHONHASHSEED 实测 40/80），变异探针会时红时绿；放 4 个 + 空串，
     碰巧升序的概率降到 1/24，这才是「必红」。
     """
     nodes = [_module()]

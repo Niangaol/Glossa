@@ -336,3 +336,33 @@
 3. **期望值是实测过的数字？** 29856 / 2048 / 884736 / 98304 / 34 / 角色分布——全部来自本机原型探针 `output/controller-probes/_roles.py`。✅
 4. **有没有把「猜」写成「测」？** 角色判据全部可从 trace 字段验证；`est_flops` 明确自称粗估；`unknown` 是合法输出。✅
 5. **既有测试会不会被打破？** 只有 C5 改变「无论文 build 的 trace 内容」，而 `test_no_paper_flag_is_unchanged` 断言的是 nodes/edges/counts/anchors/unresolved/meta.paper——都不受影响；`analysis` 在 schema 里可选，`minimal_trace` 不变。C6 让 `render_html` 能读没有 analysis 的 doc，旧 fixture 不会崩。✅
+
+## 执行记录
+
+> 计划写时的全量预估（C6 / C7 都写「837 passed」）偏低：实际链路里 C2 与 C3+C4 两个修复轮共新增 7 条测试，所以 C6 落地是 844、C6 修复轮后 847。下表条数全部是当轮实测，不是计划预估值。
+
+| Task | 提交 | 修复轮 | 全量实测 | 评审拦下的问题（含修复情况） |
+| --- | --- | --- | --- | --- |
+| C1 | `375bd97` | — | 807（基线 807，一条不多一条不少） | Approved（0/0/2）：Minor 2（`cli.py` import 行等），不阻塞 |
+| C2 | `c0f3882` | `7c7da5c`（只补 `tests/test_code_roles.py` 79 行，产品码一行未动） | 815 → 830 | 首轮 Important 1（三条判据删掉后没有测试会红）+ Minor 2；修复轮后复审 Approved，另留 3 个边角子条件无守卫的 Minor |
+| C3 | `55a732d` | 并入 C3+C4 合并轮 | 821 | Important 2 + Minor 2 |
+| C4 | `fabb7aa` | 同上 | 827 | Approved 但 Important 1（重复 `module_id` 静默覆盖，合法 trace 不可达）+ Minor 4 |
+| C3+C4 合并修复轮 | `70d2cab` | — | 834 | 复审 Approved（0/0/1）；那条 Minor 就是 `tests/test_code_metrics.py:301-303` 的 1/4 概率写错，C7 批处理修掉 |
+| C5 | `e503444` | — | 839 | Approved（0/0/3）；3 条 Minor 里 2 条进 C7 批处理（cli.py 陈旧 docstring、测试 2 的 `meta.paper` 全字典断言），第 3 条 flake 证据链按「未根因」留账 |
+| C6 | `57784b4` | `c78e37e` | 844 → 847 | Important 1：`analysis` 有 modules 缺 totals 时摘要伪造「0 个模块 · 参数量 0」与 34 行表自相矛盾；另有 F-C6-1 排序钉子（`role_counts` 降序与「缺席角色不补 0」零守卫，评审三条变异全绿）+ 六条 Minor，全部在修复轮修掉，复审确认 |
+| C7 | 本提交 | — | 847 | 四条 Minor 批处理：① cli.py docstring 与行为不再矛盾；② `test_code_metrics.py` 1/4 → 1/2；③ 测试 2 补 `meta.paper` 全字典断言；④ R221（第 ⑥ 块排页面末尾）记进 README 已知局限，不开新切片 |
+
+### C7 交付明细
+
+- **README**：新增顶层小节「## 无论文也能分析」（起始行 467，位于「## 已知局限」之前）；「现在是什么状态」加一句指向新小节；已知局限补 5 条（角色结构识别落 `unknown`、`est_flops` 粗估随 batch/seq 线性、共享权重按节点计数可能偏大、跨模块数据流没做、R221 第 ⑥ 块在页面末尾）。
+- **三份演示重生成**（`output/demo/`，不被 git 跟踪；脚本 `output/controller-probes/c7_regen_demo.py` 照抄 `cli.py` 链路）：
+
+  | 场景 | nodes | edges | anchors | unresolved | analysis.totals | trace.json | index.html |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | code-only | 128 | 101 | 0 | 0 | modules 34 · params 29,856 · max_activation 2,048 · est_flops 884,736 · degraded 2 | 137,956 B | 52,492 B |
+  | with-paper | 128 | 101 | 0 | 8 | 同上 | 144,188 B | 61,572 B |
+  | fallback-yellow | 128 | 101 | 4（全 yellow） | 0 | 同上 | 141,271 B | 55,491 B |
+
+  三份 `index.html` 都含 `<section id="analysis">`；三份 `trace.json` 都过 `validate_trace` 且 `leaked_absolute` 为 0。
+- **census**：`papertrace/` 递归 85 个 `.py`，无 >200 行；正好 200 行的两个文件（`parse_paper/latex_safe.py`、`symbols/code_table.py`）都不是本轮改动。`cli.py` 182 行（HEAD 177 + docstring 5 行）。
+- **全量**：847 passed in 139.29s，与 C6 修复轮基线一条不多一条不少（本 Task 只加断言、不加测试条数）。

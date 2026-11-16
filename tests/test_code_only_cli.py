@@ -134,6 +134,9 @@ def test_gc8_numbers_are_untouched():
         assert counts[key] == expected, (key, counts[key], expected)
     assert doc["anchors"] == []
     assert doc["unresolved"] == []
+    # C5 评审 Minor：meta.paper 整字典钉住空态——不是只查 source 一个键，
+    # 三个键都必须如实是 none/0（补键或改值都会在这里被抓）
+    assert doc["meta"]["paper"] == {"source": "none", "unit_count": 0, "ingest_mode": "none"}
     assert set(doc) == TOP_KEYS, sorted(set(doc) ^ TOP_KEYS)
 
 

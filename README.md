@@ -22,6 +22,8 @@ anchor（如 `transformer.h.0.attn` 与 `transformer.h.1.attn` 两组各出 4 �
 还没做的：mismatch 判定、交互式前端。
 这些仍然是桩，**空就是空**，不会塞示例数据。
 
+**不给论文也有东西看**：不带 `--paper` 的 `build` 会同时做一轮静态代码体检（符号台账、模块角色表、三个规模数），详见「无论文也能分析」。
+
 本地模型（Ollama / 7B / nomic-embed-text）**故意没装**，不是缺步骤。默认后端是 `offline`，任何要模型的地方会直接报 `LLMUnavailable`，不允许编造结果。
 
 ## 快速跑通
@@ -462,6 +464,70 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 - 退出码 5 时 stderr 前面可能有 torch 自己打的一二十行诊断图/警告（那是它的内部输出，
   我们拦不住）；**papertrace 的结论永远在最后一行**，脚本里请只看退出码。
 
+## 无论文也能分析
+
+不给论文也能跑。`build` 不带 `--paper` 时，除了算子级数据流图之外还会做一轮**静态代码体检**：
+结论写进 `trace.json` 的 `symbols.code` 与 `analysis` 两个字段，`index.html` 里是第 ⑥ 块
+「代码体检」。本仓库夹具的真产物在 `output/demo/code-only/`（本轮真跑：`trace.json`
+137,956 字节、`index.html` 52,492 字节，128 个节点 / 101 条边，`anchors` 与 `unresolved`
+都是 0 条）。
+
+### 能给什么
+
+- **符号台账**（`symbols.code`，5 条）：`B`/`T`/`D`/`H`/`Dh` 五个冻结符号名。**`value` 是
+  实例值、`defined_at` 指类默认值所在行**，两者本来就不是一回事（同「字段约定」里的
+  `symbols` 条）：`B=2`（`papertrace/build_trace.py:20` 的 `DEFAULT_BATCH = 2`）、
+  `T=16`（`defined_at` 指 `tests/fixtures/nanogpt/model.py:20` 那行的类默认 1024，
+  值取 `build_model()` 实际传的 16）、`D=32`（`model.py:24`，类默认 768，值取 32）、
+  `H=4`（`model.py:23`，类默认 12，值取 4）、`Dh=8`（派生量 `D // H`，算式行
+  `model.py:65` 的 `C // self.n_head`）。它记的是**配置超参**，运行时形状仍只看
+  `nodes[].shapes` 与 `meta.runtime`；HTML 第 ⑤ 块会把这张表画出来。
+- **模块角色表**（`analysis.modules`，34 条）：每个模块一个角色 + 一条**点名判据**的
+  `evidence`。角色是冻结的**十种**枚举（`papertrace/analyze_roles.py` 的 `ROLES`，
+  顺序即优先级）：`attention` / `mlp` / `layernorm` / `embedding` / `linear` /
+  `activation` / `dropout` / `residual` / `stage` / `unknown`。判据只认**直接子节点里
+  的算子名**（GC20 不跨子树聚合、R202 不认类名）：`matmul→…→softmax→…→matmul`
+  子序列判 attention；直接算子含 `layer_norm` / `embedding` 判对应角色；所有 `add`
+  都是等形状相加判 residual；直接算子全是 `dropout`、或全在冻结激活名单、或全在
+  linear 名单里，判对应角色；直接子模块里 ≥2 个含 linear/matmul 且 ≥1 个含激活算子判
+  mlp；剩下有子模块的记 `stage`，认不出来的记 `unknown`。夹具实测分布：linear 9 ·
+  dropout 7 · layernorm 5 · stage 3 · activation 2 · attention 2 · embedding 2 ·
+  mlp 2 · residual 2。
+- **三个规模数**（`analysis.totals`）：34 个模块、参数量 29,856、峰值激活 2,048 元素、
+  粗估 FLOPs 884,736、降级 2 个（`degraded_reasons` 逐条写明原因）。
+- **HTML 第 ⑥ 块「代码体检」**：一行摘要（模块数 / 参数量 / 峰值激活 / 粗估 FLOPs）、
+  一行角色分布，再加一张 34 行的表——模块、类名、角色、参数量、峰值激活、粗估 FLOPs、
+  判据；每行的「判据」列就是 `evidence` 原文，不是只给个数。
+
+### 给不了什么
+
+- `symbols.paper` 与 `symbols.mapping` 为**空**：没有论文，就没有论文侧符号，也没有
+  两侧符号的映射可列。
+- `anchors` 为**空**，`unresolved` 也**为空**：无论文时不存在「对不上账」这件事——
+  没有论文侧就没有账可对，所以这不是「失败 0 条」，别那么读。
+
+### 怎么跑
+
+```pwsh
+$env:PYTHONPATH='D:\AgentPrograms\PaperTrace;D:\AgentPrograms\PaperTrace\pydeps'
+$env:PYTHONIOENCODING='utf-8'
+$env:PYTHONUTF8='1'
+python -m papertrace build --repo tests/fixtures/nanogpt --out output/demo/code-only --force
+```
+
+### 三条口径
+
+- **参数量**：29,856 是 `kind == param` 节点的**元素数求和**，**含 weight tying 的重复
+  计数与注册 buffer**（fx 层把 BUFFER 也标成 param），与 torch 的
+  `unique named_parameters` 口径不同——同一份共享权重挂在多个模块下会被计多次，
+  所以它**可能偏大**，是「按节点数」不是「按唯一权重数」。`trace.json` 的
+  `analysis.method` 就是这段口径的原文（与 `papertrace/analyze_metrics.py` 的
+  `METHOD_TEXT` 一致）。
+- **FLOPs 是粗估**：只对 `matmul`/`linear` 估算，公式 `2 × 输出元素数 × 输入最后一维`，
+  未考虑转置语义与逐元素算子；随 batch / 序列长度**线性**变化，不是常数，别当精确值用。
+- **`unknown` 是合法输出**：角色是**结构识别**，自定义算子名不在冻结名单里就落
+  `unknown`；`unknown` 不过滤、不补 0，**它是诚实的答案**。
+
 ## 已知局限（如实说明，不装作已经支持）
 
 - **逐层对齐已落地（M4a，R161）**：结构同构命中时每个同构组各出一条 anchor（本片夹具
@@ -489,6 +555,21 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 - **花括号下标暂不匹配**：`d_{kk}` 这类带花括号的下标抽不出来，论文侧只认 `d_k` 这种
   单下标形式。
 - **`_read_title` 是启发式**：从 .tex 里猜论文标题，猜不到就留空，不联网查、不编一个。
+- **角色是结构识别，自定义算子名会落 `unknown`**：判据只认冻结名单里的算子名
+  （`papertrace/analyze_roles.py` 的 `ROLES` 十种），自研算子、融合算子、改名算子都不在
+  名单里，一律记 `unknown` 并在 `evidence` 里写明「不在冻结名单里，按约定不猜」；
+  `unknown` 不过滤、不补 0——它是诚实的答案，不是漏判。
+- **`est_flops` 是粗估**：只对 `matmul`/`linear` 按 `2 × 输出元素数 × 输入最后一维`
+  估算，未考虑转置语义与逐元素算子，并随 batch / 序列长度线性变化；它不是精确值，
+  别当准数用（口径见「无论文也能分析」）。
+- **共享权重按节点计数，参数量可能偏大**：`kind == param` 节点元素数求和，weight tying
+  的同一份权重挂在多个模块下会重复计数，注册 buffer 也计入，与 torch 的
+  `unique named_parameters` 不是同一个数。
+- **跨模块数据流还没做**：`analysis` 只回答「每个模块自己是什么、有多大」，不回答
+  「谁喂谁、张量在模块之间怎么变形」；那张跨模块图要另做切片，本切片不假装有。
+- **R221：无论文时第 ⑥ 块排在页面末尾**：HTML 的 ①–⑤ 块是论文对账视角的（③ 论文公式项、
+  ④ 未对齐在无论文时是空态，⑤ 符号表只剩代码侧），本切片真正的新内容「⑥ 代码体检」
+  排在最后，读起来不顺；要顺要么按输入模式重排块序，要么隐藏空块，都属新切片。
 
 ## 退出码
 

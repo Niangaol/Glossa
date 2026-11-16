@@ -1,15 +1,20 @@
 """PaperTrace 命令行入口。
 
-只负责两件事：把参数变成调用，把结果变成退出码。可读输出的排版都在
-papertrace/report.py（单文件 ≤200 行的约束）。
+`build` 一条链路（见 _cmd_build）：build_trace 真实追踪 → 非 `--skeleton`
+时 load_entry 取一次模块实例，先做无论文的代码分析（analyze_code 填
+symbols.code 与 analysis）→ `--paper` 不是 none 再接着接论文脊柱
+（attach_paper，复用同一个 model）→ 相对化 + schema 校验 → 落 trace.json →
+打印摘要 → 写单文件离线 HTML。本文件只负责把参数变成调用、把结果变成退出码；
+可读输出的排版都在 papertrace/report.py（本文件 ≤200 行的约束）。
 
-S9 的取舍（R79，与 papertrace/spine.py 记同一段）：`--paper` 要接论文脊柱就得
-有**模块实例**（符号表要 mod.config 与定义点定位，结构信号要 config 的四个超参名），
-而 `build_trace()` 只返回 trace dict、且 build_trace.py 一行不许改。所以这里在
+S9 的取舍（R79，与 papertrace/spine.py 记同一段）：论文脊柱要**模块实例**
+（符号表要 mod.config 与定义点定位，结构信号要 config 的四个超参名），而
+`build_trace()` 只返回 trace dict、且 build_trace.py 一行不许改。所以
 build_trace 成功后用 `load_entry(args.repo, args.entry)` **再取一次**模块实例
 （实测 0.003s，相对 build_trace 的 2.760s 可忽略）——nodes/edges 仍来自第一次
 追踪，绝不为了拿模块而重新追踪，GC8 逐项不变；load_entry 抛异常按 BuildError
-收成一行错误，不冒 traceback。
+收成一行错误，不冒 traceback。C5（R217）起这次实例同时喂无论文的代码分析，
+`--paper` 分支复用同一个 model（S9 里那次重复调用已删）。
 """
 
 from __future__ import annotations
