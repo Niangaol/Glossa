@@ -120,12 +120,35 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 <section id="symbols">
 <h2>⑤ 符号表</h2>
 <p class="sub">代码侧符号、论文侧符号与它们的映射；骨架模式下代码侧为空，映射会显示 paper_only（论文侧有符号、代码侧没观测到）。code_var 记的是冻结语义表里的对应变量，不是观测到的代码符号。</p>
+{% if analysis.symbols_note %}<p class="sub">{{ analysis.symbols_note }}</p>{% endif %}
 <table>
 <tr><th>side</th><th>symbol</th><th>value</th><th>status / 含义</th><th>defined_at / first_seen</th><th>maps to</th></tr>
 {% for s in symbol_rows %}
 <tr><td>{{ s.side }}</td><td class="mono">{{ s.name }}</td><td class="mono">{{ s.value if s.value is not none else "-" }}</td><td>{{ s.meaning }}</td><td class="mono"{% if s.where_full %} title="{{ s.where_full }}"{% endif %}>{{ s.where }}</td><td class="mono">{{ s.maps_to }}</td></tr>
 {% endfor %}
 </table>
+</section>
+
+<section id="analysis">
+<h2>⑥ 代码体检</h2>
+{% if analysis.has %}
+<p class="sub">{{ analysis.summary }}</p>
+{% if analysis.roles %}<p class="sub">角色分布：{% for r in analysis.roles %}{{ r.role }} {{ r.count }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% endif %}{% if analysis.rows %}
+<table>
+<tr><th>模块</th><th>类名</th><th>角色</th><th>参数量</th><th>峰值激活</th><th>粗估 FLOPs</th><th>判据</th></tr>
+{% for r in analysis.rows %}
+<tr><td class="mono">{{ r.module_id }}</td><td>{{ r.cls }}</td><td>{{ r.role }}</td><td class="mono">{{ r.params }}</td><td class="mono">{{ r.max_activation }}</td><td class="mono">{{ r.est_flops }}</td><td>{{ r.evidence }}</td></tr>
+{% endfor %}
+</table>
+{% else %}
+<p class="emptybox">没有模块行可列（骨架模式不加载模型，抽不到模块）。</p>
+{% endif %}
+<p class="sub">形状降级与异常：{{ analysis.degraded }}</p>
+<p class="sub">方法说明（逐字原文，不许截断）：{{ analysis.method }}</p>
+{% else %}
+<p class="emptybox">本次 build 没有代码分析数据（骨架模式或旧 trace）</p>
+{% endif %}
 </section>
 
 </main>

@@ -1,13 +1,14 @@
 """S10：把 trace.json 渲染成单文件离线 HTML（零外部引用，CSS/SVG 全内联）。
 
-五块：meta 契约来源 / 代码算子图（静态 SVG，按 parent_id 分组，标真实形状，
-anchor 画彩线）/ 论文公式项清单 / 未对齐清单 / 符号表。
+六块：meta 契约来源 / 代码算子图（静态 SVG，按 parent_id 分组，标真实形状，
+anchor 画彩线）/ 论文公式项清单 / 未对齐清单 / 符号表 / 代码体检。
 裁决口径：R96 形状口径（fmt_shape 与 report.fmt_shape 逐输入一致：None → (?)、
 [] → () 是 0 维标量；inputs 数据入参三态照抄 print_ops）、R75 xmlns 是命名空间标识符
 不是资源引用、R82 项清单取并集、R83 超 HTML_MAX_BYTES 抛 BuildError 绝不静默截断。
 完整裁决记录见 .superpowers/sdd/2026-11-14-papertrace-spine/task-S10-report.md。
 公式项清单的行构造在 papertrace/render_terms.py（R166 拆出：一条 anchor 一行，
-逐层展开，OBS-L3-1）。
+逐层展开，OBS-L3-1）；第 ⑥ 块「代码体检」的行构造在
+papertrace/render_analysis.py（R220 拆出：模板只负责摆，不写业务判断）。
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 
 from papertrace.constants import HTML_MAX_BYTES
 from papertrace.exceptions import BuildError
+from papertrace.render_analysis import analysis_panel
 from papertrace.render_terms import term_rows
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
@@ -161,6 +163,7 @@ def render_html(doc: dict) -> str:
     html = _ENV.get_template("spine.html.j2").render(
         repo_name=Path(str((meta.get("repo") or {}).get("url") or "unknown")).name,
         doc=doc, groups=_groups(doc), terms=term_rows(doc), symbol_rows=_symbol_rows(doc),
+        analysis=analysis_panel(doc),
     )
     size = len(html.encode("utf-8"))
     if size > HTML_MAX_BYTES:
