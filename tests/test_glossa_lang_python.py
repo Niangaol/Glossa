@@ -119,3 +119,23 @@ def test_deep_expression_does_not_raise_and_degrades():
     assert r["parse"] == "exact"          # 语法解析成功，不许谎报 skipped
     assert isinstance(r["symbols"], list)  # 已收集的保留（可为空或部分）
     assert any("嵌套过深" in note for note in r["degraded"]), r["degraded"]
+
+
+def test_ast_parse_recursion_is_skipped_not_raised():
+    # R374：R369 只堵了 _collect 的递归；ast.parse 自己在 ~6 KB 的长表达式上
+    # 仍会抛 RecursionError（"during ast construction"）。那一步 parser 真没成功，
+    # 所以必须如实返回 skipped，且 degraded 要点名「不代表语法有错」。
+    # 断言不钉项数（各机递归上限不同），只钉「不抛 + skipped + degraded 有记」。
+    n = max(4000, sys.getrecursionlimit() * 4)
+    d = scratch_dir("glossa-t3-parse-deep")
+    p = d / "parse_deep.py"
+    p.write_text("x = " + "+".join(["1"] * n) + "\n", encoding="utf-8")
+    try:
+        r = pylang.parse_source(p.read_text(encoding="utf-8"), "parse_deep.py")
+    except RecursionError:                # 这一行本身就是断言：不许穿透
+        raise AssertionError("packed: ast.parse 的 RecursionError 穿透了 parse_source")
+    assert r["parse"] == "skipped"        # parser 真的没完成，skipped 是事实（不违反 R369）
+    assert r["symbols"] == []
+    assert r["imports"] == []
+    assert any("ast.parse" in note and "不代表语法有错" in note
+               for note in r["degraded"]), r["degraded"]

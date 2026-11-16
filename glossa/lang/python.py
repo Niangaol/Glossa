@@ -17,6 +17,10 @@ R353：main_guard 只认模块顶层的 If（tree.body 直接子节点），函�
 R369：_collect 自己的递归会在合法长表达式上溢出（1000 项 + 连接即复现，末帧
       iter_child_nodes）。不许穿透 —— 已 append 的符号保留、degraded 记一条
       「表达式嵌套过深，符号提取不完整」，parse 仍是 'exact'（语法确实解析成功）。
+R374：ast.parse 自己在更长的表达式上仍会抛 RecursionError（"during ast construction"，
+      ≈6 KB 的 1+1+… 即复现）—— 那一步 parser 真没成功，所以如实返回 skipped
+      （parse='skipped'、symbols/imports 空），degraded 点名「不代表语法有错」，
+      否则读者会以为仓库里有坏文件。这不违反 R369：R369 禁的是「解析成功却谎报 skipped」。
 
 已知局限（如实声明，不假装已支持）：
 - import 的 asname 不记（import numpy as np 只记 specifier='numpy'），见 R351；
@@ -112,6 +116,9 @@ def parse_source(text: str, relpath: str) -> dict:
         tree = ast.parse(text, filename=relpath)
     except SyntaxError as exc:
         return _skipped(f"SyntaxError: {exc.msg} (line {exc.lineno})")
+    except RecursionError:                   # R374：ast.parse 自己也会炸（长表达式）
+        # parser 真的没完成，返回 skipped 是事实（R369 只禁「解析成功却谎报 skipped」）。
+        return _skipped("表达式嵌套过深，ast.parse 无法完成（不代表语法有错）")
     except ValueError as exc:                # 防御性：畸形 str 输入（ast 可能抛 ValueError）
         return _skipped(f"ValueError: {exc}")
     symbols: list[dict] = []
