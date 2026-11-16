@@ -9,15 +9,18 @@ from __future__ import annotations
 import argparse
 import json
 import pathlib
+import sys
 
-from glossa import facts as facts_mod
-from papertrace.exceptions import BuildError
+from glossa import facts as facts_mod, schema_repo
+from papertrace.exceptions import BuildError, TraceSchemaError
 from papertrace.exit_codes import UNIMPLEMENTED, UNTRACEABLE
 
 KINDS = ("file", "pkg", "project", "entry", "import", "symbol", "namespace",
          "graph", "excluded", "degraded", "source", "totals", "bonus")
 BUILD_FAIL = UNIMPLEMENTED          # 2：扫描或组装失败（BuildError）
 NO_REPO = UNTRACEABLE               # 5：--repo 不存在或不是目录
+LEDGER = "repo.json"                # R487：explain 默认复用 --out/repo.json
+SCHEMA_FAIL = 1                     # 1：台账读不进来 / 过不了 schema（绝不静默回落重扫）
 
 
 def positive_int(text):
@@ -64,6 +67,26 @@ def doc_or_exit(args):
         return facts_mod.build_repo_doc(root, **kw), 0
     except BuildError as exc:
         return None, fail(BUILD_FAIL, "glossa %s：%s" % (args.command, exc))
+
+
+def ledger_or_exit(args):
+    """R487：(doc, 退出码, 是否本次重扫)。台账存在且没 --force 就复用它，缺失才重扫。
+
+    读入失败（JSON 坏 / 过不了 schema）一律 exit 1 并把原文写 stderr：静默回落重扫会让
+    页面与它旁边那本台账各说一个数（评审 I2 的 228299 vs 226158 就是这么来的）。
+    """
+    path = pathlib.Path(args.out) / LEDGER
+    if path.is_file() and not getattr(args, "force", False):
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            schema_repo.validate_repo(doc)
+        except (OSError, ValueError, TraceSchemaError) as exc:
+            print("glossa explain：读不了 %s（JSON 或 schema 不合法）：%s" % (path, exc),
+                  file=sys.stderr)
+            return None, SCHEMA_FAIL, False
+        return doc, 0, False
+    doc, code = doc_or_exit(args)
+    return doc, code, True
 
 
 def _pick(doc, kind):

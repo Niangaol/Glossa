@@ -2,7 +2,9 @@
 
 analyze 写 repo.json（过 schema，1 失败 0 成功）；explain 写 explain.html（渲染失败 2）；缺运行时或
 --llm 后端不可用是 4（绝不降级）；--repo 不是目录是 5。
-退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74；--force 对 explain 无效）。
+退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74）。
+R487：explain 默认复用 --out/repo.json（缺失才重扫并在页脚注明，--force 重扫并覆盖台账）；
+台账读不进来是 1（stderr 原文，绝不静默回落重扫）。
 参数错误由 argparse 以 2 退出，与构建失败同码、靠 stderr 区分。
 serve 是 T11 的 MCP 入口（R327：换行分隔 JSON-RPC 2.0 over stdio，stdout 只写协议流）。
 facts 子命令与「--repo → doc」闸门在 glossa/cli_facts.py（R452：本文件守住 200 行上限）。
@@ -82,10 +84,22 @@ def _cmd_analyze(args):
     return OK
 
 
+def _save_ledger(doc, out):
+    """R487：--force 重扫之后把 repo.json 一起覆盖（explain 不再是只读不写）。"""
+    schema_repo.validate_repo(doc)
+    dump_trace(doc, pathlib.Path(out) / cli_facts.LEDGER, overwrite=True)
+    return OK
+
+
 def _cmd_explain(args):
-    doc, code = doc_or_exit(args)
+    doc, code, rescanned = cli_facts.ledger_or_exit(args)      # R487：默认复用同目录台账
     if doc is None:
         return code
+    if args.force:                                            # 重扫 + 覆盖台账（R487 §1）
+        try:
+            _save_ledger(doc, args.out)
+        except TraceSchemaError as exc:
+            return fail(SCHEMA_FAIL, "glossa explain：生成的 repo.json 不合法：\n%s" % exc)
     mode, name, blocks = "program", None, None
     if args.llm:
         if not _configured():
@@ -101,10 +115,12 @@ def _cmd_explain(args):
     if blocks is None:
         blocks = narrate.program(doc)
     try:
-        path = render.write_explain(doc, blocks, args.out, mode=mode, model_name=name)
+        path = render.write_explain(doc, blocks, args.out, mode=mode, model_name=name,
+                                    rescanned=rescanned)
     except BuildError as exc:
         return fail(BUILD_FAIL, "glossa explain：解释页渲染失败：%s" % exc)
-    report = render.render_explain(doc, blocks, mode=mode, model_name=name)[1]
+    report = render.render_explain(doc, blocks, mode=mode, model_name=name,
+                                   rescanned=rescanned)[1]
     print("讲解页：%s · %d 块 · 未溯源 %d 处%s" % (path, report["blocks"], report["untraced"],
                                             " · 模型 %s" % name if name else ""))
     return OK
@@ -141,7 +157,8 @@ def _common(parser):
     parser.add_argument("--repo", required=True, help="仓库根目录")
     parser.add_argument("--out", required=True, help="输出目录")
     parser.add_argument("--force", action="store_true",
-                        help="只对 analyze 生效：允许覆盖已存在的 repo.json（explain 每次覆盖，不看它）")
+                        help="analyze：允许覆盖已存在的 repo.json；explain：重扫仓库并覆盖 repo.json"
+                             "（不带它时 explain 复用 --out/repo.json，缺失才重扫）")
     parser.add_argument("--max-files", type=int, default=20_000, dest="max_files",
                         help="最多扫多少个文件（超出按连接数选点并记降级说明）")
     parser.add_argument("--no-default-excludes", action="store_true",

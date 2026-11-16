@@ -1,4 +1,5 @@
-"""R460：facts 分页边界——坏的参数响亮 exit 2，头行夹取到真实条数。"""
+"""R460：facts 分页边界；R487：explain 复用 --out/repo.json。"""
+import json
 import shutil
 from pathlib import Path
 
@@ -34,6 +35,47 @@ def test_facts_negative_limit_exits_two(capsys):
 
 def test_facts_negative_offset_exits_two(capsys):
     _reject(capsys, "--offset", "-3")
+
+
+def test_explain_reuses_ledger_and_force_rescans(capsys):
+    """R487（I2）：explain 默认渲染 --out/repo.json；源文件改了也不重扫，--force 才重扫并覆盖台账。"""
+    root, out = _root(), scratch_dir("glossa-t10f-explain-ledger")
+    assert cli.main(["analyze", "--repo", str(root), "--out", str(out)]) == 0
+    base = json.loads((out / "repo.json").read_text(encoding="utf-8"))["totals"]["files"]
+    assert cli.main(["explain", "--repo", str(root), "--out", str(out)]) == 0
+    page = (out / "explain.html").read_text(encoding="utf-8")
+    assert "全仓 %d 个文件" % base in page
+    assert "本页数据来自本次重扫" not in page          # 复用了台账，页脚不该多这句
+    (root / "extra.py").write_text("def extra():\n    return 1\n", encoding="utf-8")
+    assert cli.main(["explain", "--repo", str(root), "--out", str(out)]) == 0
+    page = (out / "explain.html").read_text(encoding="utf-8")
+    assert "全仓 %d 个文件" % base in page             # 改了源文件也没重扫：证明读的是台账
+    assert cli.main(["explain", "--repo", str(root), "--out", str(out), "--force"]) == 0
+    page = (out / "explain.html").read_text(encoding="utf-8")
+    assert "全仓 %d 个文件" % (base + 1) in page       # --force 重扫，页面反映新内容
+    assert json.loads((out / "repo.json").read_text(encoding="utf-8"))["totals"]["files"] == base + 1
+
+
+def test_explain_without_ledger_rescans_and_says_so():
+    """R487 §1：目录里没有 repo.json 时重扫，并在页脚明说数据来自本次重扫。"""
+    root, out = _root(), scratch_dir("glossa-t10f-explain-noledger")
+    assert cli.main(["explain", "--repo", str(root), "--out", str(out)]) == 0
+    page = (out / "explain.html").read_text(encoding="utf-8")
+    assert "本页数据来自本次重扫（目录里没有 repo.json）" in page
+    assert not (out / "repo.json").exists()            # 只有 --force 才写台账，缺失时只重扫
+
+
+def test_broken_ledger_exits_one_without_rescan(capsys):
+    """R487 §2：台账坏 JSON / 过不了 schema → exit 1 + stderr 原文，绝不静默回落重扫。"""
+    root, out = _root(), scratch_dir("glossa-t10f-explain-bad")
+    (out / "repo.json").write_text("{ 半个 JSON", encoding="utf-8")
+    assert cli.main(["explain", "--repo", str(root), "--out", str(out)]) == 1
+    err = capsys.readouterr().err
+    assert "repo.json" in err and "Expecting" in err
+    assert not (out / "explain.html").exists()
+    (out / "repo.json").write_text('{"meta": {}}', encoding="utf-8")   # 合法 JSON，schema 不过
+    assert cli.main(["explain", "--repo", str(root), "--out", str(out)]) == 1
+    assert "repo.json" in capsys.readouterr().err
 
 
 def test_facts_offset_past_end_says_zero_and_clamps(capsys):

@@ -69,8 +69,12 @@ def _badge(mode, model_name):
         return "本页由程序生成，未使用模型"
     raise BuildError("mode 只能是 program 或 model，收到 %r" % (mode,))
 
-def render_explain(doc, blocks, *, mode="program", model_name=None):
-    """渲染整页，返回 (html, report)；report 键：untraced / removed / notes / bytes / blocks。"""
+def render_explain(doc, blocks, *, mode="program", model_name=None, rescanned=False):
+    """渲染整页，返回 (html, report)；report 键：untraced / removed / notes / bytes / blocks。
+
+    R487/R496：rescanned=True 时模板在页脚多渲染一句「本页数据来自本次重扫」（条件在模板里，
+    不做渲染后拼接）；只这一句随参数变，其余字节不受影响。
+    """
     blocks = list(blocks or [])
     components.validate_blocks(doc, blocks)
     sections = _sections(doc, blocks)
@@ -84,7 +88,7 @@ def render_explain(doc, blocks, *, mode="program", model_name=None):
         mode=mode, untraced=untraced, sections=sections, repo_url=repo.get("url") or "未登记",
         commit=repo.get("commit") or "unknown", language=repo.get("language") or "未识别",
         created_at=meta.get("created_at") or "未登记", tool_name=tool.get("name") or "glossa",
-        tool_version=tool.get("version") or "")
+        tool_version=tool.get("version") or "", rescanned=bool(rescanned))
     size = len(html.encode("utf-8"))
     if size > HTML_MAX_BYTES:      # 运行时读模块全局：rmod.HTML_MAX_BYTES 的 monkeypatch 才生效
         raise BuildError("解释页 %d 字节，超过单文件上限 %d 字节（R317：不截断，也不删旧页）"
@@ -98,9 +102,10 @@ def render_explain(doc, blocks, *, mode="program", model_name=None):
               "blocks": len(sections)}
     return html, report
 
-def write_explain(doc, blocks, out_dir, *, mode="program", model_name=None):
+def write_explain(doc, blocks, out_dir, *, mode="program", model_name=None, rescanned=False):
     """写 <out_dir>/explain.html，每次覆盖（R74 同尺，不受 --force 约束）。"""
-    html, _report = render_explain(doc, blocks, mode=mode, model_name=model_name)
+    html, _report = render_explain(doc, blocks, mode=mode, model_name=model_name,
+                                   rescanned=rescanned)
     target = pathlib.Path(out_dir)
     target.mkdir(parents=True, exist_ok=True)
     path = target / "explain.html"

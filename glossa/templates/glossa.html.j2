@@ -71,6 +71,9 @@ footer.page { margin-top:44px; padding-top:14px; border-top:1px solid var(--line
   <p>统计口径为 listing 计数，符号链接内容未计入。</p>
   <p>目录被剪枝时，其中的文件只按 listing 计数，不会进入 files 列表。</p>
   <p>本页是单文件离线页：零脚本、零外链，样式全部内联，唯一的 xmlns 命名空间串由 SVG 自身携带。</p>
+{%- if rescanned %}
+  <p>本页数据来自本次重扫（目录里没有 repo.json）</p>
+{%- endif %}
 </footer>
 </body>
 </html>
