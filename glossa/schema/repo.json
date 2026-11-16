@@ -96,10 +96,13 @@
       "reason": {"$ref": "#/$defs/nullable_str"}, "type_only": {"type": "boolean"},
       "files": {"type": "array", "items": {"type": "string"}}}},
     "graph": {"type": "object", "additionalProperties": false, "required": ["nodes", "edges", "cycles", "reachable_from_entries", "unreachable", "layers", "level", "truncated", "omitted_isolated"], "properties": {
-      "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}}, "cycles": {"type": "array"},
+      "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}},
       "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
-      "reachable_from_entries": {"type": "array"}, "unreachable": {"type": "array"},
-      "layers": {"type": "array"}, "level": {"enum": ["file", "project"]},
+      "cycles": {"type": "array", "items": {"type": "array", "items": {"type": "string", "minLength": 1}}},
+      "layers": {"type": "array", "items": {"type": "array", "items": {"type": "string", "minLength": 1}}},
+      "reachable_from_entries": {"type": "array", "items": {"type": "string", "minLength": 1}},
+      "unreachable": {"type": "array", "items": {"type": "string", "minLength": 1}},
+      "level": {"enum": ["file", "project"]},
       "truncated": {"type": "boolean"}, "omitted_isolated": {"$ref": "#/$defs/int0"}}},
     "node": {"type": "object", "additionalProperties": false, "required": ["id", "kind", "label", "lang", "package"], "properties": {
       "id": {"type": "string", "minLength": 1}, "label": {"type": "string", "minLength": 1},
@@ -115,7 +118,9 @@
       "oversize": {"type": "array", "items": {"$ref": "#/$defs/oversize"}},
       "truncated": {"type": "boolean"}, "pruned_files": {"$ref": "#/$defs/int0"},
       "pruned_files_partial": {"type": "boolean"},
-      "secrets_seen": {"type": "array", "items": {"type": "string"}}}},
+      "secrets_seen": {"type": "array", "items": {"$ref": "#/$defs/secret"}}}},
+    "secret": {"type": "object", "additionalProperties": false, "required": ["path", "bytes"], "properties": {
+      "path": {"type": "string", "minLength": 1}, "bytes": {"$ref": "#/$defs/int0"}}},
     "rule": {"type": "object", "additionalProperties": false, "required": ["rule", "hits"], "properties": {
       "rule": {"type": "string", "minLength": 1}, "hits": {"type": "integer", "minimum": 1}}},
     "oversize": {"type": "object", "additionalProperties": false, "required": ["path", "bytes"], "properties": {

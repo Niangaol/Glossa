@@ -128,6 +128,14 @@ def test_empty_repo_doc_is_valid_and_all_zero():
     assert doc["files"] == []
 
 
+def test_every_number_appears_in_its_fact_text():
+    for name in ("ts-monorepo", "cs-solution", "vendored-mix", "empty", "py-mini"):
+        doc = facts.build_repo_doc(_copy(name))
+        for fact_id, row in doc["facts"].items():
+            missing = [n for n in row["numbers"] if str(n) not in row["text"]]
+            assert not missing, f"{name} {fact_id} 的 numbers={missing} 不在 text 里"
+
+
 def test_commit_is_read_from_git_head_without_subprocess(monkeypatch):
     def boom(*a, **k):
         raise AssertionError("不许起 subprocess（R297）")
@@ -156,6 +164,9 @@ def test_excluded_and_degraded_are_carried_into_doc():
     assert ex["files"] + ex["pruned_files"] >= 3
     assert len(ex["oversize"]) == 1
     assert ex["oversize"][0]["path"] == "big.ts"
-    assert ".env.local" in ex["secrets_seen"]
+    # R396：secrets_seen 保留名与字节数（§12），且一个字节内容都不带（GC30）
+    assert any(s["path"] == ".env.local" and s["bytes"] > 0 for s in ex["secrets_seen"])
+    assert all(set(s) == {"path", "bytes"} for s in ex["secrets_seen"])
+    schema_repo.validate_repo(doc)
     assert "abc123" not in json.dumps(doc, ensure_ascii=False)   # GC30
     assert doc["totals"]["degraded"] == len(doc["degraded"])

@@ -8,12 +8,13 @@ R303 分层：Kahn + 最长路径；环内节点（拓扑序走不到的）归�
 R304 可达：只从 target 指向单文件的入口 BFS；target=None 的复合命令不作起点。
 R305 边去重：(from,to,kind) 合并、count=条数；builtin/external/unresolved/namespace 不产边。
 R393 项目级边：project:<name> 按 projects[i]['csproj'] 换成 id；0 命中丢边、>1 命中取 csproj 升序第一个，两种情况都记 degraded，绝不猜 id。
+R406 file 级节点的 lang/package 由 doc.files 与 packages 的 path→name 映射填实（T9 按语言着色/按包分组，None 不是好默认值）。
 """
 from __future__ import annotations
 
 import collections
 
-from glossa import resolve_cs
+from glossa import facts_io, resolve_cs
 
 MAX_GRAPH_NODES = 120
 FILE_EDGE_KINDS = frozenset({"internal", "workspace", "dynamic"})
@@ -77,14 +78,9 @@ def longest_layers(node_ids: list[str], edges: list[dict]) -> list[list[str]]:
             indeg[nxt] -= 1
             if indeg[nxt] == 0:
                 queue.append(nxt)
-    stuck = [node for node in order if node not in set(done)]
     last = max((layer[node] for node in done), default=-1) + 1   # R303：环内节点归最后一层
-    for node in stuck:
-        layer[node] = max(last, layer[node])
-    buckets: dict[int, list[str]] = {}
-    for node in order:
-        buckets.setdefault(layer[node], []).append(node)
-    return [buckets[key] for key in sorted(buckets)]
+    layer.update({node: max(last, layer[node]) for node in order if node not in set(done)})
+    return [[node for node in order if layer[node] == key] for key in sorted(set(layer.values()))]
 
 def reachable(node_ids: list[str], edges: list[dict], starts: list[str]) -> list[str]:
     """从 starts 出发 BFS（只走两端都在节点集里的边），返回升序节点 id。"""
@@ -109,8 +105,7 @@ def build_graph_from(node_ids: list[str], edges: list[dict], *,
     merged: collections.Counter = collections.Counter()
     for edge in edges:                                  # R305：同 (from,to,kind) 合并计数
         merged[(edge["from"], edge["to"], edge["kind"])] += int(edge.get("count") or 1)
-    degree: collections.Counter = collections.Counter()
-    degree.update(node for src, dst, _kind in merged for node in (src, dst))
+    degree = collections.Counter(node for src, dst, _kind in merged for node in (src, dst))
     isolated = 0 if level == "project" else max(0, total_files - len(nodes))
     truncated = len(nodes) > MAX_GRAPH_NODES
     if truncated:                                       # R301：度数降序 + id 升序，确定性
@@ -185,6 +180,9 @@ def build_graph(doc: dict) -> dict:
     graph = build_graph_from(node_ids, edges, entries=starts, level=level,
                              total_files=len(files), labels=labels)
     if level == "file":
+        meta = facts_io.node_meta(files, doc.get("packages") or [])   # R406：lang/package 填实
+        for row in graph["nodes"]:
+            row.update(meta.get(row["id"]) or {"lang": None, "package": None})
         for entry in entries:
             if not entry.get("target") and entry.get("name"):
                 _note(doc["degraded"], "entries:reachability",

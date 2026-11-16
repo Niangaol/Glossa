@@ -6,6 +6,8 @@ R299：单文件失败 fail-open（parse='skipped' + degraded），root 不存�
 R367：python 的 main_guard 只信 parse；行正则只在解析被 skipped 时兜底，且记 degraded。
 R388：excluded.files 恒等于 scan.excluded.files（ext 白名单外 / ignore 命中 / oversize 三类直接归因），
 不用被剪目录的数字凑；R339 的 pruned_files 是并列的 listing 计数，原样保留、不并入任何分子，bytes 不伪造。
+R395：读字节后 strict 解码，UnicodeDecodeError → parse='skipped' + degraded（scan 的行数 replace 不喂解析器）。
+R396：secrets_seen 保留 {path, bytes} 形状（§12「只登记名与字节数」），一个字节内容都不读。
 顺序偏差（计划 Step 4 是 portable_doc→build_facts）：这里反过来——fact id 的路径是 scan 的 relpath（天然相对），portable 放最后才能连 fact:source 摘录里的本机路径一起洗掉。
 """
 
@@ -17,10 +19,8 @@ import pathlib
 import re
 
 from glossa import entries as entries_mod
-from glossa import graph, lang, manifests, manifests_cs, resolve, resolve_cs, scan
-from glossa.fact_ids import build_facts
+from glossa import fact_ids, facts_io, graph, lang, manifests, manifests_cs, resolve, resolve_cs, scan
 from glossa.lang import generic
-from glossa.repo_paths import portable_doc
 from papertrace.exceptions import BuildError
 from papertrace.paths import portable_path
 
@@ -43,25 +43,20 @@ def repo_commit(root) -> tuple[str, str | None]:
     return "unknown", "HEAD 内容不是 40 位 sha，commit 记为 unknown"
 
 
-def _degrade(bucket: list[dict], scope: str, reason: str) -> None:
-    """同 scope+reason 合并计数：一句人话说一次，别刷屏。"""
-    for row in bucket:
-        if row["scope"] == scope and row["reason"] == reason:
-            row["count"] += 1
-            return
-    bucket.append({"scope": scope, "reason": reason, "count": 1})
-
-
 def _attach(files: list[dict], root: pathlib.Path, degraded: list[dict]) -> None:
-    """逐文件 parse 并挂回 files[i]：resolve 读的正是这里挂好的 imports，顺序不能反。"""
+    """逐文件 parse 并挂回 files[i]：resolve 读的正是这里挂好的 imports，顺序不能反。
+
+    R395：strict 解码；非法字节 → parse='skipped'、零符号零 import，并记字节位置。
+    """
     for row in files:
         rel, language = row["path"], row.get("lang")
         if language not in lang.LANG_PARSERS:                 # file_only 是设计口径，不记 degraded
             parsed = generic.parse_source("", rel)
         else:
             try:
-                text = (root / rel).read_text(encoding="utf-8", errors="replace")
-                parsed = lang.parse_file(language, text, rel)
+                parsed = lang.parse_file(language, facts_io.read_text(root / rel), rel)
+            except UnicodeDecodeError as exc:                 # R395：解码失败必须真的会失败
+                parsed = {"parse": "skipped", "degraded": [facts_io.unicode_error_reason(exc)]}
             except Exception as exc:                          # R299：单文件失败不拖垮整仓
                 parsed = {"parse": "skipped", "degraded": [f"解析失败，按 skipped 处理：{exc!r}"]}
         # 符号契约拉齐：csharp 没有 end_line/parent/doc_first_line，补 None（其余键原样保留）
@@ -74,7 +69,7 @@ def _attach(files: list[dict], root: pathlib.Path, degraded: list[dict]) -> None
         row["doc_first_line"] = parsed.get("doc_first_line")
         row["degraded"] = [str(item) for item in parsed.get("degraded") or []]
         for reason in row["degraded"]:
-            _degrade(degraded, "file:" + rel, reason)
+            facts_io.degrade(degraded, "file:" + rel, reason)
 
 
 def _project_hint(path: str, projects: list[dict]) -> str | None:
@@ -98,7 +93,7 @@ def _entries_with_guards(found: list[dict], files: list[dict], degraded: list[di
     out = [entry for entry in found if entry.get("kind") != "main_guard"]
     for entry in found:
         if entry.get("kind") == "main_guard" and entry.get("name") in fallback:
-            _degrade(degraded, "entries:main_guard", "main_guard 用行正则兜底，未经 ast 确认")
+            facts_io.degrade(degraded, "entries:main_guard", "main_guard 用行正则兜底，未经 ast 确认")
             out.append(entry)
     return out + [{"kind": "main_guard", "name": row["path"], "command": "python " + row["path"],
                    "target": "file:" + row["path"], "package": None, "note": ""}
@@ -144,19 +139,18 @@ def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20
     if sharp:
         imports += list(resolve_cs.resolve_usings(sharp, projects))
     ex = dict(sc.get("excluded") or {})                      # R388：files 只认 scan 的直接归因
-    ex["secrets_seen"] = [str(item.get("path") if isinstance(item, dict) else item)  # GC30：绝不带内容
-                          for item in sc.get("secrets_seen") or []]
+    ex["secrets_seen"] = facts_io.secrets(sc.get("secrets_seen"))   # R396：名 + 字节数
     for key, default in (("rules", []), ("bytes", 0), ("oversize", []), ("truncated", False),
                          ("pruned_files", 0), ("pruned_files_partial", False)):
         ex.setdefault(key, default)
     for row in list(man.get("degraded") or []) + list(cs.get("degraded") or []):
-        _degrade(degraded, str(row.get("scope") or "manifest"), str(row.get("reason") or "未给出原因"))
+        facts_io.degrade(degraded, str(row.get("scope") or "manifest"), str(row.get("reason") or "未给出原因"))
     commit, reason = repo_commit(root)
     url = portable_path(str(root), base=pathlib.Path.cwd())
     if reason:
-        _degrade(degraded, "meta.repo.commit", reason)
+        facts_io.degrade(degraded, "meta.repo.commit", reason)
     if pathlib.PurePath(url).is_absolute():                   # R296：base 之外原样返回
-        _degrade(degraded, "meta.repo.url", "仓库在当前工作目录之外，只登记目录名")
+        facts_io.degrade(degraded, "meta.repo.url", "仓库在当前工作目录之外，只登记目录名")
         url = root.name
     langs = collections.Counter(row["lang"] for row in files)
     doc = {
@@ -175,6 +169,9 @@ def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20
         "excluded": ex, "degraded": degraded, "facts": {}}
     doc["graph"] = graph.build_graph(doc)                     # 必须在 totals/facts 之前（R292）
     doc["totals"] = totals_of(doc)
-    doc["facts"] = build_facts(doc, repo_root=root, bonus=bonus)
-    portable_doc(doc, base=root)                              # 最后统一便携化（含 facts.text）
+    doc["facts"] = fact_ids.build_facts(doc, repo_root=root, bonus=bonus)
+    if doc["totals"]["degraded"] != len(doc["degraded"]):     # R398 M2：摘录阶段的降级要追平 totals
+        doc["totals"] = totals_of(doc)
+        doc["facts"]["fact:totals"] = fact_ids.totals_fact(doc["totals"])
+    facts_io.make_portable(doc, root)                          # 最后统一便携化（含 facts.text）
     return doc

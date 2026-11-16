@@ -2,9 +2,12 @@
 
 FACT_KINDS 是 14 种 id 的**唯一清单**：schema 的 patternProperties 只放宽到 '^fact:'，
 种类的契约钉在这里（一个不多一个不少）。
-numbers 一律走 numbers_of：只收 int、排除 bool（True 是 int 的子类，不排除会把「一个真」
-写成数字 1）、float 整数转 int、升序去重。
+numbers 一律走 numbers_of（只在 facts_io 实现一次，这里原样再导出），且**每个数字都要在
+text 里出现**（R398 M3：numbers 是正文引用值，不是死数据）。
 text 是一句人话且**不许空串**：讲解层引用了 id 却拿不到话说，就是空引用。
+同 id 多来源（namespace/entry/pkg/同名符号）时 text 要列出后续来源，最多 3 处，其余「等 N 处」（R398 M4）。
+摘录 120 字截断必须标「…（已截断，原文共 N 字符）」（M1）；行区间钳位与取不到原文的判断在
+facts_io.source_span（M2）：取不到就**不产** fact:source，只记降级。
 引用不存在的 id → require 抛 BuildError 并点名（GC33：不猜、不静默跳过）。
 """
 
@@ -12,24 +15,15 @@ from __future__ import annotations
 
 import pathlib
 
+from glossa import facts_io
+from glossa.facts_io import numbers_of
 from papertrace.exceptions import BuildError
 
 FACT_KINDS: tuple[str, ...] = (
     "totals", "files", "file", "pkg", "project", "entry", "import", "symbol",
     "namespace", "graph", "excluded", "degraded", "source", "bonus")
 
-
-def numbers_of(values) -> list[int]:
-    """只收 int（排除 bool）、float 整数转 int、升序去重。"""
-    out: set[int] = set()
-    for value in values:
-        if isinstance(value, bool):
-            continue
-        if isinstance(value, int):
-            out.add(value)
-        elif isinstance(value, float) and value.is_integer():
-            out.add(int(value))
-    return sorted(out)
+EXCERPT_CHARS = 120
 
 
 def numbers_for(facts: dict, cites: list[str]) -> set[int]:
@@ -47,25 +41,49 @@ def require(facts: dict, cites: list[str]) -> None:
         raise BuildError("事实台账里没有这些 fact id：" + "、".join(missing))
 
 
-def _put(facts: dict, fact_id: str, numbers, text: str) -> None:
-    """登记一条事实；同 id 重复出现（如同名重载符号）时合并 numbers、保留首条 text。"""
+def _merge_text(head: str, extras: list[str]) -> str:
+    """R398 M4：首条 text + 后续来源（最多列 3 处，其余按总数披露）。"""
+    total = len(extras) + 1
+    shown = "、".join(extras if total <= 3 else extras[:2])
+    return f"{head.rstrip('。')}。另见：{shown}" + (f" 等 {total} 处。" if total > 3 else "。")
+
+
+def _put(facts: dict, fact_id: str, numbers, text: str,
+         srcs: dict | None = None, source: str | None = None) -> None:
+    """登记一条事实；给了 source 时，同 id 的后续来源会补进 text（R398 M4）。"""
     row = facts.get(fact_id)
     if row is None:
         facts[fact_id] = {"numbers": numbers_of(numbers), "text": text}
-    else:
-        row["numbers"] = numbers_of(list(row["numbers"]) + list(numbers))
+        if srcs is not None and source is not None:
+            srcs[fact_id] = {"head": text, "srcs": []}
+        return
+    row["numbers"] = numbers_of(list(row["numbers"]) + list(numbers))
+    if srcs is None or source is None:
+        return
+    slot = srcs.setdefault(fact_id, {"head": row["text"], "srcs": []})
+    if source not in slot["srcs"]:
+        slot["srcs"].append(source)
+        row["text"] = _merge_text(slot["head"], slot["srcs"])
 
 
 def _totals_text(totals: dict) -> str:
+    """R398 M3：totals 的每个键都写进这一句（否则 numbers 里一半数字是死数据）。"""
     by_lang = "、".join(f"{name} {count}" for name, count in (totals.get("by_lang") or {}).items())
     return (f"全仓 {totals.get('files', 0)} 个文件（{by_lang or '无'}）、{totals.get('symbols', 0)} 个符号、"
             f"{totals.get('imports', 0)} 条 import（{totals.get('unresolved', 0)} 条 unresolved）、"
             f"{totals.get('packages', 0)} 个包、{totals.get('projects', 0)} 个项目、"
-            f"{totals.get('entries', 0)} 个入口；排除 {totals.get('excluded_files', 0)} 个文件、"
-            f"{totals.get('degraded', 0)} 条降级。")
+            f"{totals.get('entries', 0)} 个入口；依赖图 {totals.get('edges', 0)} 条边、"
+            f"{totals.get('cycles', 0)} 个环、{totals.get('unreachable', 0)} 个不可达文件；"
+            f"排除 {totals.get('excluded_files', 0)} 个文件 / {totals.get('excluded_bytes', 0)} 字节"
+            f"（{totals.get('oversize', 0)} 个超限文件），{totals.get('degraded', 0)} 条降级。")
 
 
-def _file_facts(facts: dict, row: dict) -> None:
+def totals_fact(totals: dict) -> dict:
+    """fact:totals 与 totals 同源的唯一入口（build_repo_doc 追平 totals 时复用它）。"""
+    return {"numbers": numbers_of(list(totals.values())), "text": _totals_text(totals)}
+
+
+def _file_facts(facts: dict, srcs: dict, row: dict) -> None:
     symbols, imports = row.get("symbols") or [], row.get("imports") or []
     _put(facts, "fact:file:" + row["path"],
          [row.get("bytes"), row.get("lines"), len(symbols), len(imports)],
@@ -76,70 +94,75 @@ def _file_facts(facts: dict, row: dict) -> None:
         span = f"第 {line} 行" if end is None else f"第 {line}–{end} 行"
         note = "" if end is not None else "（只有声明行，end_line 未给出）"
         _put(facts, f"fact:symbol:{row['path']}#{sym.get('name')}", [line, end],
-             f"{row['path']} 的 {sym.get('kind')} {sym.get('name')} 在{span}{note}。")
+             f"{row['path']} 的 {sym.get('kind')} {sym.get('name')} 在{span}{note}。",
+             srcs, f"{row['path']} 第 {line} 行")
     for ns in row.get("namespaces") or []:
         _put(facts, "fact:namespace:" + ns["name"], [ns.get("line")],
-             f"命名空间 {ns['name']} 由 {row['path']} 第 {ns.get('line')} 行声明（{ns.get('style')}）。")
+             f"命名空间 {ns['name']} 由 {row['path']} 第 {ns.get('line')} 行声明（{ns.get('style')}）。",
+             srcs, f"{row['path']} 第 {ns.get('line')} 行（{ns.get('style')}）")
 
 
-def _source_facts(facts: dict, files: list[dict], repo_root) -> None:
-    """R294：按每个符号的行区间摘原文；end_line 为 None 只摘声明行并注明。"""
+def _source_facts(facts: dict, files: list[dict], repo_root, degraded: list[dict]) -> None:
+    """R294：按符号行区间摘原文；R398 M1 截断留标记、M2 坏区间钳位或只记降级。"""
     root, cache = pathlib.Path(repo_root), {}
     for row in files:
-        if not row.get("symbols"):
+        symbols = row.get("symbols") or []
+        if not symbols:
             continue
         rel = row["path"]
-        if rel not in cache:
-            try:
-                cache[rel] = (root / rel).read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
-                cache[rel] = []
-        lines = cache[rel]
-        for sym in row["symbols"]:
+        for sym in symbols:
             line, end = sym.get("line") or 1, sym.get("end_line")
-            end = end if end is not None else line
-            excerpt = " ".join(lines[line - 1:end]).strip() if 0 < line <= len(lines) else ""
-            if excerpt:
-                text = f"{rel} 第 {line}–{end} 行原文：{excerpt[:120]}"
-            else:
-                text = f"{rel} 第 {line}–{end} 行没有摘到原文（文件共 {len(lines)} 行）"
-            if sym.get("end_line") is None:
+            edge = line if end is None else end
+            low, high, total, excerpt = facts_io.source_span(root / rel, line, end, cache)
+            if not excerpt:                                # 取不到原文 → 不产 fact，只记降级
+                facts_io.degrade(degraded, "facts:source",
+                                 f"符号 {sym.get('name')} 的行区间 {line}–{edge} 与文件行数 {total} 不符，未摘原文")
+                continue
+            numbers, text = [low, high], f"{rel} 第 {low}–{high} 行原文：{excerpt}"
+            if len(excerpt) > EXCERPT_CHARS:               # M1：截断必须标出来
+                numbers.append(len(excerpt))
+                text = (f"{rel} 第 {low}–{high} 行原文：{excerpt[:EXCERPT_CHARS]}"
+                        f"…（已截断，原文共 {len(excerpt)} 字符）")
+            if (low, high) != tuple(sorted((int(line), int(edge)))):
+                text += f"（行区间 {line}–{edge} 已钳到文件 {total} 行内）"
+            if end is None:
                 text += "（只摘录了声明行）"
-            _put(facts, f"fact:source:{rel}:{line}-{end}", [line, end, len(lines)], text)
+            _put(facts, f"fact:source:{rel}:{low}-{high}", numbers, text)
 
 
 def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict:
     """生成 14 种 fact id；顺序固定（字典插入序即输出序），可复现。"""
-    facts: dict = {}
-    totals = doc.get("totals") or {}
-    _put(facts, "fact:totals", totals.values(), _totals_text(totals))
+    facts, srcs = {}, {}
+    facts["fact:totals"] = totals_fact(doc.get("totals") or {})
     files = doc.get("files") or []
-    _put(facts, "fact:files",
-         [len(files), sum(f.get("bytes") or 0 for f in files),
-          sum(f.get("lines") or 0 for f in files),
-          sum(len(f.get("symbols") or []) for f in files)],
-         f"共保留 {len(files)} 个文件，合计 {sum(f.get('lines') or 0 for f in files)} 行、"
-         f"{sum(f.get('bytes') or 0 for f in files)} 字节。")
+    bytes_sum = sum(row.get("bytes") or 0 for row in files)
+    lines_sum = sum(row.get("lines") or 0 for row in files)
+    symbols_sum = sum(len(row.get("symbols") or []) for row in files)
+    _put(facts, "fact:files", [len(files), bytes_sum, lines_sum, symbols_sum],
+         f"共保留 {len(files)} 个文件，合计 {lines_sum} 行、{bytes_sum} 字节、{symbols_sum} 个符号。")
     for row in files:
-        _file_facts(facts, row)
+        _file_facts(facts, srcs, row)
     for pkg in doc.get("packages") or []:
         if not pkg.get("name"):
             continue
         _put(facts, "fact:pkg:" + pkg["name"],
              [len(pkg.get("deps") or {}), len(pkg.get("dev_deps") or {}), len(pkg.get("scripts") or {})],
              f"包 {pkg['name']}（manifest {pkg.get('manifest')}）：{len(pkg.get('deps') or {})} 个依赖、"
-             f"{len(pkg.get('dev_deps') or {})} 个开发依赖、{len(pkg.get('scripts') or {})} 个脚本。")
+             f"{len(pkg.get('dev_deps') or {})} 个开发依赖、{len(pkg.get('scripts') or {})} 个脚本。",
+             srcs, f"manifest {pkg.get('manifest')}")
     for proj in doc.get("projects") or []:
         _put(facts, "fact:project:" + str(proj.get("name")),
              [len(proj.get("package_refs") or []), len(proj.get("project_refs") or [])],
              f"项目 {proj.get('name')}（{proj.get('csproj')}，目标框架 {proj.get('target_framework')}，"
              f"输出类型 {proj.get('output_type')}）：{len(proj.get('package_refs') or [])} 个包引用、"
-             f"{len(proj.get('project_refs') or [])} 个项目引用。")
+             f"{len(proj.get('project_refs') or [])} 个项目引用。",
+             srcs, str(proj.get("csproj")))
     entries = doc.get("entries") or []
     for index, entry in enumerate(entries, 1):
         _put(facts, "fact:entry:" + str(entry.get("name")), [index, len(entries)],
              f"第 {index}/{len(entries)} 个入口：{entry.get('kind')} {entry.get('name')}，"
-             f"命令 {entry.get('command')}，目标 {entry.get('target')}。")
+             f"命令 {entry.get('command')}，目标 {entry.get('target')}。",
+             srcs, f"{entry.get('kind')} {entry.get('name')}（第 {index}/{len(entries)} 个）")
     for index, imp in enumerate(doc.get("imports") or [], 1):
         line = imp.get("line")
         _put(facts, f"fact:import:{index}", [index, line],
@@ -152,18 +175,21 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
           len(graph.get("layers") or [])],
          f"依赖图（{graph.get('level')} 级）：{len(graph.get('nodes') or [])} 个节点、"
          f"{len(graph.get('edges') or [])} 条边、{len(graph.get('cycles') or [])} 个环、"
-         f"{len(graph.get('unreachable') or [])} 个不可达文件。")
+         f"{len(graph.get('unreachable') or [])} 个不可达文件，分 {len(graph.get('layers') or [])} 层。")
     excluded = doc.get("excluded") or {}
     _put(facts, "fact:excluded",
          [excluded.get("files"), excluded.get("bytes"), len(excluded.get("rules") or []),
           len(excluded.get("oversize") or []), excluded.get("pruned_files")],
          f"排除 {excluded.get('files', 0)} 个文件 / {excluded.get('bytes', 0)} 字节，"
-         f"命中 {len(excluded.get('rules') or [])} 条规则，{len(excluded.get('oversize') or [])} 个超限文件。")
-    degraded = doc.get("degraded") or []
-    _put(facts, "fact:degraded", [len(degraded)] + [d.get("count") for d in degraded],
-         f"共 {len(degraded)} 条降级说明（没看清的地方都记在这里）。")
+         f"命中 {len(excluded.get('rules') or [])} 条规则，{len(excluded.get('oversize') or [])} 个超限文件，"
+         f"被剪目录 listing 计数 {excluded.get('pruned_files', 0)} 个文件。")
+    degraded = doc.setdefault("degraded", [])
+    counts = [int(row.get("count") or 1) for row in degraded]
+    detail = f"（逐条计数 {'、'.join(str(c) for c in counts)}）" if counts else ""
+    _put(facts, "fact:degraded", [len(degraded)] + counts,
+         f"共 {len(degraded)} 条降级说明{detail}，没看清的地方都记在这里。")
     if repo_root is not None:
-        _source_facts(facts, files, repo_root)
+        _source_facts(facts, files, repo_root, degraded)
     if bonus is not None:
         counts = [len(bonus.get(key) or []) for key in ("nodes", "edges", "anchors")]
         _put(facts, "fact:bonus", counts,
