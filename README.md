@@ -623,5 +623,5 @@ python -m glossa facts   --repo D:\path\to\repo --kind file --limit 20 # 翻台�
 
 三个子命令的退出码：0 成功 / 1 repo.json 过不了 schema / 2 渲染失败 / 4 缺运行时或 `--llm` 后端不可用（**绝不静默降级**）/ 5 `--repo` 不存在。
 
-退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74；--force 对 explain 无效）。
+退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74）。explain 默认复用 `--out/repo.json`（缺失才重扫并在页脚注明），`--force` 是重扫并覆盖台账，读到坏台账 exit 1、不静默重扫。
 参数错误由 argparse 以 2 退出，与构建失败同码、靠 stderr 区分。

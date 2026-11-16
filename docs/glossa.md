@@ -18,14 +18,14 @@ python -m glossa explain --repo D:\path\to\repo --out output\glossa
 python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 ```
 
-常用开关：`--force` 只对 analyze 的 repo.json 生效、`--max-files N` 限制扫描文件数、`--no-default-excludes` 关掉默认排除、`--bonus-trace <旧 trace.json>` 与旧产物对账。
+常用开关：`--force` 对 analyze 是覆盖 repo.json、对 explain 是**重扫并覆盖 repo.json**（不加则优先复用已有台账，只有台账缺失才重扫、并在页脚写明「本页数据来自本次重扫」）；`--max-files N` 限制扫描文件数、`--no-default-excludes` 关掉默认排除、`--bonus-trace <旧 trace.json>` 与旧产物对账。
 
-退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74；--force 对 explain 无效）。
+退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74，这一点与 `--force` 无关）。explain 读到坏台账时**不静默重扫**：stderr 报原文并以 1 退出。
 参数错误由 argparse 以 2 退出，与构建失败同码、靠 stderr 区分。
 
 ## 两样产物
 
-- **repo.json**：11 个顶层键 `meta / totals / files / packages / projects / entries / imports / graph / excluded / degraded / facts`，过 `glossa/schema/repo.json` 校验。`files` 每行都有 `path / bytes / lines / lang / parse / symbols / imports`；`graph` 有 `nodes / edges / cycles / layers / unreachable / truncated_nodes`。
+- **repo.json**：11 个顶层键 `meta / totals / files / packages / projects / entries / imports / graph / excluded / degraded / facts`，过 `glossa/schema/repo.json` 校验。`files` 每行都有 `path / bytes / lines / lang / parse / symbols / imports`；`graph` 有 `nodes / edges / cycles / layers / unreachable / truncated / truncated_nodes / omitted_isolated / omitted_manifests / project_edges`。
 - **explain.html**：一张单文件离线页，不带 JS、不引外链，折叠全靠 `<details>`。页头写明「本页由程序生成，未使用模型」或模型徽章，以及未溯源数字的处数。
 
 ## 退出码
@@ -33,7 +33,7 @@ python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 | 码 | 含义 |
 | -- | ---- |
 | 0 | 成功 |
-| 1 | 生成或读到的 repo.json 过不了 schema |
+| 1 | 生成或读到的 repo.json 过不了 schema（explain 读到坏台账同样 exit 1，不静默重扫） |
 | 2 | 构建或渲染失败（BuildError；含解释页超过 HTML_MAX_BYTES） |
 | 3 | analyze 的 repo.json 已存在且没给 --force（explain 不受此码约束） |
 | 4 | 缺运行时，或 --llm 指定的模型后端不可用（**绝不静默降级**） |
