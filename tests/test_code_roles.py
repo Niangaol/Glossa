@@ -183,3 +183,82 @@ def test_roles_do_not_depend_on_class_names(nodes):
     assert after == before, "涂掉类名后角色变了，说明判据偷看了类名"
     # 探针有效性：class 字段确实被改写，证明上面这个相等不是空转
     assert all(r["class"] == "Foo" for r in module_roles(forged))
+
+def _synth_node(node_id, parent_id, level, op, kind, inputs=None, shape_out=None):
+    """合成 trace 节点；算子节点必须 kind == "op" 才算「这个模块在算什么」。"""
+    return {
+        "id": node_id,
+        "parent_id": parent_id,
+        "level": level,
+        "op": op,
+        "label": op,
+        "loc": "model." + op,
+        "kind": kind,
+        "shape_in": list(shape_out or []),
+        "inputs": [list(i) for i in inputs] if inputs else [],
+        "shape_out": list(shape_out or []),
+        "outputs": [],
+        "dtype": "float32",
+        "inplace": False,
+        "source": "runtime",
+        "degraded": False,
+        "degraded_reason": None,
+        "repeat": 1,
+        "stale": False,
+    }
+
+
+def _role_of(module_id, nodes):
+    """只取这一个模块的角色行，省得每个用例都写字典推导。"""
+    return {r["module_id"]: r for r in module_roles(nodes)}[module_id]
+
+
+def test_attention_needs_matmul_on_both_sides_of_softmax():
+    """matmul → softmax，只有一侧有 matmul：不是 attention。
+
+    钉住 analyze_roles.py:75-84 的 `if before and after`——改成 or 就红。
+    """
+    nodes = [
+        _synth_node("m", None, "module", "Mystery", None),
+        _synth_node("m/@001", "m", "op", "matmul", "op"),
+        _synth_node("m/@002", "m", "op", "softmax", "op"),
+    ]
+    got = _role_of("m", nodes)
+    assert got["role"] == "unknown", f"softmax 只有一侧有 matmul，却给了 {got['role']}"
+    assert "attention" not in got["evidence"], f"evidence 里出现了 attention：{got['evidence']}"
+
+
+def test_residual_requires_every_add_to_be_equal_shaped():
+    """两个 add：第一个等形状、第二个两项形状不齐——不是 residual。
+
+    钉住 analyze_roles.py:97-102 的「每个 add 都符合」——换成 any 就红。
+    """
+    nodes = [
+        _synth_node("m", None, "module", "Mystery", None),
+        _synth_node("m/@001", "m", "op", "add", "op",
+                    inputs=[[2, 8, 32], [2, 8, 32]], shape_out=[2, 8, 32]),
+        _synth_node("m/@002", "m", "op", "add", "op",
+                    inputs=[[2, 8, 32], [2, 8, 64]], shape_out=[2, 8, 32]),
+    ]
+    got = _role_of("m", nodes)
+    assert got["role"] == "unknown", f"有一个 add 形状不齐，却给了 {got['role']}"
+    assert "residual" not in got["evidence"], f"evidence 里出现了 residual：{got['evidence']}"
+
+
+def test_mlp_excludes_modules_that_do_softmax_themselves():
+    """子模块像 mlp（2 个线性 + 1 个激活），但自身直接算子有 softmax：只能落到 stage。
+
+    钉住 analyze_roles.py:112-113 的排除闸——删掉就红。
+    """
+    nodes = [
+        _synth_node("m", None, "module", "Mystery", None),
+        _synth_node("m/@001", "m", "op", "softmax", "op"),
+        _synth_node("m/fc", "m", "module", "Foo", None),
+        _synth_node("m/fc/@linear", "m/fc", "op", "linear", "op"),
+        _synth_node("m/fc/@gelu", "m/fc", "op", "gelu", "op"),
+        _synth_node("m/proj", "m", "module", "Bar", None),
+        _synth_node("m/proj/@matmul", "m/proj", "op", "matmul", "op"),
+    ]
+    got = _role_of("m", nodes)
+    assert got["role"] == "stage", f"自身有 softmax 却被判成 {got['role']}"
+    assert "2 个直接子模块" in got["evidence"]
