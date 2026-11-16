@@ -3,6 +3,8 @@
 R269：复合 shell 命令（&& / || / ; / |）target 必须 None + note「命令未指向单文件」。
 R345：py script 的模块找不到文件 → None + note 含模块名，不许猜相近文件。
 R346：只有 Exe / WinExe 产 dotnet_project 入口。
+R359：kind 只有四种（npm_script / py_script / main_guard / dotnet_project），第一版不产 module_main。
+R361：main_guard 正则锚第 0 列（^if），函数/类体内的守卫不是入口。
 main_guard 本任务用按行正则；T3 完成后改吃 ast 结果（本任务不依赖 T3）。
 """
 
@@ -11,7 +13,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-_MAIN_GUARD = re.compile(r"""^\s*if\s+__name__\s*==\s*["']__main__["']\s*:""")
+_MAIN_GUARD = re.compile(r"""^if\s+__name__\s*==\s*["']__main__["']\s*:""")   # R361：锚第 0 列
 
 
 def _npm_target(cmd: str, paths: set[str]) -> tuple[str | None, str]:

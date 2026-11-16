@@ -1,4 +1,5 @@
 """T2：manifest 与入口。真跑夹具，数字不手编。"""
+import json
 import shutil
 from pathlib import Path
 
@@ -19,6 +20,21 @@ def test_workspaces_map_package_names_to_dirs():
     m = manifests.read_manifests(root, sc["files"])
     assert manifests.workspace_map(m["packages"]) == {
         "@x/a": "packages/a", "@x/b": "packages/b"}
+    # R360：通配展开只认已解析索引；被排除目录不许报「缺 package.json」
+    pkg = root / "package.json"
+    data = json.loads(pkg.read_text(encoding="utf-8"))
+    data["workspaces"] = ["packages/*"]
+    pkg.write_text(json.dumps(data), encoding="utf-8")
+    for sub, nm in (("packages/node_modules/left-pad", "left-pad"),
+                    ("packages/.git/inner", "inner")):
+        d = root / sub
+        d.mkdir(parents=True)
+        (d / "package.json").write_text(json.dumps({"name": nm}), encoding="utf-8")
+    sc = scan.scan_repo(root)
+    m = manifests.read_manifests(root, sc["files"])
+    assert manifests.workspace_map(m["packages"]) == {
+        "@x/a": "packages/a", "@x/b": "packages/b"}
+    assert m["degraded"] == [], m["degraded"]
 
 
 def test_npm_scripts_become_entries_with_target_files():
@@ -57,7 +73,13 @@ def test_pyproject_scripts_and_main_guard_are_entries():
     ghost = next(e for e in es if e["name"] == "ghost")
     assert ghost["target"] is None
     assert "nosuchmod" in ghost["note"]
-
+    # R361：函数体内的守卫不是入口（临时正则必须锚在第 0 列）
+    (root / "nested.py").write_text("def f():\n    if __name__ == '__main__':\n        pass\n",
+                                    encoding="utf-8")
+    sc = scan.scan_repo(root)
+    m = manifests.read_manifests(root, sc["files"])
+    es = entries.find_entries(root, sc['files'], m)
+    assert ("main_guard", "nested.py") not in {(e["kind"], e["name"]) for e in es}
 
 def test_missing_manifest_is_degraded_not_crash():
     root, sc = _scan("ts-monorepo")
@@ -88,6 +110,8 @@ def test_requirements_txt_lists_names_only():
     m = manifests.read_manifests(root, sc["files"])
     assert m["python"]["deps"] == ["numpy", "requests"]
     assert any("-r" in d["reason"] for d in m["degraded"])
+    assert len(m["degraded"]) == 1                 # R358：注释行与空行不是降级
+    assert all("comment" not in d["reason"] for d in m["degraded"])
 
 
 def test_csproj_and_sln_are_read():

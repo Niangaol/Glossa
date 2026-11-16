@@ -4,6 +4,7 @@ R272：requirements 只取包名（剥版本约束/extras/markers）；-r 等选
 R273：读失败（JSON 坏/文件缺/TOML 坏）记 degraded，不抛。
 R344：packages 列表含根包与子包；workspace 键是 bool；workspace_map 只收子包。
 R347：没有任何 manifest 时仍返回完整三键；「没有」是正常事实不是降级。
+R360：workspace 通配候选只从 files 索引派生（不 iterdir 磁盘），被排除目录零 degraded。
 """
 
 from __future__ import annotations
@@ -34,19 +35,20 @@ def _pkg_entry(rel: str, data: dict, workspace: bool) -> dict:
             "workspace": workspace}
 
 
-def _workspace_dirs(root: pathlib.Path, patterns: list) -> list[str]:
-    """第一版只支持字面目录与 packages/* 一层通配。"""
+def _workspace_dirs(patterns: list, paths: set[str]) -> list[str]:
+    """第一版只支持字面目录与 packages/* 一层通配；候选只从索引派生（R360）。"""
     out: list[str] = []
     for pat in patterns:
         pat = str(pat).strip().rstrip("/")
         if pat.endswith("/*"):
             prefix = pat[:-2]
-            base = root / prefix
-            if base.is_dir():
-                out.extend(prefix + "/" + d.name for d in sorted(base.iterdir()) if d.is_dir())
-        elif pat and (root / pat).is_dir():
+            head = prefix + "/"
+            dirs = sorted({p[len(head):].split("/", 1)[0] for p in paths
+                           if p.startswith(head) and "/" in p[len(head):]})
+            out.extend(prefix + "/" + d for d in dirs)
+        elif pat:
             out.append(pat)
-    return out
+    return list(dict.fromkeys(out))
 
 
 def _req_names(root: pathlib.Path, degraded: list[dict]) -> list[str]:
@@ -106,15 +108,20 @@ def read_manifests(root: pathlib.Path, files: list[dict]) -> dict:
     ws = (root_data or {}).get("workspaces") or []
     if isinstance(ws, dict):
         ws = ws.get("packages") or []
-    for d in _workspace_dirs(root, ws):
+    for d in _workspace_dirs(ws, paths):
         rel = d + "/package.json"
+        if not any(p.startswith(d + "/") for p in paths):
+            degraded.append({"scope": rel,
+                             "reason": "workspaces 声明的目录在已解析文件索引里没有任何文件（可能不存在或被排除）",
+                             "count": 1})
+            continue
         seen.add(rel)
         if rel in paths:
             data = _load_json(root, rel, degraded)
             if data is not None:
                 packages.append(_pkg_entry(rel, data, True))
         else:
-            degraded.append({"scope": rel, "reason": "workspace 子包缺 package.json", "count": 1})
+            degraded.append({"scope": rel, "reason": "在已解析文件索引里没有 package.json", "count": 1})
     for rel in sorted(paths - seen):
         if pathlib.PurePosixPath(rel).name == "package.json":
             data = _load_json(root, rel, degraded)
