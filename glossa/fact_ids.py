@@ -5,7 +5,8 @@ FACT_KINDS 是 14 种 id 的**唯一清单**：schema 的 patternProperties 只�
 numbers 一律走 numbers_of（只在 facts_io 实现一次，这里原样再导出），且**每个数字都要在
 text 里出现**（R398 M3：numbers 是正文引用值，不是死数据）。
 text 是一句人话且**不许空串**：讲解层引用了 id 却拿不到话说，就是空引用。
-同 id 多来源（namespace/entry/pkg/同名符号）时 text 要列出后续来源，最多 3 处，其余「等 N 处」（R398 M4）。
+同 id 多来源（namespace/entry/pkg/同名符号）时 text 要列出后续来源，最多 3 处，其余「等 N 处」（R398 M4）；
+numbers 与 text 必须同步——只收 text 里真展示的来源行号，「等 N 处」的 N 不进 numbers（R426）。
 摘录 120 字截断必须标「…（已截断，原文共 N 字符）」（M1）；行区间钳位与取不到原文的判断在
 facts_io.source_span（M2）：取不到就**不产** fact:source，只记降级。
 引用不存在的 id → require 抛 BuildError 并点名（GC33：不猜、不静默跳过）。
@@ -13,17 +14,13 @@ facts_io.source_span（M2）：取不到就**不产** fact:source，只记降级
 
 from __future__ import annotations
 
-import pathlib
-
-from glossa import facts_io
+from glossa import fact_text, facts_io
 from glossa.facts_io import numbers_of
 from papertrace.exceptions import BuildError
 
 FACT_KINDS: tuple[str, ...] = (
     "totals", "files", "file", "pkg", "project", "entry", "import", "symbol",
     "namespace", "graph", "excluded", "degraded", "source", "bonus")
-
-EXCERPT_CHARS = 120
 
 
 def numbers_for(facts: dict, cites: list[str]) -> set[int]:
@@ -41,29 +38,21 @@ def require(facts: dict, cites: list[str]) -> None:
         raise BuildError("事实台账里没有这些 fact id：" + "、".join(missing))
 
 
-def _merge_text(head: str, extras: list[str]) -> str:
-    """R398 M4：首条 text + 后续来源（最多列 3 处，其余按总数披露）。"""
-    total = len(extras) + 1
-    shown = "、".join(extras if total <= 3 else extras[:2])
-    return f"{head.rstrip('。')}。另见：{shown}" + (f" 等 {total} 处。" if total > 3 else "。")
-
-
 def _put(facts: dict, fact_id: str, numbers, text: str,
          srcs: dict | None = None, source: str | None = None) -> None:
-    """登记一条事实；给了 source 时，同 id 的后续来源会补进 text（R398 M4）。"""
+    """登记一条事实；同 id 的后续来源由 fact_text.merge_into 同步 text 与 numbers（R426）。"""
     row = facts.get(fact_id)
     if row is None:
         facts[fact_id] = {"numbers": numbers_of(numbers), "text": text}
         if srcs is not None and source is not None:
-            srcs[fact_id] = {"head": text, "srcs": []}
+            srcs[fact_id] = {"head": text, "head_numbers": numbers_of(numbers), "items": []}
         return
-    row["numbers"] = numbers_of(list(row["numbers"]) + list(numbers))
     if srcs is None or source is None:
+        row["numbers"] = numbers_of(list(row["numbers"]) + list(numbers))
         return
-    slot = srcs.setdefault(fact_id, {"head": row["text"], "srcs": []})
-    if source not in slot["srcs"]:
-        slot["srcs"].append(source)
-        row["text"] = _merge_text(slot["head"], slot["srcs"])
+    slot = srcs.setdefault(fact_id, {"head": row["text"], "head_numbers": list(row["numbers"]),
+                                     "items": []})
+    fact_text.merge_into(row, slot, numbers, source)
 
 
 def _totals_text(totals: dict) -> str:
@@ -100,34 +89,6 @@ def _file_facts(facts: dict, srcs: dict, row: dict) -> None:
         _put(facts, "fact:namespace:" + ns["name"], [ns.get("line")],
              f"命名空间 {ns['name']} 由 {row['path']} 第 {ns.get('line')} 行声明（{ns.get('style')}）。",
              srcs, f"{row['path']} 第 {ns.get('line')} 行（{ns.get('style')}）")
-
-
-def _source_facts(facts: dict, files: list[dict], repo_root, degraded: list[dict]) -> None:
-    """R294：按符号行区间摘原文；R398 M1 截断留标记、M2 坏区间钳位或只记降级。"""
-    root, cache = pathlib.Path(repo_root), {}
-    for row in files:
-        symbols = row.get("symbols") or []
-        if not symbols:
-            continue
-        rel = row["path"]
-        for sym in symbols:
-            line, end = sym.get("line") or 1, sym.get("end_line")
-            edge = line if end is None else end
-            low, high, total, excerpt = facts_io.source_span(root / rel, line, end, cache)
-            if not excerpt:                                # 取不到原文 → 不产 fact，只记降级
-                facts_io.degrade(degraded, "facts:source",
-                                 f"符号 {sym.get('name')} 的行区间 {line}–{edge} 与文件行数 {total} 不符，未摘原文")
-                continue
-            numbers, text = [low, high], f"{rel} 第 {low}–{high} 行原文：{excerpt}"
-            if len(excerpt) > EXCERPT_CHARS:               # M1：截断必须标出来
-                numbers.append(len(excerpt))
-                text = (f"{rel} 第 {low}–{high} 行原文：{excerpt[:EXCERPT_CHARS]}"
-                        f"…（已截断，原文共 {len(excerpt)} 字符）")
-            if (low, high) != tuple(sorted((int(line), int(edge)))):
-                text += f"（行区间 {line}–{edge} 已钳到文件 {total} 行内）"
-            if end is None:
-                text += "（只摘录了声明行）"
-            _put(facts, f"fact:source:{rel}:{low}-{high}", numbers, text)
 
 
 def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict:
@@ -189,7 +150,8 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
     _put(facts, "fact:degraded", [len(degraded)] + counts,
          f"共 {len(degraded)} 条降级说明{detail}，没看清的地方都记在这里。")
     if repo_root is not None:
-        _source_facts(facts, files, repo_root, degraded)
+        for fact_id, numbers, text in fact_text.source_facts(files, repo_root, degraded):
+            _put(facts, fact_id, numbers, text)
     if bonus is not None:
         counts = [len(bonus.get(key) or []) for key in ("nodes", "edges", "anchors")]
         _put(facts, "fact:bonus", counts,

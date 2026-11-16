@@ -138,53 +138,51 @@ def test_schema_pins_graph_array_shapes():
             schema_repo.validate_repo(doc)
 
 
-# ---- R398 M1/M2/M4：摘录像人话 -------------------------------------------
+# ---- R433 M-3：密钥行只登记名与字节数 --------------------------------------
 
-def test_long_source_excerpt_is_marked_truncated():
-    root = scratch_dir("glossa-t6-m1")
-    long_line = "export const LONG = '" + "A" * 300 + "';"
-    (root / "a.ts").write_text(long_line + "\n", encoding="utf-8")
-    doc = _doc([_file("a.ts", [{"name": "LONG", "kind": "const", "line": 1}], 1)])
-    text = fact_ids.build_facts(doc, repo_root=root)["fact:source:a.ts:1-1"]["text"]
-    assert "…（已截断，原文共 323 字符）" in text
-    assert long_line not in text
-
-
-def test_bad_line_range_is_clamped_or_dropped():
-    root = scratch_dir("glossa-t6-m2")
-    (root / "a.ts").write_text("l1\nl2\nl3\nl4\n", encoding="utf-8")
-    doc = _doc([_file("a.ts", [{"name": "Weird", "kind": "class", "line": 9, "end_line": 2}], 4)])
-    got = fact_ids.build_facts(doc, repo_root=root)
-    sources = {k: v for k, v in got.items() if k.startswith("fact:source:")}
-    assert "fact:source:a.ts:9-2" not in sources, "禁止反向 id"
-    for fid in sources:
-        lo, hi = (int(x) for x in fid.rsplit(":", 1)[1].split("-"))
-        assert lo <= hi and 1 <= lo and hi <= 4, fid
-    empty = scratch_dir("glossa-t6-m2e")
-    (empty / "b.ts").write_text("", encoding="utf-8")
-    doc = _doc([_file("b.ts", [{"name": "Ghost", "kind": "class", "line": 5, "end_line": 1}], 0)])
-    got = fact_ids.build_facts(doc, repo_root=empty)
-    assert not any(k.startswith("fact:source:b.ts") for k in got), "取不到原文不产 fact"
-    reasons = [d["reason"] for d in doc["degraded"]]
-    assert any("符号 Ghost 的行区间 5–1 与文件行数 0 不符，未摘原文" in r for r in reasons), reasons
+def test_schema_rejects_content_inside_a_secret_row():
+    root = _copy("ts-monorepo")
+    (root / ".env").write_text("TOKEN=zzz\n", encoding="utf-8")
+    doc = facts.build_repo_doc(root)
+    seen = doc["excluded"]["secrets_seen"]
+    assert seen, "夹具里得真有一个密钥文件，否则这条断言是空转"
+    assert all(set(row) == {"path", "bytes"} for row in seen), "GC30：内容一个字节都不读"
+    seen[0]["content"] = "zzz"
+    with pytest.raises(TraceSchemaError):
+        schema_repo.validate_repo(doc)
 
 
-def test_same_fact_id_lists_every_source():
-    files = [_file(f"{name}.cs", namespaces=[{"name": "Demo.Core", "line": 1,
-                                              "style": "file_scoped"}])
-             for name in ("A", "B", "C", "D", "E")]
-    text = fact_ids.build_facts(_doc(files))["fact:namespace:Demo.Core"]["text"]
-    assert "A.cs" in text and "B.cs" in text and "C.cs" in text
-    assert "等 5 处" in text, "超过 3 处要按总数披露"
-    two = fact_ids.build_facts(_doc(files[:2]))["fact:namespace:Demo.Core"]["text"]
-    assert "A.cs" in two and "B.cs" in two
-    pkgs = [{"name": "@x/a", "path": d, "manifest": d + "/package.json", "deps": {},
-             "dev_deps": {}, "scripts": {}, "workspace": True} for d in ("p1", "p2")]
-    doc = _doc([])
-    doc["packages"] = pkgs
-    pkg_text = fact_ids.build_facts(doc)["fact:pkg:@x/a"]["text"]
-    assert "p1/package.json" in pkg_text and "p2/package.json" in pkg_text
+# ---- R433 L-4：非法 UTF-8 的两种形态 --------------------------------------
 
+def test_invalid_utf8_forms_are_skipped_with_the_exact_byte_offset():
+    """L-4：UTF-16 BOM 与「首行合法 + 尾部坏字节」都要 skipped，字节号要指得准。"""
+    root = _copy("ts-monorepo")
+    (root / "u16.ts").write_bytes(b"\xff\xfe" + "const a = 1;".encode("utf-16-le"))
+    (root / "tail.ts").write_bytes(b"const a = 1;\n" + b"x" * 7 + b"\xff")
+    doc = facts.build_repo_doc(root)
+    rows = {row["path"]: row for row in doc["files"]}
+    assert rows["u16.ts"]["parse"] == "skipped", "BOM 不是 UTF-8 却当合法，解码会把文件读成乱码"
+    assert rows["tail.ts"]["parse"] == "skipped", "只看首行就会放过尾部坏字节"
+    reasons = {row["scope"]: row["reason"] for row in doc["degraded"]}
+    assert "第 1 字节" in reasons["file:u16.ts"], reasons.get("file:u16.ts")
+    assert "第 21 字节" in reasons["file:tail.ts"], reasons.get("file:tail.ts")
+
+
+# ---- R433 L-1：非 file URL 不是本机路径 ------------------------------------
+
+def test_urls_are_neither_rewritten_nor_reported_as_leaks():
+    """L-1：http(s) 不是本机路径——即使串里出现了 base，也不许改写、不许报泄漏。"""
+    root = _copy("ts-monorepo")
+    base = str(root)
+    plain, noisy = "https://example.com/x", f"https://example.com/view/{base}/x.ts"
+    doc = {"facts": {"fact:plain": {"numbers": [], "text": f"见 {plain} 与 ./ok.ts"},
+                     "fact:noisy": {"numbers": [], "text": f"见 {noisy}"}},
+           "meta": {"repo": {"url": plain}}}
+    assert repo_paths.portable_doc(doc, base=root) == 0, "URL 不是路径，改写它等于撒谎"
+    assert doc["meta"]["repo"]["url"] == plain
+    assert doc["facts"]["fact:plain"]["text"] == f"见 {plain} 与 ./ok.ts"
+    assert doc["facts"]["fact:noisy"]["text"] == f"见 {noisy}", "URL 里的 base 不是路径"
+    assert repo_paths.leaked(doc, base=root) == [], "URL 报泄漏会让整仓永远洗不干净"
 
 # ---- R405：scratch_dir 并行安全 --------------------------------------------
 

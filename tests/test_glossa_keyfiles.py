@@ -44,6 +44,26 @@ def test_key_files_rank_entry_then_indegree_then_symbols():
     assert keyfiles.key_files(shuffled) == got
 
 
+def test_key_file_reasons_are_verbatim():
+    """R335/R429：reasons 是给人看的理由，措辞漂移（个符号 → symbols）必须红。"""
+    got = _doc("ts-monorepo")
+    rows = {row["path"]: row["reasons"] for row in keyfiles.key_files(got)}
+    assert rows["packages/a/src/server.ts"] == ["入口 serve 的目标文件", "1 个符号"]
+    assert rows["packages/b/src/index.test.ts"] == ["入口 test 的目标文件", "1 个符号"]
+    assert rows["packages/a/src/circuit.ts"] == ["被 2 个文件依赖", "1 个符号"]
+    assert rows["packages/b/src/index.ts"] == ["被 2 个文件依赖", "1 个符号"]
+
+
+def test_indegree_counts_edges_not_their_count_field():
+    """L-3：一条 count=3 的边仍是 1 个文件依赖它，累加 count 会把理由写成「被 3 个文件依赖」。"""
+    doc = {"files": [{"path": "src/a.py", "lang": "python", "symbols": [{"name": "f"}]}],
+           "entries": [], "graph": {"edges": [{"from": "src/x.py", "to": "src/a.py",
+                                               "kind": "internal", "count": 3}]}}
+    got = keyfiles.key_files(doc)
+    assert got[0]["indegree"] == 1
+    assert got[0]["reasons"] == ["被 1 个文件依赖", "1 个符号"]
+
+
 def test_key_files_caps_at_twelve_and_is_deterministic():
     files = [{"path": f"src/f{i:02d}.py", "lang": "python", "package": None,
               "bytes": 10, "lines": 3, "parse": "exact", "symbols": [],

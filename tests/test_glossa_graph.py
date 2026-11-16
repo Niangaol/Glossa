@@ -45,7 +45,11 @@ def test_isolated_files_are_counted_not_silently_dropped():
     ids = {n["id"] for n in g["nodes"]}
     assert "packages/a/src/comments.ts" not in ids
     assert "packages/b/src/index.test.ts" in ids   # 入口目标，虽无 import
-    assert any("未画进图" in d["reason"] for d in doc["degraded"])
+    # R432：5 个没进图，其中 3 个 package.json 永远不会产生 import 边（口径不许错报成事实）
+    assert any("5 个文件没有进入关系图（其中 3 个是清单、文档等不产生 import 的文件）" in d["reason"]
+               for d in doc["degraded"]), doc["degraded"]
+    # R430：没截断就是 0（页面靠这个字段决定要不要显示「截断未画」那一行）
+    assert g["truncated"] is False and g["truncated_nodes"] == 0
 
 
 def test_cycles_are_found_and_rotation_normalized():
@@ -72,11 +76,10 @@ def test_layers_are_topological_and_deterministic():
     layers = graph.longest_layers(ids, edges)
     assert layers == [["a.ts", "d.ts"], ["b.ts"], ["c.ts"]]
     assert graph.longest_layers(list(reversed(ids)), edges) == layers
-    # 环内节点不许消失：归到最后一层
+    # R425：环内节点同层（SCC 缩点），层内按 id 升序；不再「所有未出队节点归最后一层」
     ring = [{"from": "a.ts", "to": "b.ts", "kind": "internal", "count": 1},
             {"from": "b.ts", "to": "a.ts", "kind": "internal", "count": 1}]
-    got = graph.longest_layers(["a.ts", "b.ts"], ring)
-    assert sorted(n for layer in got for n in layer) == ["a.ts", "b.ts"]
+    assert graph.longest_layers(["a.ts", "b.ts"], ring) == [["a.ts", "b.ts"]]
 
 
 def test_reachable_ignores_compound_command_entries():
@@ -115,6 +118,28 @@ def test_truncation_is_flagged_and_counted():
     assert len(g["nodes"]) == graph.MAX_GRAPH_NODES == 120
     assert all(e["from"] in {n["id"] for n in g["nodes"]} and
                e["to"] in {n["id"] for n in g["nodes"]} for e in g["edges"])
+
+
+def test_same_project_name_resolves_to_the_first_csproj_by_path():
+    root = scratch_dir("glossa-t7-dupe-csproj")
+    bodies = {
+        "src/App/App.csproj": '<Project><PropertyGroup><OutputType>Exe</OutputType>'
+                              "</PropertyGroup><ItemGroup>"
+                              '<ProjectReference Include="..\\Demo.Core\\Demo.Core.csproj" />'
+                              "</ItemGroup></Project>",
+        "src/Alt/Demo.Core.csproj": "<Project />",
+        "src/Demo.Core/Demo.Core.csproj": "<Project />",
+    }
+    for rel, body in bodies.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    doc = facts.build_repo_doc(root)
+    assert doc["graph"]["level"] == "project"
+    assert doc["graph"]["edges"][0]["to"] == "src/Alt/Demo.Core.csproj", \
+        "同名 csproj 必须按路径升序取第一个，不许取最后一个"
+    assert any("项目名 Demo.Core 对应多个 csproj，按 csproj 升序取第一个" in d["reason"]
+               for d in doc["degraded"]), doc["degraded"]
 
 
 def test_graph_fills_totals_and_still_passes_schema():

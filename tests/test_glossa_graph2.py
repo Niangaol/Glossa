@@ -32,3 +32,16 @@ def test_project_level_nodes_keep_null_lang_and_package():
     doc = facts.build_repo_doc(_copy("cs-solution"))
     assert doc["graph"]["level"] == "project"
     assert [(n["lang"], n["package"]) for n in doc["graph"]["nodes"]] == [(None, None)] * 2
+
+
+def test_project_nodes_label_with_the_project_name():
+    """M-7：label 是页面显示项目名的唯一字段，退化成 csproj 路径用户就看不到项目名。"""
+    doc = facts.build_repo_doc(_copy("cs-solution"))
+    assert {node["label"] for node in doc["graph"]["nodes"]} == {"Demo.App", "Demo.Core"}
+
+
+def test_file_nodes_fall_back_to_their_id_as_label():
+    doc = facts.build_repo_doc(_copy("ts-monorepo"))
+    nodes = doc["graph"]["nodes"]
+    assert nodes and all(node["kind"] == "file" for node in nodes)
+    assert all(node["label"] == node["id"] for node in nodes)

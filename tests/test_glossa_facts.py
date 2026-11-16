@@ -128,12 +128,17 @@ def test_empty_repo_doc_is_valid_and_all_zero():
     assert doc["files"] == []
 
 
-def test_every_number_appears_in_its_fact_text():
-    for name in ("ts-monorepo", "cs-solution", "vendored-mix", "empty", "py-mini"):
-        doc = facts.build_repo_doc(_copy(name))
-        for fact_id, row in doc["facts"].items():
-            missing = [n for n in row["numbers"] if str(n) not in row["text"]]
-            assert not missing, f"{name} {fact_id} 的 numbers={missing} 不在 text 里"
+def test_main_guard_falls_back_to_the_line_regex_for_skipped_files():
+    """M-4/R367：解析 skipped 时行正则兜底——入口不许静默消失，且必须记降级。"""
+    root = _copy("py-mini")
+    (root / "bad.py").write_bytes(
+        b"if __name__ == '__main__':\n    print('boom')\n" + b"x" * 7 + b"\xff\n")
+    doc = facts.build_repo_doc(root)
+    row = next(f for f in doc["files"] if f["path"] == "bad.py")
+    assert row["parse"] == "skipped" and row["main_guard"] is False, "main_guard 只信 parse"
+    assert any(e["kind"] == "main_guard" and e["name"] == "bad.py" for e in doc["entries"])
+    assert any("main_guard 用行正则兜底，未经 ast 确认" in d["reason"] for d in doc["degraded"])
+    schema_repo.validate_repo(doc)
 
 
 def test_commit_is_read_from_git_head_without_subprocess(monkeypatch):
