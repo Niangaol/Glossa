@@ -30,6 +30,9 @@ def test_vendored_dirs_are_excluded_and_counted():
         assert name in rules, rules
         assert rules[name] >= 1
     assert r["language_counts"] == {"markdown": 1, "typescript": 2}
+    assert r["excluded"]["pruned_files"] == 3
+    assert r["excluded"]["pruned_files_partial"] is False
+    assert r["excluded"]["files"] == 0
 
 
 def test_oversize_file_is_skipped_and_recorded():
@@ -57,7 +60,8 @@ def test_binary_assets_are_counted_not_parsed():
     r = scan.scan_repo(root)
     assert "assets/logo.png" not in _paths(r)
     assert "png" not in r["language_counts"]
-    assert r["excluded"]["files"] >= 1
+    assert r["excluded"]["files"] == 1
+    assert _rules(r)["ext:.png"] == 1
 
 
 def test_max_files_truncation_is_declared():
@@ -88,3 +92,27 @@ def test_glossaignore_adds_rules():
     r = scan.scan_repo(root)
     assert "skipme/hidden.ts" not in _paths(r)
     assert "ignore:skipme" in _rules(r)
+
+
+def test_truncation_flag_is_false_when_nothing_was_cut():
+    full = scan.scan_repo(_copy("py-mini"))
+    n = len(full["files"])
+    r = scan.scan_repo(_copy("py-mini"), max_files=n)
+    assert len(r["files"]) == n
+    assert r["excluded"]["truncated"] is False
+
+
+def test_oversize_file_is_never_read(monkeypatch):
+    root = _copy("vendored-mix")
+    (root / "big.ts").write_bytes(b"x" * 1_000_001)
+    reads = []
+    real = Path.read_bytes
+
+    def counting(self):
+        reads.append(self.name)
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", counting)
+    r = scan.scan_repo(root)
+    assert "big.ts" not in reads
+    assert {o["path"] for o in r["excluded"]["oversize"]} == {"big.ts"}
