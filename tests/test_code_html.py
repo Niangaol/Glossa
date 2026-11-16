@@ -1,4 +1,4 @@
-"""Task C6 的 HTML 第 ⑥ 块「代码体检」守卫（R220–R226 / GC19 / GC23）。
+"""Task C6 的 HTML 第 ⑥ 块「代码体检」守卫（R220–R246 / GC19 / GC23）。
 
 纪律（与 tests/test_code_only_cli.py 逐字一致）：
 - 模块级 fixture 真跑一次 CLI：29,856 / 884,736 这些数字必须取自真夹具的
@@ -26,7 +26,7 @@ import pytest
 
 pytest.importorskip("torch", reason="真跑 CLI 追踪需要 torch（CPU 版即可）")
 
-from papertrace.code_analysis import METHOD_TEXT  # noqa: E402
+from papertrace.code_analysis import METHOD_TEXT, empty_analysis  # noqa: E402
 from papertrace.render_analysis import analysis_panel, role_counts  # noqa: E402
 from papertrace.render_html import render_html  # noqa: E402
 from tests._tmp import scratch_dir  # noqa: E402
@@ -248,14 +248,14 @@ def test_html_is_honest_when_totals_are_missing(real_doc):
 def test_panel_survives_a_non_dict_analysis(real_doc):
     """R236/M1：analysis 是 int（或 list/str）时不许抛 AttributeError。
 
-    八个键都要齐全（模板 StrictUndefined，缺键即炸）。
+    九个键都要齐全（模板 StrictUndefined，缺键即炸；R246 起多一个 rows_note）。
 
     归一化后 has is False，模板走 else 分支出 emptybox，不是炸在 .get 上。
     """
     panel = analysis_panel({"analysis": 5})
     assert panel["has"] is False, "非 dict analysis 的 has 不是 False"
-    for key in ("has", "summary", "roles", "rows", "method", "degraded",
-                "symbols_note", "method_label"):
+    for key in ("has", "summary", "roles", "rows", "rows_note", "method",
+                "degraded", "symbols_note", "method_label"):
         assert key in panel, "非 dict analysis 时缺键 %s（StrictUndefined 会炸）" % key
     doc = copy.deepcopy(real_doc)
     doc["analysis"] = 5
@@ -263,3 +263,62 @@ def test_panel_survives_a_non_dict_analysis(real_doc):
     assert "Traceback" not in html
     assert "没有代码分析数据" in _section(html, "analysis"), (
         "非 dict analysis 没走空态（R236）")
+
+
+def test_role_counts_breaks_ties_by_role_asc():
+    """R245/R223：count 相同的角色必须按 role 升序，插入顺序不许漏过去。
+
+    背景（定向复核 Q2 的 T1 变异 8 passed）：旧测试四个 count 全不同，删掉
+    tie-break 也看不出来。这里插入顺序故意 z/a/m，只有真按 role 升序才过得去。
+    """
+    panel = role_counts({"roles": {"z": 2, "a": 2, "m": 3}})
+    assert [(r["role"], r["count"]) for r in panel] == [
+        ("m", 3), ("a", 2), ("z", 2)], (
+        "同 count 时不是 role 升序：%r" % panel)
+
+
+def test_html_says_module_rows_are_missing(real_doc):
+    """R246：modules 键缺失而 totals 有效——说「模块行缺失」，不许假归因骨架。
+
+    定向复核 Q1/Q5 的 Important 残留：摘要照样报「34 个模块」、表 0 行、
+    空态却写「骨架模式…抽不到模块」——静默错误事实 + 假归因。合成 doc 只
+    pop 真 analysis 的 "modules"，totals 原样保留。
+    """
+    doc = copy.deepcopy(real_doc)
+    doc["analysis"].pop("modules")
+    html = render_html(doc)
+    assert "Traceback" not in html
+    block = _section(html, "analysis")
+    assert "模块行缺失" in block, "modules 缺失时没有如实说缺失（R246）"
+    assert "骨架模式" not in block, "modules 缺失被假归因成骨架模式（R246）"
+    assert "34 个模块" in block, "totals 完好时摘要仍要报真模块数（R246）"
+    assert block.count("<tr><td") == 0, "modules 缺失却还有数据行"
+
+
+def test_html_flags_totals_rows_mismatch_when_module_rows_are_empty(real_doc):
+    """R246：modules=[] 而 totals.modules=34——说「数据不一致」，不许说骨架模式。
+
+    同一条测试里再断言真空 empty_analysis()（totals.modules=0、modules=[]）
+    仍走「骨架模式不加载模型」——三态必须分得开：真空 ≠ 数据不一致。
+    """
+    doc = copy.deepcopy(real_doc)
+    doc["analysis"]["modules"] = []
+    block = _section(render_html(doc), "analysis")
+    assert "数据不一致" in block, "行数与 totals 对不上却没说（R246）"
+    assert "骨架模式" not in block, "totals 说 34 行却是空表被假归因骨架（R246）"
+    vacuum = copy.deepcopy(real_doc)
+    vacuum["analysis"] = empty_analysis()
+    empty_block = _section(render_html(vacuum), "analysis")
+    assert "骨架模式不加载模型" in empty_block, (
+        "真空（0 个模块）时空态句不该消失（R246 三态）")
+
+
+def test_html_flags_count_mismatch_when_some_rows_are_listed(real_doc):
+    """R246：totals.modules=40 而真列出 34 行——行照列，另说「实际列出 34 行」。"""
+    doc = copy.deepcopy(real_doc)
+    doc["analysis"]["totals"]["modules"] = 40
+    block = _section(render_html(doc), "analysis")
+    assert block.count("<tr><td") == 34, "对不上账就把真实行藏了（R246）"
+    assert "实际列出 34 行" in block, "没说出实际列出的行数（R246）"
+    assert "40" in block, "没说出 totals 宣称的 40（R246）"
+

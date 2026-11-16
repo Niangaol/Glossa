@@ -134,14 +134,14 @@ footer{color:#5b6675;font-size:12px;padding:8px 24px 24px;text-align:center}
 {% if analysis.has %}
 <p class="sub">{{ analysis.summary }}</p>
 {% if analysis.roles %}<p class="sub">角色分布：{% for r in analysis.roles %}{{ r.role }} {{ r.count }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
-{% endif %}{% if analysis.rows %}
+{% endif %}{% if analysis.rows_note %}<p class="emptybox">{{ analysis.rows_note }}</p>{% endif %}{% if analysis.rows %}
 <table>
 <tr><th>模块</th><th>类名</th><th>角色</th><th>参数量</th><th>峰值激活</th><th>粗估 FLOPs</th><th>判据</th></tr>
 {% for r in analysis.rows %}
 <tr><td class="mono">{{ r.module_id }}</td><td>{{ r.cls }}</td><td>{{ r.role }}</td><td class="mono">{{ r.params }}</td><td class="mono">{{ r.max_activation }}</td><td class="mono">{{ r.est_flops }}</td><td>{{ r.evidence }}</td></tr>
 {% endfor %}
 </table>
-{% else %}
+{% elif not analysis.rows_note %}
 <p class="emptybox">没有模块行可列（骨架模式不加载模型，抽不到模块）。</p>
 {% endif %}
 {% if analysis.degraded %}<p class="sub">形状降级与异常：{{ analysis.degraded }}</p>
