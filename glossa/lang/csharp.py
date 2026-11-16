@@ -31,18 +31,40 @@ _USING = re.compile(r"^\s*(?:global\s+)?using\s+(?:(?P<static>static)\s+)?"
 _NS_SEMI = re.compile(r"^\s*namespace\s+(?P<name>[\w.]+)\s*;\s*$")
 _NS_BLOCK = re.compile(r"^\s*namespace\s+(?P<name>[\w.]+)\s*\{?\s*$")
 _ATTR = re.compile(r"^\s*\[(?P<body>[^\[\]]*)\]")
-_TARGETS = frozenset(("assembly", "module", "return", "param", "field", "event",
-                      "method", "property", "type", "typevar"))
+_TARGETS = frozenset(("assembly", "module", "return", "param"))   # R382：整条丢
+_UNSUPPORTED = frozenset(("field", "event", "method", "property", "type",
+                          "typevar"))                       # R402：丢但记 degraded
 
 
-def _attr_names(body: str) -> list[str]:
-    """'[A]'、'[A, B]' → 名字列表；带目标前缀（[assembly: …]）的整条丢弃（R382）。"""
+def _prefix_note(head: str, relpath: str) -> str:
+    return "attribute 目标前缀 %s 第一版未贴到符号（%s）" % (head, relpath)
+
+
+def _attr_names(body: str, relpath: str, degraded: list[str]) -> list[str]:
+    """'[A]'、'[A, B]' → 名字列表。
+
+    R401：目标前缀**先按整条体判、再按逗号切**。旧版先切后判，只丢第一项，
+          [assembly: V("1.0.0.0"), CLSCompliant(true)] 会漏出 CLSCompliant。
+    R382：assembly:/module:/return:/param: 整条丢弃，不记 degraded（口径不变）。
+    R402：field:/event:/method:/property:/type:/typevar: 第一版仍不实现，但**不许
+          静默**——每个命中记一条 degraded（attribute 在声明之前解析，拿不到符号名，
+          所以填文件）。
+    """
+    head = body.split(":", 1)[0].strip()
+    if head in _TARGETS:                       # R401：命中就整条丢，不再切逗号
+        return []
+    if head in _UNSUPPORTED:                   # R402：整条丢，但如实降级
+        degraded.append(_prefix_note(head, relpath))
+        return []
     out: list[str] = []
     for part in body.split(","):
         piece = part.strip()
         if ":" in piece:
-            head = piece.split(":", 1)[0].strip()
-            if head in _TARGETS:               # 目标前缀不是符号的 attribute
+            part_head = piece.split(":", 1)[0].strip()
+            if part_head in _TARGETS:          # 混写体里的目标前缀分项整项丢
+                continue
+            if part_head in _UNSUPPORTED:      # 混写体里的不支持分项同样不许静默
+                degraded.append(_prefix_note(part_head, relpath))
                 continue
             piece = piece.split(":", 1)[1].strip()
         hit = re.match(r"[A-Za-z_][\w.]*", piece)
@@ -82,7 +104,7 @@ def parse_source(text: str, relpath: str) -> dict:
             hit = _ATTR.match(line)
             if hit is None:
                 break
-            fresh.extend(_attr_names(hit.group("body")))
+            fresh.extend(_attr_names(hit.group("body"), relpath, degraded))
             line = line[hit.end():]
         body = line.strip()
         attrs = held if held and depth == held_depth else []
