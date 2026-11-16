@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object", "additionalProperties": false,
+  "required": ["meta", "totals", "files", "packages", "projects", "entries", "imports", "graph", "excluded", "degraded", "facts"],
+  "properties": {
+    "meta": {"$ref": "#/$defs/meta"},
+    "totals": {"$ref": "#/$defs/totals"},
+    "files": {"type": "array", "items": {"$ref": "#/$defs/file"}},
+    "packages": {"type": "array", "items": {"$ref": "#/$defs/package"}},
+    "projects": {"type": "array", "items": {"$ref": "#/$defs/project"}},
+    "entries": {"type": "array", "items": {"$ref": "#/$defs/entry"}},
+    "imports": {"type": "array", "items": {"$ref": "#/$defs/import"}},
+    "graph": {"$ref": "#/$defs/graph"},
+    "excluded": {"$ref": "#/$defs/excluded"},
+    "degraded": {"type": "array", "items": {"$ref": "#/$defs/degraded"}},
+    "facts": {"$ref": "#/$defs/facts"}
+  },
+  "$defs": {
+    "int0": {"type": "integer", "minimum": 0}, "nullable_str": {"type": ["string", "null"]},
+    "meta": {"type": "object", "additionalProperties": false, "required": ["repo", "created_at", "tool", "scan_opts"], "properties": {
+      "repo": {"type": "object", "additionalProperties": false, "required": ["url", "commit", "language", "root_name"], "properties": {
+        "url": {"type": "string", "minLength": 1}, "commit": {"type": "string"},
+        "language": {"$ref": "#/$defs/nullable_str"}, "root_name": {"type": "string"}}},
+      "created_at": {"type": "string"},
+      "tool": {"type": "object", "additionalProperties": false, "required": ["name", "version"], "properties": {
+        "name": {"const": "glossa"}, "version": {"type": "string"}}},
+      "scan_opts": {"type": "object", "additionalProperties": false, "required": ["max_file_bytes", "max_files", "use_default_excludes", "extra_ignore"], "properties": {
+        "max_file_bytes": {"type": "integer", "minimum": 1}, "max_files": {"type": "integer", "minimum": 1},
+        "use_default_excludes": {"type": "boolean"}, "extra_ignore": {"type": "array", "items": {"type": "string"}}}}}},
+    "totals": {"type": "object", "additionalProperties": false, "required": ["files", "by_lang", "symbols", "imports", "packages", "projects", "entries", "edges", "cycles", "unreachable", "excluded_files", "excluded_bytes", "oversize", "degraded", "unresolved"], "properties": {
+      "files": {"$ref": "#/$defs/int0"}, "symbols": {"$ref": "#/$defs/int0"},
+      "imports": {"$ref": "#/$defs/int0"}, "packages": {"$ref": "#/$defs/int0"},
+      "projects": {"$ref": "#/$defs/int0"}, "entries": {"$ref": "#/$defs/int0"},
+      "edges": {"$ref": "#/$defs/int0"}, "cycles": {"$ref": "#/$defs/int0"},
+      "unreachable": {"$ref": "#/$defs/int0"}, "oversize": {"$ref": "#/$defs/int0"},
+      "degraded": {"$ref": "#/$defs/int0"}, "excluded_files": {"$ref": "#/$defs/int0"},
+      "excluded_bytes": {"$ref": "#/$defs/int0"}, "unresolved": {"$ref": "#/$defs/int0"},
+      "by_lang": {"type": "object", "additionalProperties": {"$ref": "#/$defs/int0"}}}},
+    "file": {"type": "object", "additionalProperties": false, "required": ["path", "lang", "bytes", "lines", "parse", "package_hint", "project_hint", "doc_first_line", "main_guard", "symbols", "imports", "namespaces", "degraded"], "properties": {
+      "path": {"type": "string", "minLength": 1}, "lang": {"type": "string", "minLength": 1},
+      "bytes": {"$ref": "#/$defs/int0"}, "lines": {"$ref": "#/$defs/int0"},
+      "parse": {"enum": ["exact", "approx", "file_only", "skipped"]},
+      "package_hint": {"$ref": "#/$defs/nullable_str"}, "project_hint": {"$ref": "#/$defs/nullable_str"},
+      "doc_first_line": {"$ref": "#/$defs/nullable_str"}, "main_guard": {"type": "boolean"},
+      "symbols": {"type": "array", "items": {"$ref": "#/$defs/symbol"}},
+      "imports": {"type": "array", "items": {"$ref": "#/$defs/file_import"}},
+      "namespaces": {"type": "array", "items": {"$ref": "#/$defs/namespace"}},
+      "degraded": {"type": "array", "items": {"type": "string"}}}},
+    "symbol": {"type": "object", "additionalProperties": false, "required": ["name", "kind", "line", "end_line", "parent", "doc_first_line"], "properties": {
+      "name": {"type": "string", "minLength": 1},
+      "kind": {"enum": ["class", "interface", "record", "struct", "enum", "type", "function", "async_function", "method", "async_method", "property", "field", "const", "export_list"]},
+      "line": {"type": "integer", "minimum": 1}, "end_line": {"type": ["integer", "null"]},
+      "parent": {"$ref": "#/$defs/nullable_str"}, "doc_first_line": {"$ref": "#/$defs/nullable_str"},
+      "namespace": {"$ref": "#/$defs/nullable_str"}, "async": {"type": "boolean"},
+      "partial": {"type": "boolean"}, "bases": {"type": "array", "items": {"type": "string"}},
+      "attributes": {"type": "array", "items": {"type": "string"}}}},
+    "file_import": {"type": "object", "additionalProperties": false, "required": ["specifier", "line"], "properties": {
+      "specifier": {"type": "string"}, "line": {"type": "integer", "minimum": 1},
+      "type_only": {"type": "boolean"}, "dynamic": {"type": "boolean"},
+      "level": {"$ref": "#/$defs/int0"}, "module": {"$ref": "#/$defs/nullable_str"},
+      "names": {"type": "array", "items": {"type": "string"}},
+      "static": {"type": "boolean"}, "alias": {"$ref": "#/$defs/nullable_str"}}},
+    "namespace": {"type": "object", "additionalProperties": false, "required": ["name", "line", "style"], "properties": {
+      "name": {"type": "string", "minLength": 1}, "line": {"type": "integer", "minimum": 1},
+      "style": {"enum": ["file_scoped", "block"]}}},
+    "package": {"type": "object", "additionalProperties": false, "required": ["name", "path", "manifest", "deps", "dev_deps", "scripts", "workspace"], "properties": {
+      "name": {"$ref": "#/$defs/nullable_str"}, "path": {"type": "string"},
+      "manifest": {"type": "string", "minLength": 1},
+      "deps": {"type": "object", "additionalProperties": {"type": "string"}},
+      "dev_deps": {"type": "object", "additionalProperties": {"type": "string"}},
+      "scripts": {"type": "object", "additionalProperties": {"type": "string"}},
+      "workspace": {"type": "boolean"}}},
+    "project": {"type": "object", "additionalProperties": false, "required": ["name", "path", "csproj", "target_framework", "root_namespace", "implicit_usings", "nullable", "output_type", "package_refs", "project_refs"], "properties": {
+      "name": {"type": "string", "minLength": 1}, "path": {"type": "string"},
+      "csproj": {"type": "string", "minLength": 1},
+      "target_framework": {"$ref": "#/$defs/nullable_str"},
+      "root_namespace": {"$ref": "#/$defs/nullable_str"},
+      "implicit_usings": {"type": "boolean"}, "nullable": {"type": "boolean"},
+      "output_type": {"type": "string"},
+      "package_refs": {"type": "array", "items": {"$ref": "#/$defs/package_ref"}},
+      "project_refs": {"type": "array", "items": {"type": "string"}},
+      "files": {"type": "array", "items": {"type": "string"}},
+      "namespaces": {"type": "array", "items": {"type": "string"}}}},
+    "package_ref": {"type": "object", "additionalProperties": false, "required": ["name", "version"], "properties": {
+      "name": {"$ref": "#/$defs/nullable_str"}, "version": {"$ref": "#/$defs/nullable_str"}}},
+    "entry": {"type": "object", "additionalProperties": false, "required": ["kind", "name", "command", "target", "package", "note"], "properties": {
+      "kind": {"enum": ["npm_script", "py_script", "main_guard", "dotnet_project"]},
+      "name": {"type": "string", "minLength": 1}, "command": {"type": "string"},
+      "target": {"$ref": "#/$defs/nullable_str"}, "package": {"$ref": "#/$defs/nullable_str"},
+      "note": {"type": "string"}}},
+    "import": {"type": "object", "additionalProperties": false, "required": ["from", "specifier", "kind", "target", "package", "namespace", "line", "reason"], "properties": {
+      "from": {"type": "string", "minLength": 1}, "specifier": {"type": "string"},
+      "kind": {"enum": ["internal", "workspace", "builtin", "external", "dynamic", "unresolved", "namespace"]},
+      "target": {"$ref": "#/$defs/nullable_str"}, "package": {"$ref": "#/$defs/nullable_str"},
+      "namespace": {"$ref": "#/$defs/nullable_str"}, "line": {"type": ["integer", "null"]},
+      "reason": {"$ref": "#/$defs/nullable_str"}, "type_only": {"type": "boolean"},
+      "files": {"type": "array", "items": {"type": "string"}}}},
+    "graph": {"type": "object", "additionalProperties": false, "required": ["nodes", "edges", "cycles", "reachable_from_entries", "unreachable", "layers", "level", "truncated"], "properties": {
+      "nodes": {"type": "array"}, "cycles": {"type": "array"},
+      "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
+      "reachable_from_entries": {"type": "array"}, "unreachable": {"type": "array"},
+      "layers": {"type": "array"}, "level": {"enum": ["file", "project"]},
+      "truncated": {"type": "boolean"}, "omitted_isolated": {"$ref": "#/$defs/int0"}}},
+    "edge": {"type": "object", "additionalProperties": false, "required": ["from", "to", "kind", "count"], "properties": {
+      "from": {"type": "string", "minLength": 1}, "to": {"type": "string", "minLength": 1},
+      "kind": {"type": "string"}, "count": {"type": "integer", "minimum": 1}}},
+    "excluded": {"type": "object", "additionalProperties": false, "required": ["rules", "files", "bytes", "oversize", "truncated", "pruned_files", "pruned_files_partial", "secrets_seen"], "properties": {
+      "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
+      "files": {"$ref": "#/$defs/int0"}, "bytes": {"$ref": "#/$defs/int0"},
+      "oversize": {"type": "array", "items": {"$ref": "#/$defs/oversize"}},
+      "truncated": {"type": "boolean"}, "pruned_files": {"$ref": "#/$defs/int0"},
+      "pruned_files_partial": {"type": "boolean"},
+      "secrets_seen": {"type": "array", "items": {"type": "string"}}}},
+    "rule": {"type": "object", "additionalProperties": false, "required": ["rule", "hits"], "properties": {
+      "rule": {"type": "string", "minLength": 1}, "hits": {"type": "integer", "minimum": 1}}},
+    "oversize": {"type": "object", "additionalProperties": false, "required": ["path", "bytes"], "properties": {
+      "path": {"type": "string", "minLength": 1}, "bytes": {"$ref": "#/$defs/int0"}}},
+    "degraded": {"type": "object", "additionalProperties": false, "required": ["scope", "reason", "count"], "properties": {
+      "scope": {"type": "string", "minLength": 1}, "reason": {"type": "string", "minLength": 1},
+      "count": {"type": "integer", "minimum": 1}}},
+    "facts": {"type": "object", "additionalProperties": false,
+      "patternProperties": {"^fact:": {"type": "object", "additionalProperties": false,
+        "required": ["numbers", "text"],
+        "properties": {"numbers": {"type": "array", "items": {"type": "integer"}},
+                       "text": {"type": "string", "minLength": 1}}}}}
+  }
+}
