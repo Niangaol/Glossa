@@ -6,16 +6,21 @@
 
 ## 一、什么时候走这条链
 
-用户说「给我讲讲这个仓库 / 写个架构说明 / 这项目是干嘛的」时走这里。顺序固定：
-`analyze_repo` → `explain_outline` → `get_facts` / `read_source` → `render_explain`。
+用户说「给我讲讲这个仓库 / 写个架构说明 / 这项目是干嘛的」时走这里。顺序固定（六个工具都要用）：
+`analyze_repo` → `list_components` → `explain_outline` → `get_facts` → `read_source` → `render_explain`。
 
 | 步 | 工具 | 干什么 | 什么时候必须调 |
 | -- | ---- | ------ | -------------- |
 | 1 | `analyze_repo` | 扫仓库、写 repo.json、把台账缓存进本次会话 | 每个仓库的第一件事 |
-| 2 | `explain_outline` | 七块骨架 + 每块的真 fact id | 决定写哪几块之前 |
-| 3 | `get_facts` | 按 kind 分页翻事实（id / numbers / text） | 要引用一个 id 之前核对 |
-| 3b | `read_source` | 读保留文件原文（带行号，单次 ≤200 行） | 要贴具体代码之前 |
-| 4 | `render_explain` | 校验 blocks 并写 explain.html | 最后一步 |
+| 2 | `list_components` | 列出 14 个渲染组件与各自的必填/选填 params、可用事实模式 | **写 blocks 之前**：先拿到组件名与参数契约，别手抄、别猜 |
+| 3 | `explain_outline` | 七块骨架 + 每块的真 fact id | 决定写哪几块之前 |
+| 4 | `get_facts` | 按 kind 分页翻事实（id / numbers / text） | 要引用一个 id 之前核对 |
+| 4b | `read_source` | 读保留文件原文（带行号，单次 ≤200 行） | 要贴具体代码之前 |
+| 5 | `render_explain` | 校验 blocks 并写 explain.html | 最后一步 |
+
+`list_components` 为什么必须单独占一步：它是唯一知道「`params` 该写哪些键」的地方。组件表来自
+`glossa/explain/components.py` 的注册表（唯一真源），运行期改注册表它立刻跟着变；不调它，「`file_card`
+要不要 `path`」「`metrics` 的 `keys` 能填什么」只能靠猜，而猜错会被整页拒绝。
 
 协议层：initialize / notifications/initialized / ping / tools/list / tools/call；**通知不回包**。
 工具级失败是 `result.isError = true` + 原因文本；只有协议层问题（方法不存在、缺必填参数、JSON 坏了）
@@ -59,10 +64,13 @@
 
 ① `analyze_repo {"repo": "<夹具路径>"}` → `totals.files = 13`、`totals.symbols = 10`、
 `totals.imports = 9`，`out` 指向 `.../repo.json`。
-② `explain_outline {"repo": ...}` → 七块：① 这项目是什么 ② 从哪进来 ③ 分几块 ④ 谁依赖谁
+② `list_components {}`（无参数）→ `total = 14`，每项给 `name / required / optional / facts / section`；
+   例：`{"name": "file_card", "required": ["path"], "optional": [], "facts": ["fact:file:<path>"], "section": 5}`。
+   从这里抄出下面要用的 `component` 名与 `params` 键，别凭印象写。
+③ `explain_outline {"repo": ...}` → 七块：① 这项目是什么 ② 从哪进来 ③ 分几块 ④ 谁依赖谁
 ⑤ 关键文件逐个讲 ⑥ 我没看清的地方 ⑦ 甜头（没有 bonus 事实时 required=false）。
-③ `get_facts {"repo": ..., "kind": "entry"}` → items 里是 `fact:entry:serve` / `fact:entry:check` / `fact:entry:test`。
-④ `render_explain {"repo": ..., "blocks": [...]}`，blocks 用下面这份（真 id，逐字可用）：
+④ `get_facts {"repo": ..., "kind": "entry"}` → items 里是 `fact:entry:serve` / `fact:entry:check` / `fact:entry:test`。
+⑤ `render_explain {"repo": ..., "blocks": [...]}`，blocks 用下面这份（组件名与 params 来自 ②，真 id 来自 ③④）：
 
 ```json
 [
@@ -94,12 +102,13 @@
 ## 七、缓存语义（别把旧事实当新闻）
 
 `analyze_repo` 把台账缓存在本次会话里，key 是仓库的绝对路径。其余工具没有缓存时会自动 analyze 一次，
-并在返回里写「仓库不在缓存里，这次已自动 analyze 一次」。命中缓存时返回带 `cached: true` 与 `note`
-（写明什么时候分析的）；仓库在这之后改过，台账仍是旧的——要新事实就再调 `analyze_repo`（`force: true`）。
+并在返回里写「仓库不在缓存里，这次已自动 analyze 一次」。命中缓存时返回的 `note` 写明「本结果来自本次
+会话缓存（analyze 于 …）」；仓库在这之后改过，台账仍是旧的——要新事实就再调 `analyze_repo`（`force: true`）。
+`analyze_repo` 自己**总是重扫**、不读缓存；返回里也没有 `cached` 字段了（R473 删掉），缓存状态只看 `note`。
 
 ## 八、渲染前自检清单
 
-- [ ] 每块的 `component` 都在 14 个之内，`params` 的必填键齐；
+- [ ] 每块的 `component` 都在 14 个之内，`params` 的必填键齐（这两条来自 `list_components`，不是手抄的）；
 - [ ] 每个 cites 的 id 都来自 `explain_outline` 或 `get_facts` 的返回；
 - [ ] `text` 里的每个数字都在 cites 的 numbers 并集里；
 - [ ] 没有 `<script>` / `<style>` / 外链 / 事件属性；

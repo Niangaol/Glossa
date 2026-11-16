@@ -38,10 +38,10 @@ def repo_root(args):
     raw = args.get("repo")
     if not isinstance(raw, str) or not raw.strip():
         raise BuildError("缺少必填参数 repo（仓库根目录，字符串）")
-    root = pathlib.Path(raw).expanduser()
+    root = pathlib.Path(raw).expanduser().resolve()    # R470：与 CLI 同一个入口形状（绝对路径）
     if not root.is_dir():
         raise BuildError("仓库根目录不存在或不是目录：%s" % root)
-    return root.resolve()
+    return root
 
 
 def int_arg(value, name, *, default=None, minimum=None):
@@ -64,13 +64,17 @@ def default_dir(root):
 
 
 def cache_meta(entry):
-    """缓存状态 + 「旧事实」披露：auto 表示这次刚自动分析过、没有旧事实。"""
+    """缓存状态 + 「旧事实」披露：auto 表示这次刚自动分析过、没有旧事实。
+
+    R473：不再返回 cached 布尔——它只是下面这句 note 的副本（analyze_repo 那边还恒 false），
+    「是否来自本次会话缓存」由 note 的整句说清，字段删掉不丢信息。
+    """
     if entry["auto"]:
         note = "仓库不在缓存里，这次已自动 analyze 一次（%s）；要换扫描参数请直接调用 analyze_repo。" % entry["analyzed_at"]
     else:
         note = ("本结果来自本次会话缓存（analyze 于 %s）；仓库若在之后改过，这里仍是旧事实，"
                 "请用 analyze_repo（force=true）重扫。" % entry["analyzed_at"])
-    return {"cached": not entry["auto"], "note": note}
+    return {"note": note}
 
 
 def store(state, root, doc, *, out, auto):

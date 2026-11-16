@@ -136,11 +136,12 @@ def import_graph(doc, params):
     graph = doc.get("graph") or {}
     nodes = [str(row["id"]) for row in graph.get("nodes") or []]
     labels = {str(row.get("id")): str(row.get("label") or row.get("id")) for row in graph.get("nodes") or []}
-    edges = sorted({(str(row["from"]), str(row["to"])) for row in graph.get("edges") or []})
+    rows = graph.get("edges") or []       # R471：边数恒取 len(graph.edges)（facts 已按 (from,to,kind) 合并）
+    edges = sorted((str(row["from"]), str(row["to"])) for row in rows)
     level = str(graph.get("level") or "file")
     arrow = "箭头=谁引用谁（ProjectReference）" if level == "project" else "箭头=谁 import 谁"
     out = ['<p class="hint">依赖图（%s 级）：%d 个节点、%d 条边，按依赖层次摆放，%s。</p>'
-           % (fmt(level), len(nodes), len(edges), arrow),
+           % (fmt(level), len(nodes), len(rows), arrow),
            _svg(nodes, edges, key="dep", title="依赖图",
                 layers=[[str(item) for item in row] for row in graph.get("layers") or []], labels=labels)]
     rings = [" → ".join([str(item) for item in ring] + [str(ring[0])]) for ring in (graph.get("cycles") or [])[:3]]

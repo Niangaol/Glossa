@@ -27,6 +27,7 @@ _FILE_URL = re.compile(r"^file:///?", re.IGNORECASE)
 _FILE_DRIVE = re.compile(r"^/([A-Za-z]:[\\/])")
 _WIN_REL = re.compile(r"^(?:\.{1,2}[\\/])?(?:[A-Za-z0-9_@.+-]+[\\/])+[A-Za-z0-9_@.+-]*$")
 _RUN = re.compile(r"[^\s，。、；：\"'（）\n]*")
+_DRIVE_ONLY = re.compile(r"[A-Za-z]:[\\/]?")
 
 
 def _dot(rel: str) -> str:
@@ -47,14 +48,30 @@ def _sentence(value: str, needle: str) -> str:
     return head
 
 
+def _base_needles(base) -> list[str]:
+    """base 可以做子串替换的 needle；退化值一律剔除（R470：宁可不洗，也不许错洗）。
+
+    空串会命中每个字符串；'.' 在 '--repo .' 时会把每个点变成路径分隔符（README./md）；
+    '/' 与单盘符 'D:' 同理错洗。这些值不是「本机路径前缀」，拿来当 needle 只会把路径切坏。
+    """
+    if base is None:
+        return []
+    base_s = str(pathlib.Path(base))
+    out: list[str] = []
+    for needle in (base_s, base_s.replace("\\", "/")):
+        if needle and needle not in (".", "/", "\\") and not _DRIVE_ONLY.fullmatch(needle) \
+                and needle not in out:
+            out.append(needle)
+    return out
+
+
 def _wash(value: str, base) -> tuple[str, bool]:
     """单个本机路径串 → './…'；洗不动（base 之外）就原样返回。"""
-    base_s = str(pathlib.Path(base)) if base is not None else ""
     if _ABS.match(value):
         rel = portable_path(value, base)
         return (value, False) if rel == value else (_dot(rel), True)
-    for needle in (base_s, base_s.replace("\\", "/")):
-        if needle and needle in value:
+    for needle in _base_needles(base):
+        if needle in value:
             return _sentence(value, needle), True
     if "\\" in value and _WIN_REL.match(value):
         return _dot(value), True
@@ -110,8 +127,7 @@ def _is_leak(value: str, base) -> bool:
     if "://" in low and not low.startswith("file://"):
         return False
     body = _FILE_DRIVE.sub(r"\1", _FILE_URL.sub("", value)) if low.startswith("file://") else value
-    base_s = str(pathlib.Path(base)) if base is not None else ""
-    if base_s and (base_s in body or base_s.replace("\\", "/") in body):
+    if any(needle in body for needle in _base_needles(base)):
         return True
     tokens = _ABS_TOKEN.findall(body) or ([body] if body.startswith("/") else [])
     return any(portable_path(token, base) == token for token in tokens)

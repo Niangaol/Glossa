@@ -1,10 +1,11 @@
 """R454/R455/R456/R459：叙述层与 project 级图不许替事实编原因、编承诺。"""
 import json
+import re
 import shutil
 from pathlib import Path
 
 from glossa import facts
-from glossa.explain import narrate, render
+from glossa.explain import components, narrate, render
 from tests._tmp import scratch_dir
 
 FIX = Path(__file__).parent / "fixtures" / "repos"
@@ -48,6 +49,19 @@ def _c5_doc():
     return facts.build_repo_doc(root)
 
 
+def _dup_edge_doc():
+    """复刻 SafeTrace 的形状：同一个 (from,to) 有两条不同 kind 的边（静态 internal + 动态 dynamic）。"""
+    root = scratch_dir("glossa-t10c-dup-edge")
+    (root / "src").mkdir()
+    (root / "src" / "a.ts").write_text(
+        'import { b } from "./b";\n'
+        'export const lazy = () => import("./b");\n'
+        'export const a = b;\n', encoding="utf-8")
+    (root / "src" / "b.ts").write_text("export const b = 1;\n", encoding="utf-8")
+    (root / "package.json").write_text('{"name": "dup-edge", "version": "1.0.0"}\n', encoding="utf-8")
+    return facts.build_repo_doc(root)
+
+
 def _section4(doc):
     """第 4 节那段讲解文字（narrate 的 text 块本身，不含组件渲染）。"""
     return next(b["params"]["text"] for b in narrate.program(doc)
@@ -84,6 +98,35 @@ def test_narrate_never_promises_a_folded_list():
     assert "折叠清单" not in cut and "本页不列这份清单" in cut
     empty = _section4(_doc("empty"))
     assert "折叠清单" not in empty and "另有 0 个" not in empty and "本页不列这份清单" not in empty
+
+
+def test_edge_count_is_identical_in_prose_and_graph_hint():
+    """R471：同一页只许一个边数——正文、图提示与 graph.edges 的 len 三处相等。
+
+    夹具是 SafeTrace 的重复边形状（同 (from,to)、不同 kind）：按 (from,to) 去重会少 1 条，
+    所以两个数字一旦各数一套，这里立刻分叉。
+    """
+    doc = _dup_edge_doc()
+    rows = doc["graph"]["edges"]
+    assert len(rows) == len({(row["from"], row["to"]) for row in rows}) + 1, "夹具必须有重复 (from,to)"
+    text = _section4(doc)
+    hint = components.render_block(doc, {"component": "import_graph", "params": {}})
+    assert {int(num) for num in re.findall(r"(\d+) 条边", text + hint)} == {len(rows)}
+
+
+def test_truncated_nodes_lives_in_fact_graph_and_page_keeps_one_form():
+    """R477：截断缺口回到 facts 层——fact:graph 的 numbers 含 truncated_nodes、text 写明 N，
+    页面只留带数字那一种形态（不再有「不可溯源就写无数字同义句」的分支）。"""
+    doc = _c5_doc()
+    cut = doc["graph"]["truncated_nodes"]
+    assert doc["graph"]["truncated"] is True and cut == 10
+    fact = doc["facts"]["fact:graph"]
+    assert cut in fact["numbers"], "truncated_nodes 必须进 fact:graph 的 numbers（R322 数字要有出处）"
+    assert "其中 %d 个节点因截断未画" % cut in fact["text"]
+    text = _section4(doc)
+    assert "另有 %d 个节点没有画" % cut in text
+    assert "图装不下的节点没画进这张图" not in text, "无数字的第二种形态必须删掉"
+    assert _page(doc)[1]["untraced"] == 0
 
 
 def test_empty_unreachable_is_not_written_as_zero():

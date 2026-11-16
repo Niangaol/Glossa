@@ -121,7 +121,7 @@ def totals_of(doc: dict) -> dict:
 def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20_000,
                    use_default_excludes: bool = True, extra_ignore=None, bonus=None) -> dict:
     """扫一遍仓库并组装 repo.json（11 顶层键）；facts 由 fact_ids.build_facts 生成。"""
-    root = pathlib.Path(root)
+    root = pathlib.Path(root).resolve()          # R470：根只有一种形状（绝对路径），相对写法在门口归一
     if not root.is_dir():
         raise BuildError(f"仓库根目录不存在或不是目录：{root}")
     sc = scan.scan_repo(root, max_file_bytes=max_file_bytes, max_files=max_files,

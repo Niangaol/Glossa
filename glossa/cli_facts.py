@@ -54,7 +54,7 @@ def _bonus(path):
 
 def doc_or_exit(args):
     """(doc, 退出码)：路径不对 → 5；扫描/组装失败 → 2。"""
-    root = pathlib.Path(args.repo)
+    root = pathlib.Path(args.repo).resolve()     # R470：--repo . 与绝对路径必须得到同一本台账
     if not root.is_dir():
         return None, fail(NO_REPO, "glossa：仓库根目录不存在或不是目录：%s" % root)
     try:

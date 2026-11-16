@@ -96,6 +96,9 @@ python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 10. **只认仓库根一份 `.glossaignore`**：不支持子目录各自的忽略文件，也不支持 gitignore 语法。
 11. **讲解页不带 JS**：折叠靠 `<details>`；整页超过 `HTML_MAX_BYTES` 时直接失败（exit 2）而不是截断——宁可不出页，也不出半张页。
 12. **`meta.repo.url` 只记仓库目录名**：不带父目录路径，换机器、换工作目录都一样；别指望用它定位仓库。
+13. **边数是三元组口径**：`graph.edges` 按 `(from,to,kind)` 合并计数，同一对文件既有静态 `import` 又有动态
+    `import()` 时算两条边；页面与 MCP 提示一律用 `len(graph["edges"])`，别再用 `set((from,to))` 去重，
+    否则同一个仓会给出两个数（SafeTrace 就吃过 445 vs 443 的亏）。
 
 ## 实测（2026-11-16，三个真实仓库）
 
@@ -113,9 +116,14 @@ python -m glossa explain --repo <仓库路径> --out output\demo-glossa\<name> -
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | SafeTrace（TS/Vue 安全情报） | 485 | 1,019 | 1,955 | 8 | 0 | 53 | 123 | 233 | 37 | 0 | 0 / 0 |
 | PokemonData（.NET + Vue） | 1,016 | 3,348 | 913 | 2 | 5 | 16 | 256 | 2 | 38 | 0 | 0 / 0 |
-| PaperTrace 自举（本仓） | 530 | 1,954 | 1,111 | 3 | 2 | 10 | 8 | 61 | 38 | 0 | 0 / 0 |
+| PaperTrace 自举（本仓） | 540 | 1,990 | 1,141 | 3 | 2 | 10 | 8 | 66 | 38 | 0 | 0 / 0 |
 
 `exit` 列是 analyze / explain 两个退出码。三组都真跑完、产物都落盘，没有一组被跳过。
+
+自举那一行是 T11 修复轮用**绝对路径**重跑得到的（`--repo D:\AgentPrograms\PaperTrace`），比 T11 时点的 530
+多 10 个文件：本轮新增的 `glossa/explain/narrate_graph.py`、三个测试文件与 `.superpowers/` 下的过程文档都在
+同一棵树里，不是排除规则变了（`excluded.truncated=false` 未变）。SafeTrace 用新代码复跑过：files/symbols/
+imports/packages/projects/entries 与截断节点数逐项未变（485 / 1,019 / 1,955 / 8 / 0 / 53 / 233），仍 37 块、未溯源 0。
 
 几件值得记下来的事：
 
@@ -130,6 +138,11 @@ python -m glossa explain --repo <仓库路径> --out output\demo-glossa\<name> -
    密钥名单里的文件（SafeTrace 的 `.env.example` / `.env.local`）只出现在 `secrets_seen`，内容一个字节都没读。
 5. **讲解页可读性是真读过的**：SafeTrace 的 37 块逐块读完，仍列出 16 条术语未解释、数字自相矛盾
    （同一页「445 条边」与「443 条边」并存）、降级原因被掩码这类问题——「测试全绿」不等于「人读得懂」，
-   这份清单已交给后续修复轮。
+   这份清单已交给后续修复轮。**T11 修复轮已把边数统一**：页面两处都数 `len(graph["edges"])`（按
+   `(from,to,kind)` 合并），SafeTrace 复跑后两句都是 445，矛盾消失。
 6. **MCP 六工具端到端**：stdio 起 `python -m glossa.mcp`，13 行请求换 12 行响应（通知按协议不回包），
    坏 JSON 回 `-32700`、未知方法回 `-32601`、假 fact id 的 `render_explain` 回 `isError`，stderr 全程为空。
+7. **`--repo .` 必须和绝对路径是同一本台账**：修复前 `--repo .` 会让 `_wash` 把「.」当路径前缀，
+   535/535 条 `file.path` 变成 `README./md` 这种坏形态而 exit 0、零告警；修复后同一个仓两种写法的 totals
+   逐项相同（540 / 1,990 / 1,141 / 3 / 2 / 10），`file.path` 里 `./` 出现 0 次。`repo.json` 全文仍有 24 处
+   `./`，全部在 `facts.text` 的便携路径里（如 `./glossa/facts.py`），那是合法形态，不是脏路径。

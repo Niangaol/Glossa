@@ -130,13 +130,17 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
              f"第 {index} 条 import：{imp.get('from')} 第 {line} 行 '{imp.get('specifier')}' → "
              f"{imp.get('kind')}，target={imp.get('target') or '无'}。")
     graph = doc.get("graph") or {}
-    _put(facts, "fact:graph",
-         [len(graph.get("nodes") or []), len(graph.get("edges") or []),
-          len(graph.get("cycles") or []), len(graph.get("unreachable") or []),
-          len(graph.get("layers") or [])],
-         f"依赖图（{graph.get('level')} 级）：{len(graph.get('nodes') or [])} 个节点、"
-         f"{len(graph.get('edges') or [])} 条边、{len(graph.get('cycles') or [])} 个环、"
-         f"{len(graph.get('unreachable') or [])} 个不可达文件，分 {len(graph.get('layers') or [])} 层。")
+    cut = int(graph.get("truncated_nodes") or 0) if graph.get("truncated") else 0
+    numbers = [len(graph.get("nodes") or []), len(graph.get("edges") or []),
+               len(graph.get("cycles") or []), len(graph.get("unreachable") or []),
+               len(graph.get("layers") or [])]
+    text = (f"依赖图（{graph.get('level')} 级）：{len(graph.get('nodes') or [])} 个节点、"
+            f"{len(graph.get('edges') or [])} 条边、{len(graph.get('cycles') or [])} 个环、"
+            f"{len(graph.get('unreachable') or [])} 个不可达文件，分 {len(graph.get('layers') or [])} 层。")
+    if cut:                                    # R477：截断缺口必须能在 numbers 里找到出处
+        numbers.append(cut)
+        text += f"其中 {cut} 个节点因截断未画（截断是计数，清单不在页面上）。"
+    _put(facts, "fact:graph", numbers, text)
     excluded = doc.get("excluded") or {}
     _put(facts, "fact:excluded",
          [excluded.get("files"), excluded.get("bytes"), len(excluded.get("rules") or []),

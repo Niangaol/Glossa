@@ -41,7 +41,7 @@ def analyze_repo(args, state):
     return {"repo": str(root), "out": str(target), "totals": doc["totals"],
             "degraded": len(doc.get("degraded") or []),
             "truncated": bool((doc.get("excluded") or {}).get("truncated")),
-            "analyzed_at": entry["analyzed_at"], "cached": False,
+            "analyzed_at": entry["analyzed_at"],
             "note": "已扫描并写入 %s；同一仓库的后续工具调用直接复用这份台账。" % target}
 
 

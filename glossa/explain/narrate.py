@@ -4,6 +4,8 @@ R322：每块过注册表校验，cites 非空且全在 doc["facts"]，文字里
 （渲染后 untraced==0），取不到出处的句子整句不写。R324：build_prompt 是纯函数，七块 outline、真 fact id
 与组件契约全从 outline / components 生成。R338：第⑤块逐个讲 keyfiles，两个数字不在 numbers 里就改成
 无数字措辞并留 notes。R323 的三态在 cli 落地，这里只问一次后端并解析，失败抛 LLMUnavailable / BuildError。
+R478：入口 / 关系图 / 排除三类句子与 sentence / join_text 搬进 narrate_graph.py（本文件到过 200 行上限），
+「数字必须有出处」的规则只留那边一份；本文件只留七块编排、文字模板与模型那条路。
 """
 from __future__ import annotations
 
@@ -12,6 +14,7 @@ import re
 
 from glossa import fact_ids, keyfiles
 from glossa.explain import components, outline
+from glossa.explain.narrate_graph import entry_text, gaps_text, graph_text, join_text, sentence
 from papertrace.exceptions import BuildError
 from papertrace.llm.client import get_llm
 
@@ -36,53 +39,35 @@ def _nums(doc, cites):
     return real, fact_ids.numbers_for(facts, real)
 
 
-def _sentence(numbers, template, **values):
-    """模板里的每个数字都得在这组 cites 的 numbers 里，否则整句不写（R322 ③）。"""
-    if all(value in numbers and not isinstance(value, bool) for value in values.values()):
-        return template.format(**values)
-    return None
-
-
-def _join(parts):
-    return "\n\n".join(part for part in parts if part)
-
-
 def program(doc):
     """确定性的七块讲解：每个数字都取自 doc["totals"] / facts（R322）。"""
     totals, facts = doc.get("totals") or {}, doc.get("facts") or {}
     blocks = []
     # ① 这项目是什么
     cites, numbers = _nums(doc, ["fact:totals", "fact:files"])
-    text = _join([
-        _sentence(numbers, "全仓 {files} 个文件、{symbols} 个符号、{imports} 条 import"
-                  "（其中 {unresolved} 条 unresolved）、{packages} 个包、{entries} 个入口。",
-                  files=totals.get("files", 0), symbols=totals.get("symbols", 0),
-                  imports=totals.get("imports", 0), unresolved=totals.get("unresolved", 0),
-                  packages=totals.get("packages", 0), entries=totals.get("entries", 0)),
+    text = join_text([
+        sentence(numbers, "全仓 {files} 个文件、{symbols} 个符号、{imports} 条 import"
+                 "（其中 {unresolved} 条 unresolved）、{packages} 个包、{entries} 个入口。",
+                 files=totals.get("files", 0), symbols=totals.get("symbols", 0),
+                 imports=totals.get("imports", 0), unresolved=totals.get("unresolved", 0),
+                 packages=totals.get("packages", 0), entries=totals.get("entries", 0)),
         "下面的指标条与目录树都是从事实台账复算的，没有一句是猜的。"])
     blocks += [_block("overview", {}, cites, 1), _block("text", {"text": text}, cites, 1),
                _block("metrics", {"keys": ["files", "symbols", "imports", "packages", "entries"]},
                       cites, 1)]
-    # ② 从哪进来
+    # ② 从哪进来（句子在 narrate_graph.entry_text）
     entries = doc.get("entries") or []
-    cites, numbers = _nums(doc, ["fact:totals"] + ["fact:entry:%s" % r.get("name") for r in entries])
-    composite = sum(1 for row in entries if row.get("note") == "复合命令未指向单文件")   # R454：只认它
-    other = sum(1 for row in entries if not row.get("target")) - composite
-    text = _join([
-        _sentence(numbers, "共 {entries} 个入口。", entries=len(entries)),
-        _sentence(numbers, "其中 {composite} 个是复合命令，没指向单个文件，所以不作为可达性起点。",
-                  composite=composite) if composite else None,
-        _sentence(numbers, "其中 {other} 个没解析到单文件目标，原因见入口表。", other=other) if other else None,
-        "入口的名字、目标与可复制的命令逐条列在下面。"])
-    blocks += [_block("text", {"text": text}, cites, 2), _block("entry_list", {}, cites, 2)]
+    cites, numbers = _nums(doc, ["fact:totals"] + ["fact:entry:%s" % row.get("name") for row in entries])
+    blocks += [_block("text", {"text": entry_text(doc, numbers)}, cites, 2),
+               _block("entry_list", {}, cites, 2)]
     # ③ 分几块
     packages, projects = doc.get("packages") or [], doc.get("projects") or []
     cites, numbers = _nums(doc, ["fact:totals"]
                            + ["fact:pkg:%s" % row.get("name") for row in packages]
                            + ["fact:project:%s" % row.get("name") for row in projects])
-    text = _join([
-        _sentence(numbers, "分 {packages} 个包、{projects} 个项目。",
-                  packages=len(packages), projects=len(projects)),
+    text = join_text([
+        sentence(numbers, "分 {packages} 个包、{projects} 个项目。",
+                 packages=len(packages), projects=len(projects)),
         "包依赖图与项目引用图只画仓内互相引用的边；目录树按文件路径造出来，都折叠在下面。"])
     blocks.append(_block("text", {"text": text}, cites, 3))
     for kind, rows in (("package", packages), ("project", projects)):
@@ -90,28 +75,16 @@ def program(doc):
             blocks.append(_block(kind + "_map", {}, _nums(doc, ["fact:totals"] + [
                 "fact:%s:%s" % (kind, row.get("name")) for row in rows])[0], 3))
     blocks.append(_block("dir_tree", {"max_depth": 3}, _nums(doc, ["fact:files"])[0], 3))
-    # ④ 谁依赖谁（R459：unreachable 为空不许写 0；R456：页面不列折叠清单，截断只给计数口径）
-    graph = doc.get("graph") or {}
+    # ④ 谁依赖谁（句子在 narrate_graph.graph_text；R459 空 unreachable 不写 0，R456 不承诺清单）
     cites, numbers = _nums(doc, ["fact:graph", "fact:totals"])
-    unreachable, cut = len(graph.get("unreachable") or []), int(graph.get("truncated_nodes") or 0)
-    text = _join([
-        _sentence(numbers, "依赖图有 {nodes} 个节点、{edges} 条边、{cycles} 个环，分 {layers} 层。",
-                  nodes=len(graph.get("nodes") or []), edges=len(graph.get("edges") or []),
-                  cycles=len(graph.get("cycles") or []), layers=len(graph.get("layers") or [])),
-        "没有找到可解析的入口，可达性未计算。" if not entries else
-        _sentence(numbers, "从入口到不了 {unreachable} 个文件。", unreachable=unreachable)
-        if unreachable else None,
-        _sentence(numbers, "另有 {cut} 个节点没有画（截断是计数，本页不列这份清单）。", cut=cut)
-        or "图装不下的节点没画进这张图（截断是计数，本页不列这份清单）。" if cut else None,
-        "箭头的方向是「谁 import 谁」。"])
-    blocks += [_block("text", {"text": text}, cites, 4),
+    blocks += [_block("text", {"text": graph_text(doc, numbers)}, cites, 4),
                _block("import_graph", {}, _nums(doc, ["fact:graph"])[0], 4)]
     # ⑤ 关键文件逐个讲（R338）
     picked = keyfiles.key_files(doc, keyfiles.KEY_FILE_LIMIT)
     cites, numbers = _nums(doc, ["fact:files", "fact:totals"])
     candidates, notes = len(keyfiles.candidate_files(doc)), []
-    head = _sentence(numbers, "共 {candidates} 个可讲解文件，本页逐个讲了 {shown} 个。",
-                     candidates=candidates, shown=len(picked))
+    head = sentence(numbers, "共 {candidates} 个可讲解文件，本页逐个讲了 {shown} 个。",
+                    candidates=candidates, shown=len(picked))
     if head is None:
         head = "本页只逐个讲事实台账挑得出的关键文件。"
         notes.append("可讲解文件数 %d / 本页讲了 %d 个都不在 fact:files 或 fact:totals 的 numbers 里，"
@@ -124,21 +97,9 @@ def program(doc):
         symbol_ids = [fid for fid in sorted(facts) if fid.startswith("fact:symbol:" + path + "#")]
         blocks.append(_block("file_card", {"path": path}, _nums(doc, [file_id])[0], 5))
         blocks.append(_block("symbol_table", {"path": path}, _nums(doc, [file_id] + symbol_ids)[0], 5))
-    # ⑥ 我没看清的地方
-    excluded = doc.get("excluded") or {}
+    # ⑥ 我没看清的地方（句子在 narrate_graph.gaps_text）
     cites, numbers = _nums(doc, ["fact:excluded", "fact:degraded", "fact:totals"])
-    text = _join([
-        _sentence(numbers, "排除 {files} 个文件 / {bytes} 字节，其中 {oversize} 个是超限文件。",
-                  files=int(excluded.get("files") or 0), bytes=int(excluded.get("bytes") or 0),
-                  oversize=len(excluded.get("oversize") or [])),
-        _sentence(numbers, "被剪目录只按 listing 计数，另有 {pruned} 个文件没进 files 列表。",
-                  pruned=int(excluded.get("pruned_files") or 0)),
-        _sentence(numbers, "还有 {unresolved} 条 import 没解析出来，理由都在台账里。",
-                  unresolved=int(totals.get("unresolved") or 0)),
-        _sentence(numbers, "{degraded} 条降级说明逐条列在下面的表里——没看清的地方就这些，不粉饰。",
-                  degraded=len(doc.get("degraded") or [])),
-        "本页不执行被分析的代码，也不读任何密钥文件的内容。"])
-    blocks += [_block("text", {"text": text}, cites, 6),
+    blocks += [_block("text", {"text": gaps_text(doc, numbers)}, cites, 6),
                _block("table", {"fact": "fact:degraded", "columns": ["scope", "reason", "count"]},
                       _nums(doc, ["fact:degraded"])[0], 6)]
     # ⑦ 甜头（可选）

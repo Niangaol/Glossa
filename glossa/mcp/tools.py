@@ -7,7 +7,7 @@ inputSchema 的 required 与类型照计划里的六工具契约，服务器在�
 from __future__ import annotations
 
 _DESC = {
-    "analyze_repo": "扫描一个仓库（或复用缓存）并写 repo.json 事实台账。任何讲解工作的第一步；"
+    "analyze_repo": "扫描一个仓库并写 repo.json 事实台账（总是重扫，不读会话缓存）。任何讲解工作的第一步；"
                     "要换 max_files、要覆盖已有输出、要重扫改过的仓库时都先调它。",
     "get_facts": "按 id 前缀分页翻事实台账（kind=file/pkg/entry/... 或不填看全部）。"
                  "写讲解前用它核对要引用的 fact id 与 numbers，别凭印象编。",
