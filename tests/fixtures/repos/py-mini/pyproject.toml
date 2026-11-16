@@ -1,0 +1,6 @@
+[project]
+name = "py-mini"
+version = "0.1.0"
+
+[project.scripts]
+py-mini = "main:run"
