@@ -352,6 +352,7 @@
 | C6 | `57784b4` | `c78e37e` | 844 → 847 | Important 1：`analysis` 有 modules 缺 totals 时摘要伪造「0 个模块 · 参数量 0」与 34 行表自相矛盾；另有 F-C6-1 排序钉子（`role_counts` 降序与「缺席角色不补 0」零守卫，评审三条变异全绿）+ 六条 Minor，全部在修复轮修掉，复审确认 |
 | C7 | 本提交 | — | 847 | 四条 Minor 批处理：① cli.py docstring 与行为不再矛盾；② `test_code_metrics.py` 1/4 → 1/2；③ 测试 2 补 `meta.paper` 全字典断言；④ R221（第 ⑥ 块排页面末尾）记进 README 已知局限，不开新切片 |
 | C6 修复轮 2 | `b4d12ec` | — | 851 | Important 1：`analysis.modules` 缺口径时 ⑥ 块把「模块行缺失」归因成「骨架模式」（假归因），摘要与 34 行表自相矛盾；修法 4 文件 +148/−54（`render_analysis.py` 三态渲染、`render_symbols.py` 抽出符号表说明句、`spine.html.j2` 4 行、`tests/test_code_html.py` 69 行），另补 R223 tie-break 与两处空表/行数守卫，复审确认 |
+| 收尾评审 | — | `b8d93a3` | 854 | Changes required 1 条 Important（README 与 `analyze_roles.py:14` 把枚举顺序说成判据优先级）+ 4 条 Minor：修法 7 文件 +93/−5，只动一行注释与一句模板文案，产品逻辑零改动；同一提交补 residual `inputs[0]==shape_out`、mlp 闸的 `layer_norm`/`embedding` 两个名字、totals 逐键与 bool 三类守卫（+3 条测试）。定向复审 Approved with minor notes，剩两条 Minor：旧 trace 空态文案无钉子、census 基准点标注过期（均由控制器本提交补上：一条断言 + 本行记录） |
 
 ### C7 交付明细
 
@@ -365,5 +366,5 @@
   | fallback-yellow | 128 | 101 | 4（全 yellow） | 0 | 同上 | 141,271 B | 55,491 B |
 
   三份 `index.html` 都含 `<section id="analysis">`；三份 `trace.json` 都过 `validate_trace` 且 `leaked_absolute` 为 0。
-- **census**（C6 修复轮 2 之后实测，HEAD `b4d12ec`）：`papertrace/` 递归 86 个 `.py`（b4d12ec 新增 `render_symbols.py`，28 行），无 >200 行；正好 200 行的三个文件（`parse_paper/latex_safe.py`、`render_analysis.py`、`symbols/code_table.py`）都顶格，下次改它们要腾行。`cli.py` 182 行（HEAD 177 + docstring 5 行）；C6 修复轮 2 后全量 **851 passed**。
+- **census**（收尾修复轮之后实测，HEAD `b8d93a3`；`b8d93a3` 只改一行注释与一句模板文案，行数不变）：`papertrace/` 递归 86 个 `.py`（b4d12ec 新增 `render_symbols.py`，28 行），无 >200 行；正好 200 行的三个文件（`parse_paper/latex_safe.py`、`render_analysis.py`、`symbols/code_table.py`）都顶格，下次改它们要腾行。`cli.py` 182 行（HEAD 177 + docstring 5 行）；C6 修复轮 2 后全量 **851 passed**，收尾修复轮后 **854 passed**。
 - **全量**：847 passed in 139.29s，与 C6 修复轮基线一条不多一条不少（本 Task 只加断言、不加测试条数）。

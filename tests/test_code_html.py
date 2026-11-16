@@ -195,6 +195,9 @@ def test_html_survives_a_trace_without_analysis(real_doc):
     assert "Traceback" not in html
     block = _section(html, "analysis")
     assert "没有代码分析数据" in block, "空态没有如实说没有"
+    # N-1：这个分支只有旧 trace 可达（骨架必写 empty_analysis，has=True），
+    # 文案不许再把它归因成骨架模式（回退旧措辞必须红）
+    assert "骨架模式" not in block, "旧 trace 空态把原因归给了骨架模式"
 
 
 def test_role_counts_sort_by_count_desc_then_role_asc():
