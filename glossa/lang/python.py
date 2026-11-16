@@ -14,12 +14,17 @@ R352：ImportFrom 的 module 可能是 None（from . import helper）→
 R353：main_guard 只认模块顶层的 If（tree.body 直接子节点），函数体/类体里的守卫
       不算入口；比较两侧顺序都认（__name__ == '__main__' 与 '__main__' == __name__）。
       不用 ast.walk 找 If —— 全深度会把「某函数里恰好写了这句」当成仓库入口。
+R369：_collect 自己的递归会在合法长表达式上溢出（1000 项 + 连接即复现，末帧
+      iter_child_nodes）。不许穿透 —— 已 append 的符号保留、degraded 记一条
+      「表达式嵌套过深，符号提取不完整」，parse 仍是 'exact'（语法确实解析成功）。
 
 已知局限（如实声明，不假装已支持）：
 - import 的 asname 不记（import numpy as np 只记 specifier='numpy'），见 R351；
   记别名要改 schema 与 resolve 的口径，留给后续切片。
 - 装饰器不影响 lineno：ast 给的是 def 行，不是 @decorator 行。
 - kind 只看直接父节点是否为 ClassDef：写在类体内 if 分支里的 def 记 function。
+- PEP 695 的 `type Alias = …`（ast.TypeAlias）第一版不收录：symbols 里没有它，
+  也不会新增 kind='type'（R371）；页面统计只能说「类/函数/方法」。
 """
 
 from __future__ import annotations
@@ -110,8 +115,14 @@ def parse_source(text: str, relpath: str) -> dict:
     except ValueError as exc:                # 防御性：畸形 str 输入（ast 可能抛 ValueError）
         return _skipped(f"ValueError: {exc}")
     symbols: list[dict] = []
-    _collect(tree, None, False, symbols)
+    degraded: list[str] = []
+    try:
+        _collect(tree, None, False, symbols)
+    except RecursionError:                   # R369：合法长表达式会让遍历自身炸掉
+        # 已 append 的符号不回滚；语法确实解析成功了，所以解析状态仍是 exact——
+        # 改记 skipped 会把「解析成功但符号不全」谎报成「没解析」。
+        degraded.append("表达式嵌套过深，符号提取不完整")
     return {"symbols": symbols, "imports": _imports(tree),
             "doc_first_line": _doc_first_line(tree),
             "main_guard": any(_is_main_guard(s) for s in tree.body),   # R353 只认顶层
-            "parse": "exact", "degraded": []}
+            "parse": "exact", "degraded": degraded}

@@ -1,4 +1,5 @@
 """T3：Python 精确解析。夹具行号是冻结事实。"""
+import sys
 from pathlib import Path
 
 from glossa.lang import python as pylang
@@ -88,8 +89,33 @@ def test_no_execution_of_target_code():
     target = (d / "PWNED").as_posix()
     victim.write_text(
         "import pathlib\n"
+        "def marker_func():\n"
+        "    return 1\n"
         "pathlib.Path('" + target + "').write_text('x')\n"
         "raise RuntimeError('BOOM')\n", encoding="utf-8")
     r = pylang.parse_source(victim.read_text(encoding="utf-8"), "victim.py")
     assert r["parse"] == "exact"          # 语法合法，只是运行时才炸
     assert not (d / "PWNED").exists()     # GC29：绝不执行
+    # R370：只钉「没执行」会放过「解析了但零产出」——实现把 return 换成常量空
+    # exact dict 时上面两条照样绿。同一份文本必须真的给出事实。
+    assert [s["name"] for s in r["symbols"]] == ["marker_func"]
+    assert r["symbols"][0]["kind"] == "function"
+    assert r["symbols"][0]["line"] == 2
+    assert [i["module"] for i in r["imports"]] == ["pathlib"]
+    assert r["degraded"] == []
+
+
+def test_deep_expression_does_not_raise_and_degrades():
+    # R369：合法长表达式让 _collect 自己的递归炸掉 —— parse_source 不许抛。
+    # 阈值不钉 1000（各机递归上限不同）：按本机上限抬到「必然溢出」的深度。
+    n = max(1000, sys.getrecursionlimit() + 200)
+    d = scratch_dir("glossa-t3-deep")
+    p = d / "deep.py"
+    p.write_text("x = " + "+".join(["1"] * n) + "\n", encoding="utf-8")
+    try:
+        r = pylang.parse_source(p.read_text(encoding="utf-8"), "deep.py")
+    except RecursionError:                # 这一行本身就是断言：不许穿透
+        raise AssertionError("packed: parse_source 因递归深度抛出")
+    assert r["parse"] == "exact"          # 语法解析成功，不许谎报 skipped
+    assert isinstance(r["symbols"], list)  # 已收集的保留（可为空或部分）
+    assert any("嵌套过深" in note for note in r["degraded"]), r["degraded"]
