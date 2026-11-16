@@ -32,7 +32,7 @@ def _kind_counts(doc: dict) -> dict[str, int]:
 
 
 def print_build_summary(doc: dict, out_path: Path) -> None:
-    """build 写完 trace 后的两行摘要：规模 + 必须当场看见的异常计数。"""
+    """build 写完 trace 后的摘要：规模 + 异常计数 + 代码分析（R218，有才打）。"""
     counts = (doc["meta"].get("runtime") or {}).get("counts") or {}
     kinds = _kind_counts(doc)
     consts = f" / 常量 {kinds['const']}" if kinds["const"] else ""
@@ -51,6 +51,15 @@ def print_build_summary(doc: dict, out_path: Path) -> None:
             counts.get("shape_unchecked", "?"),
         )
     )
+    # R218：代码分析摘要只在 analysis 存在且 modules 非空时打（骨架/老 trace 不打）；
+    # 数字全部取自 analysis["totals"]（R204），不另算一遍。
+    analysis = doc.get("analysis")
+    if analysis and analysis.get("modules"):
+        totals = analysis["totals"]
+        print(
+            f"  代码分析：{totals['modules']:,} 个模块 · 参数量 {totals['params']:,} · "
+            f"峰值激活 {totals['max_activation']:,} 元素 · 粗估 FLOPs {totals['est_flops']:,}"
+        )
 
 
 def print_fusion_warning(doc: dict) -> None:

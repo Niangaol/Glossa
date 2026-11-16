@@ -21,6 +21,7 @@ from pathlib import Path
 import jinja2
 
 from papertrace.build_trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
+from papertrace.code_analysis import analyze_code, empty_analysis
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
 from papertrace.exit_codes import MISSING_RUNTIME, UNIMPLEMENTED, UNTRACEABLE
 from papertrace.paths import leaked_absolute, relativize_doc
@@ -106,16 +107,23 @@ def _cmd_build(args: argparse.Namespace) -> int:
             print(f"papertrace build：{exc}", file=sys.stderr)
             return UNIMPLEMENTED
         print_fusion_warning(doc)
+    # C5（R217）：无论文也分析。load_entry 只在非 skeleton 的公共位置调一次，
+    # 下面的 --paper 分支复用这个 model（S9 里那次重复调用已删）。
+    model = None
+    if not args.skeleton:
+        try:
+            model = load_entry(args.repo, args.entry)
+        except BuildError as exc:
+            print(f"papertrace build：{exc}", file=sys.stderr)
+            return UNIMPLEMENTED
+    if model is None:
+        # R216：骨架路径只写同形状空壳，symbols.code 保持 []（不许伪造符号）
+        doc["analysis"] = empty_analysis()
+    else:
+        analyze_code(doc, model)
     # S9：--paper 不是 none 就把论文脊柱接进来；接不上也照写 trace，
     # 失败原因落 doc["unresolved"]，绝不冒 traceback、绝不静默成功
     if args.paper not in ("none", "", None):
-        model = None
-        if not args.skeleton:
-            try:
-                model = load_entry(args.repo, args.entry)
-            except BuildError as exc:
-                print(f"papertrace build：{exc}", file=sys.stderr)
-                return UNIMPLEMENTED
         try:
             attach_paper(doc, args.paper, model)
         except BuildError as exc:  # R148：契约错误（如结构配对重复）报一行，不冒 traceback
