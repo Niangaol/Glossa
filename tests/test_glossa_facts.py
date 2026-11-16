@@ -35,7 +35,7 @@ def test_totals_match_measured_fixture_counts():
     assert t["projects"] == 0
     assert t["entries"] == 3         # serve / check / test
     assert t["symbols"] == 10        # 实测 export 符号（R298：App.vue 0 个）
-    assert t["edges"] == 0           # R292：T6 占位，T7 填
+    assert t["edges"] == 6           # R292：T6 占位，T7 填真值（resolved import 6 条）
     assert t["unresolved"] == 1
     # R293 双向钉：塞一条 import，totals 必须跟着变
     doc["imports"].append({"from": "x.ts", "specifier": "./y.js",

@@ -95,15 +95,20 @@
       "namespace": {"$ref": "#/$defs/nullable_str"}, "line": {"type": ["integer", "null"]},
       "reason": {"$ref": "#/$defs/nullable_str"}, "type_only": {"type": "boolean"},
       "files": {"type": "array", "items": {"type": "string"}}}},
-    "graph": {"type": "object", "additionalProperties": false, "required": ["nodes", "edges", "cycles", "reachable_from_entries", "unreachable", "layers", "level", "truncated"], "properties": {
-      "nodes": {"type": "array"}, "cycles": {"type": "array"},
+    "graph": {"type": "object", "additionalProperties": false, "required": ["nodes", "edges", "cycles", "reachable_from_entries", "unreachable", "layers", "level", "truncated", "omitted_isolated"], "properties": {
+      "nodes": {"type": "array", "items": {"$ref": "#/$defs/node"}}, "cycles": {"type": "array"},
       "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}},
       "reachable_from_entries": {"type": "array"}, "unreachable": {"type": "array"},
       "layers": {"type": "array"}, "level": {"enum": ["file", "project"]},
       "truncated": {"type": "boolean"}, "omitted_isolated": {"$ref": "#/$defs/int0"}}},
+    "node": {"type": "object", "additionalProperties": false, "required": ["id", "kind", "label", "lang", "package"], "properties": {
+      "id": {"type": "string", "minLength": 1}, "label": {"type": "string", "minLength": 1},
+      "kind": {"enum": ["file", "project"]},
+      "lang": {"$ref": "#/$defs/nullable_str"}, "package": {"$ref": "#/$defs/nullable_str"}}},
     "edge": {"type": "object", "additionalProperties": false, "required": ["from", "to", "kind", "count"], "properties": {
       "from": {"type": "string", "minLength": 1}, "to": {"type": "string", "minLength": 1},
-      "kind": {"type": "string"}, "count": {"type": "integer", "minimum": 1}}},
+      "kind": {"enum": ["internal", "workspace", "dynamic", "internal_project"]},
+      "count": {"type": "integer", "minimum": 1}}},
     "excluded": {"type": "object", "additionalProperties": false, "required": ["rules", "files", "bytes", "oversize", "truncated", "pruned_files", "pruned_files_partial", "secrets_seen"], "properties": {
       "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
       "files": {"$ref": "#/$defs/int0"}, "bytes": {"$ref": "#/$defs/int0"},

@@ -1,6 +1,6 @@
 """repo.json 组装（T6）：把 T1–T5 的产物拼成恰好 11 个顶层键，并挂上事实台账。
 
-R292：graph 占位（T7 填真值）→ totals 的 edges/cycles/unreachable 都是 0；R293：totals 每个数都从 doc 列表复算。
+R292：T6 的 graph 占位已由 T7 填真值（build_graph 在 totals/facts 之前跑，随后 totals 复算）；R293：totals 每个数都从 doc 列表复算。
 R296：url 相对 cwd，仍在 cwd 之外 → 只登记 root.name + degraded；R297：commit 只读 .git/HEAD 与 refs 文件，绝不起 subprocess。
 R299：单文件失败 fail-open（parse='skipped' + degraded），root 不存在/不是目录抛 BuildError。
 R367：python 的 main_guard 只信 parse；行正则只在解析被 skipped 时兜底，且记 degraded。
@@ -17,7 +17,7 @@ import pathlib
 import re
 
 from glossa import entries as entries_mod
-from glossa import lang, manifests, manifests_cs, resolve, resolve_cs, scan
+from glossa import graph, lang, manifests, manifests_cs, resolve, resolve_cs, scan
 from glossa.fact_ids import build_facts
 from glossa.lang import generic
 from glossa.repo_paths import portable_doc
@@ -171,9 +171,9 @@ def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20
                                "extra_ignore": [str(item) for item in extra_ignore or []]}},
         "totals": {}, "files": files, "packages": packages,
         "projects": projects, "entries": entries, "imports": imports,
-        "graph": {"nodes": [], "edges": [], "cycles": [], "reachable_from_entries": [],
-                  "unreachable": [], "layers": [], "level": "file", "truncated": False},
+        "graph": {},
         "excluded": ex, "degraded": degraded, "facts": {}}
+    doc["graph"] = graph.build_graph(doc)                     # 必须在 totals/facts 之前（R292）
     doc["totals"] = totals_of(doc)
     doc["facts"] = build_facts(doc, repo_root=root, bonus=bonus)
     portable_doc(doc, base=root)                              # 最后统一便携化（含 facts.text）
