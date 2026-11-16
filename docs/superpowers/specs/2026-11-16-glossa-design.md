@@ -111,7 +111,7 @@ scan（排除/大小/语言/密钥名）
 | entries | [{kind, name, command, target, package, note}] | entries |
 | imports | [{from, specifier, kind, target, package, namespace, line, type_only}] | resolve |
 | graph | {nodes, edges, cycles, reachable_from_entries, unreachable, layers, level:'file'|'project', truncated, omitted_isolated}；edge 带 count（同 from/to/kind 的 import 合并条数） | graph |
-| excluded | {rules:[{rule,hits}], files, bytes, oversize:[{path,bytes}], truncated, secrets_seen:[…]} | scan |
+| excluded | {rules:[{rule,hits}], files, bytes, oversize:[{path,bytes}], truncated, pruned_files, pruned_files_partial, secrets_seen:[…]}；rules 含 dir:*（目录剪枝，只数命中次数）、ext:*（白名单外扩展名，逐文件归因）、ignore:*（.glossaignore）；pruned_files = 被剪目录内文件总数（listing-only 计数，R339） | scan |
 | degraded | [{scope, reason, count}] | 各层如实登记 |
 | facts | {fact_id: {numbers:[int], text:str}} | fact_ids |
 
@@ -156,8 +156,8 @@ scan（排除/大小/语言/密钥名）
 ## 12. 排除与安全
 
 - 默认排除目录（大小写不敏感）：node_modules、.git、bin、obj、dist、build、out、target、vendor、third_party、__pycache__、.venv、venv、.nuget-packages、publish、.tmp、tmp、var、snapshots、qdrant-config、qdrant-storage、.next、.nuxt、coverage、.pytest_cache、.mypy_cache、.ruff_cache、.idea、.vscode、.agent-teams、.chorography、.video_agent、.zcode、.test-tmp。
-- 目录前缀规则：pythoncore-*、python-*（嵌入式运行时）；文件名含 -dataset-、-main 的数据集目录（PokemonData 的 pokemon-dataset-zh-main）→ 规则名 `dir:dataset`。
-- 大小守卫：单文件 >1,000,000 字节 → skipped + oversize 记录；总文件 >20,000 → 截断 + truncated=true。
+- 目录前缀规则：pythoncore-*、python-3*（嵌入式运行时；**不匹配 python-***，那会误杀 python-bindings / python-utils 这类真源码目录 —— R343）；文件名含 -dataset-、-main 的数据集目录（PokemonData 的 pokemon-dataset-zh-main）→ 规则名 `dir:dataset`。
+- 大小守卫：单文件 >1,000,000 字节 → skipped + oversize 记录，**绝不 read_bytes**（R265，必须有计数桩守卫 R342）；保留文件数达 20,000 → 继续遍历但不再读内容，**只有确实还有本应保留的文件没扫时**才 truncated=true（R341；恰好扫完必须是 false），truncated=true 时页面明示计数不完整。
 - 密钥名单：.env、.env.*、*.pem、*.key、*.pfx、*.p12、id_rsa、id_ed25519、*.keystore、secrets.*、credentials.* → **只登记名与字节数**。
 - .glossaignore：仓库根，每行一个 glob（支持 dir/ 与 *.ext），规则名 `ignore:<行>`。
 - 语言白名单之外的扩展名（png/dll/zip/pdf/pyd/h…）→ 只计数不解析。
