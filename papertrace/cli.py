@@ -22,6 +22,7 @@ import jinja2
 
 from papertrace.build_trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
+from papertrace.exit_codes import MISSING_RUNTIME, UNIMPLEMENTED, UNTRACEABLE
 from papertrace.paths import leaked_absolute, relativize_doc
 from papertrace.render_html import write_html
 from papertrace.report import (
@@ -31,14 +32,9 @@ from papertrace.report import (
     print_ops,
     print_overview,
 )
-from papertrace.schema_validate import dump_trace, load_trace, validate_trace
+from papertrace.report_dump import run_dump
+from papertrace.schema_validate import dump_trace, validate_trace
 from papertrace.spine import attach_paper
-
-UNIMPLEMENTED = 2
-#: 缺运行时要件（典型：没装 torch）。不许降级成空 trace。
-MISSING_RUNTIME = 4
-#: 模型能加载但追不动（export 失败，或导出图无法真实再执行）。
-UNTRACEABLE = 5
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -159,36 +155,12 @@ def _cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_dump(args: argparse.Namespace) -> int:
-    path = Path(args.trace)
-    if not path.is_file():
-        print(f"papertrace dump：找不到 {path}", file=sys.stderr)
-        return 2
-    try:
-        doc = load_trace(path)
-    except (OSError, ValueError) as exc:  # ValueError 覆盖 JSONDecodeError
-        print(f"papertrace dump：{path} 读不成 JSON：{exc}", file=sys.stderr)
-        return UNIMPLEMENTED
-    try:
-        validate_trace(doc)
-    except TraceSchemaError as exc:
-        print(f"papertrace dump：{path} 不是合法 trace：\n{exc}", file=sys.stderr)
-        return 2
-    if args.ops:
-        print_ops(doc)
-    elif args.edges:
-        print_edges(doc)
-    else:
-        print_overview(doc)
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "build":
         return _cmd_build(args)
     if args.command == "dump":
-        return _cmd_dump(args)
+        return run_dump(args.trace, ops=args.ops, edges=args.edges)
     print(f"papertrace {args.command}：本切片未实现。", file=sys.stderr)
     return UNIMPLEMENTED
 
