@@ -625,3 +625,39 @@ python -m glossa facts   --repo D:\path\to\repo --kind file --limit 20 # 翻台�
 
 退出码 3 只属 analyze（输出已存在且没 --force）；explain 每次覆盖已存在的 explain.html（R74）。explain 默认复用 `--out/repo.json`（缺失才重扫并在页脚注明），`--force` 是重扫并覆盖台账，读到坏台账 exit 1、不静默重扫。
 参数错误由 argparse 以 2 退出，与构建失败同码、靠 stderr 区分。
+
+### AI 讲解模式（`--ai`）
+
+程序版仍是默认：不带 `--ai` 就是上面那套**七块骨架 + 组件库**，一个字都没改。加 `--ai` 换成**模型分节撰写**——模型只准搬「这一节素材包」里的事实，产物照旧是单文件、离线、无脚本的 `explain.html`。
+
+```powershell
+# 先用离线桩把流水线跑通：不联网、不需要任何 key
+python -m glossa explain --repo D:\path\to\repo --ai --llm fake --style magazine --out out --force
+```
+
+三套风格（`--style`，默认 `magazine`）：**magazine** 技术刊物（680px、右侧旁注栏）、**report** 工程报告（960px、两列、左侧粘性目录）、**cards** 文件图鉴（1000px、双列卡片）。换风格只换 CSS 与图配色，内容 HTML 与图数据逐字不变；`--style` 写错值由 argparse 以 **2** 退出，不猜、不回退默认。
+
+模型写出来的东西要过**四道内容闸**（安全 / 溯源 / 连线 / 标签）才上页，整页体积另有一道唯一上限（R499）；一节的图过不了闸就整张丢弃，本节留一句披露：
+
+| 闸 | 拦什么 |
+| -- | ---- |
+| 安全闸 | `<script>/<style>/<iframe>/<object>` 等一律删除；**AI 模式连内联 `style` 属性也剥掉**（R506）；`<img>` 只认干净的 `data:image/...`，外链图片丢弃（R505） |
+| 溯源闸 | 这一节素材包之外出现的数字全部黄标、页头计数（R507）；**空集不放行**——一个数字都不可溯源时全标，不是全放 |
+| 连线闸 | 图里每条边都必须是本节素材里真有的 `(from, to)`，编的边丢弃并披露 |
+| 标签闸 | 图节点 label 必须是人话、且能在本节素材里查到，查不到整张图丢弃（R508）；桩自己的条形图标签也只写「json 文件」这种人话，绝不印 `fact:` |
+| 体积闸 | 整页只有一个上限：`HTML_MAX_BYTES = 8,000,000` 字节（R499）；超了在写盘之前失败（exit 2），不截断、不删旧页 |
+
+**离线桩只用于验证流水线**：`--llm fake` 不联网、不调任何模型，只按真实协议形状返回 JSON；用它出的每一页页头都会写「**本页由离线桩生成，未调用真实模型**」——看见这句话就说明这页不是模型写的。要真模型，把四项变量配齐（`GLOSSA_*` 优先，`PAPERTRACE_*` 兜底）：
+
+```powershell
+$env:GLOSSA_LLM_BACKEND='openai'
+$env:GLOSSA_OPENAI_BASE_URL='https://api.deepseek.com/v1'
+$env:GLOSSA_OPENAI_API_KEY='sk-...'
+$env:GLOSSA_LLM='deepseek-chat'        # 模型名，变量就叫 GLOSSA_LLM
+python -m glossa explain --repo D:\path\to\repo --ai --llm openai --style report --out out --force
+```
+
+AI 路径的退出码：**0** 成功 / **2** AI 页组装失败（含体积超限）或 argparse 参数错误（`--style`、`--llm` 写错值，`--ai` 配裸 `--llm`、`--llm offline`）/ **4** 后端没配齐或连不上（**绝不静默退回程序版**）。取值口径：`--llm fake|openai` 隐含 `--ai`，裸 `--llm` 仍是原来的模型块路径，`--llm ollama` 尚未实现（exit 4）。
+
+实测六个页面（2026-11-17，离线桩，三仓 × magazine + SafeTrace × report/cards + 本仓 × report 对照）：每页 **5 节 5 图**（第 1 张是 bars，其余 layered / cards）、未溯源 **0**、`<script>` **0**、外链 **0**、体积 **21,494 / 21,773 / 21,812 / 21,868 / 21,786 / 21,550** 字节（最大 21,868，离 8,000,000 的上限还有两个数量级）。逐页数字表在 [docs/glossa.md](docs/glossa.md) 的「AI 讲解模式」一节。
+

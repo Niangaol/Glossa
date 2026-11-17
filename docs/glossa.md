@@ -11,7 +11,7 @@ $env:PYTHONPATH='D:\AgentPrograms\PaperTrace;D:\AgentPrograms\PaperTrace\pydeps'
 # 1) 只扫事实：写 <out>/repo.json
 python -m glossa analyze --repo D:\path\to\repo --out output\glossa
 
-# 2) 写讲解页：<out>/explain.html（默认程序版；加 --llm 才是模型版）
+# 2) 写讲解页：<out>/explain.html（默认程序版；加 --ai 才是 AI 讲解版）
 python -m glossa explain --repo D:\path\to\repo --out output\glossa
 
 # 3) 按 kind 翻台账（可分页），13 类 kind 见 --help
@@ -76,10 +76,99 @@ python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 6. **我没看清的地方** — `text` + `table`（按 scope/reason/count 列出全部降级说明）
 7. **甜头** — `bonus`，只在 `--bonus-trace` 给了旧 trace.json 时出现
 
-## 没有 API key 时会怎样
+## AI 讲解模式（`--ai`）
 
-- 不加 `--llm`：直接出程序版，`untraced` 必须是 0——每句话的数字都来自 cites 的 numbers，取不到出处就整句不写。
-- 加 `--llm` 但两个后端环境变量（`GLOSSA_LLM_BACKEND` / `PAPERTRACE_LLM_BACKEND`）都没配或都是 `offline`：仍出程序版，stdout 明写「未配置模型后端，本页由程序生成」，exit 0。
+程序版（不带 `--ai`）仍是上面那套七块骨架 + 组件库，两种模式**并存**、互不改写：`--ai` 只把「写正文」这一步交给模型，台账、四道闸、组装、CSS 全部走同一份实现，产物同样是单文件、离线、无脚本的 `explain.html`。
+
+### 命令
+
+```powershell
+$env:PYTHONPATH='D:\AgentPrograms\PaperTrace;D:\AgentPrograms\PaperTrace\pydeps'
+
+# 1) 离线桩：不联网、不需要任何 key，只用来验证流水线（页头会写明没调真模型）
+python -m glossa explain --repo D:\path\to\repo --ai --llm fake --style magazine --out out --force
+
+# 2) 离线桩换风格：report / cards
+python -m glossa explain --repo D:\path\to\repo --ai --llm fake --style report --out out-report --force
+
+# 3) 真模型：先把下面四项配齐，再 --llm openai
+python -m glossa explain --repo D:\path\to\repo --ai --llm openai --style cards --out out-cards --force
+```
+
+取值口径：`--llm fake` / `--llm openai` 隐含 `--ai`；**裸 `--llm`** 仍是原来那条模型块路径（输出逐字不变）；`--llm ollama` 尚未实现，报 exit 4。
+
+### 三套风格（`--style`，默认 magazine）
+
+| 值 | 名字 | 版式（`glossa/explain/styles.py` 的 layout） |
+| -- | ---- | ---- |
+| `magazine`（默认） | 技术刊物 | `max_width=680`、单列、右侧旁注栏；纸色底、宋体标题 |
+| `report` | 工程报告 | `max_width=960`、两列、左侧粘性目录；白底蓝规线 |
+| `cards` | 文件图鉴 | `max_width=1000`、双列卡片；每个关键文件一张卡 |
+
+换风格只换 CSS 与图配色，`<main>` 里的 section / id / 序号 / class **逐字节不变**：实测同一仓的 magazine / report / cards 三页，把颜色值统一替换后 `<main>` 逐字节相同（PaperTrace 11,388 字符、SafeTrace 11,744 字符），`<style>` 三份互不相同。`--style` 写错值由 argparse 以 **2** 退出（实测 `--style bogus` → 2），不猜、也不悄悄回退默认。
+
+### 四道内容闸 + 体积上限：模型写的东西怎么才准上页
+
+一节的 html 与图依次过 `gate_html → gate_numbers → gate_edges → gate_labels`（四道**内容**闸）；任何一关判死就丢掉那一样东西，并在本节留一句披露——**页面上不假装成功**。体积闸不判内容，只在写盘之前卡整页字节数（下面第 5 行）。
+
+| 闸 | 实现 | 拦什么 |
+| -- | ---- | ---- |
+| 安全闸 | `gates.gate_html`（gates.py:25） | `<script>/<style>/<iframe>/<object>/<embed>/<form>/<link>/<meta>/<base>` 删除、`on*` 事件属性删除、`<a href>` 的危险 scheme 只去 href；**AI 模式连内联 `style` 属性一起剥掉**（R506），程序版保留；`<img>` 只认干净的 `data:image/...`（R505），外链图片整张丢弃 |
+| 溯源闸 | `gates.gate_numbers`（gates.py:55） | 这一节素材包 `facts[].numbers` 之外的数字全部 `<mark class="untraced">` 黄标并计入页头；**空集不放行**（R507）：一个数字都不可溯源时全标，不是全放 |
+| 连线闸 | `gates.gate_edges`（gates.py:98） | 图里每条边必须是本节素材 `facts[].edges` 里真有的 `(from, to)`，复用 `patterns.validate_figure`；编的边丢弃并逐个披露 |
+| 标签闸 | `gates.gate_labels`（gates.py:81） | 图节点 label 必须是**人话**且能在本节素材原文里查到（R508）：`fact:` 开头或查不到的，整张图丢弃并披露（披露里不回声模型编的 label） |
+| 体积闸 | `gates.gate_size`（gates.py:120） | 全页只有一个上限：`gates.MAX_PAGE_BYTES = HTML_MAX_BYTES = 8,000,000` 字节（R499 唯一真源）；超了由 `assemble.build_page` 在**写盘之前**抛 `BuildError`（exit 2），不截断、不删旧页、不出半张页 |
+
+桩自己的图也守同一条规矩：该节素材凑够 **3 组以上「人话标签 + 真数字」**（语言文件数、各包/各节计数）时，第 1 张图画 `pattern="bars"`（最多 6 条，按值降序，值只取 `facts[].numbers`、标签写「json 文件」这种人话，绝不印 `fact:`）；凑不够就退回 layered / cards，页面照出、不崩（R513）。
+
+### 离线桩与真模型
+
+- **离线桩只用于验证流水线**：`--llm fake` 不联网、不调任何模型，只按真实协议的调用形状返回 JSON。用它出的每一页页头都写着「**本页由离线桩生成，未调用真实模型**」，页头统计行还恒写「未溯源 N 处 · 失败 M 节」（R509，0 也写）——看见「离线桩」三个字就说明这页不是模型写的。
+- **真模型**：四项环境变量配齐即可（`GLOSSA_*` 优先，`PAPERTRACE_*` 兜底，见 `glossa/explain/llm_config.py` 的 `ENV_PAIRS`）：
+
+| 变量 | 必填 | 含义 |
+| ---- | ---- | ---- |
+| `GLOSSA_LLM_BACKEND` | 是 | 只认 `openai`；其它值报配置不合法（exit 4） |
+| `GLOSSA_OPENAI_BASE_URL` | 是 | OpenAI 兼容端点，如 `https://api.deepseek.com/v1` |
+| `GLOSSA_OPENAI_API_KEY` | 是 | key |
+| `GLOSSA_LLM` | 是 | **模型名**（变量就叫 `GLOSSA_LLM`，没有 `GLOSSA_MODEL` 这种东西） |
+
+四项缺任何一项 `ready()` 就是 false，命令以 **4** 退出并逐个点名缺哪个变量（实测报「缺 GLOSSA_OPENAI_BASE_URL / PAPERTRACE_OPENAI_BASE_URL、GLOSSA_OPENAI_API_KEY / …、GLOSSA_LLM / …」）。
+
+### AI 路径的退出码
+
+| 码 | 什么时候 |
+| -- | ---- |
+| 0 | 页面写好，stdout 一行「讲解页：<path> · N 节 · 未溯源 M 处（· 本页由离线桩生成…）」 |
+| 2 | AI 页组装失败（含整页超过 8,000,000 字节）；**argparse 参数错误也在这个码**：`--style` 写错值、`--llm` 写错值、`--ai` 配裸 `--llm`、`--ai` 配 `--llm offline`（实测 2） |
+| 4 | 后端不可用：四项没配齐、backend 不是 `openai`、配了但连不上（`LLMUnavailable`）、`--llm ollama` 尚未实现。**绝不静默退回程序版** |
+
+### 实测（2026-11-17，离线桩，六个页面）
+
+环境：Windows 11 + Python 3.13.15，`--llm fake`，逐页命令见 `.superpowers/sdd/2026-11-17-glossa/task-A10-report.md` §7。产物只写 `output/demo-ai/<name>/`（`.gitignore` 里，私有代码不入库）。
+
+| 页面 | 仓库 | 风格 | 节 | 图 | 其中 bars | 字节 | 未溯源 | `<script>` | 外链 | 「超过 8000 字节」 |
+| ---- | ---- | ---- | --: | --: | --: | --: | --: | --: | --: | --: |
+| `output/demo-ai/papertrace` | PaperTrace | magazine | 5 | 5 | 1 | 21,494 | 0 | 0 | 0 | 0 |
+| `output/demo-ai/pokemondata` | PokemonData | magazine | 5 | 5 | 1 | 21,773 | 0 | 0 | 0 | 0 |
+| `output/demo-ai/safetrace` | SafeTrace | magazine | 5 | 5 | 1 | 21,812 | 0 | 0 | 0 | 0 |
+| `output/demo-ai/safetrace-report` | SafeTrace | report | 5 | 5 | 1 | 21,868 | 0 | 0 | 0 | 0 |
+| `output/demo-ai/safetrace-cards` | SafeTrace | cards | 5 | 5 | 1 | 21,786 | 0 | 0 | 0 | 0 |
+| `output/demo-ai/papertrace-report` | PaperTrace | report | 5 | 5 | 1 | 21,550 | 0 | 0 | 0 | 0 |
+
+六页的图序列都是 `bars → layered → cards → cards → cards`；第 1 张 bars 的六行（值全部来自该节 `facts[].numbers`）：
+
+| 页面 | 条形（label=value，按值降序） |
+| ---- | ---- |
+| PaperTrace | markdown 文件=312 / python 文件=270 / typescript 文件=11 / json 文件=6 / css 文件=3 / text 文件=3 |
+| PokemonData | javascript 文件=224 / json 文件=222 / python 文件=193 / csharp 文件=108 / css 文件=97 / text 文件=92 |
+| SafeTrace | typescript 文件=326 / json 文件=78 / vue 文件=24 / markdown 文件=20 / javascript 文件=15 / shell 文件=8 |
+
+## 没有 API key 时会怎样（程序版与老模型块路径）
+
+- 不加 `--ai`、也不加 `--llm`：直接出程序版，`untraced` 必须是 0——每句话的数字都来自 cites 的 numbers，取不到出处就整句不写。
+- **加 `--ai` 但四项变量没配齐**：**exit 4 并逐个点名缺哪个变量**，绝不偷偷退回程序版（与下面老路径不同，见上面「AI 路径的退出码」）；只想验证流水线就写 `--llm fake`。
+- 加**裸 `--llm`**（老模型块路径）但两个后端环境变量（`GLOSSA_LLM_BACKEND` / `PAPERTRACE_LLM_BACKEND`）都没配或都是 `offline`：仍出程序版，stdout 明写「未配置模型后端，本页由程序生成」，exit 0。
 - 配了但缺 key 或调用失败（`LLMUnavailable`）：**exit 4 并如实报错**，不会偷偷退回程序版。
 - 模型返回的不是合法 JSON 数组，或引用了台账里不存在的事实：`BuildError` → exit 2，整页拒绝，不塞进页面。
 
