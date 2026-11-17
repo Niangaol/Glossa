@@ -16,7 +16,8 @@ from glossa.explain import ai_pipeline, llm_config, styles
 from papertrace.exceptions import BuildError, LLMUnavailable
 from papertrace.exit_codes import MISSING_RUNTIME
 
-KINDS = ("fake", "openai")             #: --llm 的两个取值；裸 --llm 不在此列（走旧路径）
+KINDS = ("fake", "openai", "ollama")   #: --llm 的两个 AI 路径取值；裸 --llm 仍走旧路径
+CHOICES = ("fake", "openai", "ollama", "offline")   # R510：argparse 直接挡掉拼错的值
 OK = 0
 AI_FAIL = cli_facts.BUILD_FAIL         # 2：AI 页面组装失败（含体积超限）
 NO_RUNTIME = MISSING_RUNTIME           # 4：没有可用后端 / 配了但连不上
@@ -26,9 +27,10 @@ def add_options(parser):
     """三个新选项。--llm 用 nargs="?"：裸 --llm 仍是 True，旧路径一个字都不用改。"""
     parser.add_argument("--ai", action="store_true",
                         help="用 AI 分节撰写整页（每节过四道闸；没有后端时 exit 4）")
-    parser.add_argument("--llm", nargs="?", const=True, default=None, metavar="fake|openai",
-                        help="模型后端：fake 是离线桩（不联网，页头标注）；裸 --llm 保持"
-                             "原来的模型块路径")
+    parser.add_argument("--llm", nargs="?", const=True, default=None, choices=CHOICES,
+                        metavar="fake|openai|ollama|offline",
+                        help="模型后端：fake 是离线桩（不联网，页头标注）；ollama 尚未实现；"
+                             "裸 --llm 保持原来的模型块路径")
     parser.add_argument("--style", choices=styles.style_names(), default="magazine",
                         help="AI 页的风格预设（magazine / report / cards，默认 magazine）")
     return parser
@@ -40,17 +42,21 @@ def wanted(args) -> bool:
 
 
 def kind(args) -> str:
-    """显式 --llm fake 才用桩；--ai 或 --llm openai 都走真后端。"""
-    return "fake" if getattr(args, "llm", None) == "fake" else "openai"
+    """显式 --llm fake 才用桩；--llm ollama 是本地后端；--ai 或 --llm openai 走真后端。"""
+    value = getattr(args, "llm", None)
+    return value if value in KINDS else "openai"
 
 
 def bad(args):
-    """--llm 只认 fake / openai；不能交给 argparse 的 choices，因为裸旗标也要过这关。"""
+    """R510：裸 --llm 与 offline 不能和 --ai 一起用；其余非法取值 argparse 已经挡掉。"""
     value = getattr(args, "llm", None)
-    if value is None or value is True or value in KINDS:   # 没给 / 裸旗标 / 两个合法值
+    if value is None or value in KINDS:       # 没给 / fake / openai / ollama 都合法
         return None
-    return ("glossa explain：--llm 只接受 fake 或 openai（不给值仍是原来的模型块路径），"
-            "收到 %r" % (value,))
+    if value is True:
+        return ("glossa explain：--ai 需要明确指定后端，裸 --llm 不算；"
+                "请写 --ai --llm fake 或 --ai --llm openai。")
+    return ("glossa explain：--ai 不能和 --llm %r 一起用；--llm 只接受 %s。"
+            % (value, " / ".join(CHOICES)))
 
 
 def run(args, doc):
@@ -59,6 +65,9 @@ def run(args, doc):
     if message:
         return cli_facts.fail(AI_FAIL, message)
     name = kind(args)
+    if name == "ollama":                          # R510：本地后端还没实现，响亮报 4
+        return cli_facts.fail(NO_RUNTIME, "glossa explain：--llm ollama 是本地后端，"
+                              "papertrace 尚未实现；请用 --llm fake 或 --llm openai。")
     if name != "fake":
         try:
             cfg = llm_config.resolve()            # A1：配置只读这一处

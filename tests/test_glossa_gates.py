@@ -19,9 +19,9 @@ def test_script_is_removed_and_noted():
 
 
 def test_event_attribute_is_removed_and_noted():
-    clean, notes = gates.gate_html('<img src="x.png" onerror="alert(1)">')
+    clean, notes = gates.gate_html('<img src="data:image/png;base64,AA" onerror="alert(1)">')
     assert "onerror" not in clean.lower()
-    assert clean.count("<img") == 1 and 'src="x.png"' in clean
+    assert clean.count("<img") == 1 and 'src="data:image/png;base64,AA"' in clean
     assert any("onerror" in note.lower() for note in notes), notes
 
 
@@ -54,7 +54,7 @@ def test_number_from_the_allowed_set_is_not_marked():
 
 def test_program_mode_passes_an_empty_set_and_counts_zero():
     html = "<p>共 128 个节点、101 条边，29,856 次估算。</p>"
-    marked, count = gates.gate_numbers(html, set())
+    marked, count = gates.gate_numbers(html, set(), program=True)   # R507：空集只对程序版放行
     assert (marked, count) == (html, 0)
 
 

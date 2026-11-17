@@ -21,6 +21,15 @@ from papertrace.exceptions import BuildError
 from papertrace.schema_validate import dump_trace
 
 MAX_SOURCE_LINES = 200
+MODE_KINDS = ("program", "ai")           # R510：mode 只认这两个小写值
+
+
+def _mode(args) -> str:
+    """R510：MCP 的 mode 不静默降级——"AI"/"bogus" 一律响亮拒绝，并说清怎么改。"""
+    mode = "program" if args.get("mode") is None else args.get("mode")
+    if mode not in MODE_KINDS:
+        raise BuildError('mode 只接受小写的 "program" 或 "ai"，收到 %r' % (mode,))
+    return mode
 
 
 def analyze_repo(args, state):
@@ -149,13 +158,14 @@ def render_explain(args, state):
 
     A6：mode="ai" 时 blocks 不看，改走 AI 编排（llm="fake" 为离线桩，页头会标注）。
     """
+    mode = _mode(args)                       # R510：先校验取值，再决定走哪条路
     root, entry = ensure(args, state)
-    if (args.get("mode") or "program") == "ai":
+    if mode == "ai":
         return _render_ai(args, root, entry)
     blocks = args.get("blocks")
     if not isinstance(blocks, list) or not blocks:
         raise BuildError("blocks 必须是「非空的 JSON 数组」，收到 %r" % (blocks,))
-    mode, model_name = args.get("mode") or "program", args.get("model_name") or None
+    model_name = args.get("model_name") or None
     out = pathlib.Path(str(args["out"])) if args.get("out") else default_dir(root)
     path = render.write_explain(entry["doc"], blocks, out, mode=mode, model_name=model_name)
     _html, report = render.render_explain(entry["doc"], blocks, mode=mode, model_name=model_name)

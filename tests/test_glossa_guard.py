@@ -16,7 +16,7 @@ def test_external_links_and_embeds_are_removed():
     src = ('<a href="https://x">外</a><a href="//y">协议相对</a>'
            '<iframe src="https://z"></iframe><object data="a"></object>'
            '<embed src="b"><a href="javascript:alert(1)">js</a>'
-           '<img src="data:image/png;base64,AAA">')
+           '<img src="https://evil.example/x.png">')         # R505：外链整标签丢弃
     clean, removed, notes = guard.sanitize_html(src)
     for bad in ("https://", "//y", "<iframe", "<object", "<embed",
                 "javascript:", "data:"):
@@ -69,14 +69,14 @@ def test_model_written_untraced_marks_are_demoted():
 def test_style_and_meta_and_form_are_removed():
     src = ('<style>.untraced{visibility:hidden}</style><base href="//x">'
            '<meta http-equiv="refresh"><link rel="stylesheet" href="//y">'
-           '<form action="//z"></form><img src="a.png" srcset="//evil 2x">'
+           '<form action="//z"></form><img src="data:image/png;base64,AA" srcset="//evil 2x">'
            '<p style="color:red">正文</p>')
     clean, removed, notes = guard.sanitize_html(src)
     for bad in ("<style", "visibility:hidden", "<base", "<meta", "<link",
                 "<form", "srcset", "//x", "//y", "//z", "//evil"):
         assert bad not in clean, bad
     assert 'style="color:red"' in clean        # 内联 style 属性仍放行（R420）
-    assert 'src="a.png"' in clean and "正文" in clean
+    assert 'src="data:image/png;base64,AA"' in clean and "正文" in clean
     assert removed == 6                        # 5 个禁标签 + 1 个 srcset 属性
     assert len(notes) >= 6
 

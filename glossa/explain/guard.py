@@ -1,14 +1,15 @@
 r"""custom HTML 守卫（R307）与未溯源数字标记（R308）。
 
 R307：用 html.parser 逐标签重建，禁用正则剥标签。FORBIDDEN_TAGS 整标签连内容丢弃；
-丢一切 on* 事件属性；<a href> 命中 http/https///javascript:/data: 只去 href、保留标签与文字；
-<img src=data:…> 丢整个 img；其它标签、内联 style、data-* 放行。
-removed 计数：每个被丢标签算 1、每个被丢属性算 1；被丢标签内的文本不另计，配对结束标签不另计。
+丢一切 on* 事件属性；<a href> 命中 http/https///javascript:/data: 只去 href、保留标签与文字。
+removed 计数：每个被丢标签算 1、每个被丢属性算 1；标签内文本不另计，配对结束标签不另计。
+R505：<img> 的 src 只认干净的 data:image/ 内联数据（带 C0 的 src 算夹带），其余整标签丢弃并披露。
+R506：strip_style=True 时额外剥掉内联 style 属性并计 1——AI 版用，程序版保留（R420 冻结约定）。
 
 R418：比对危险 scheme 前先删掉全部 C0 与空格（re.sub(r"[\x00-\x20]", "", …)）——WHATWG
 URL 解析器解析前就删 tab/换行，放行 <a href="java&#9;script:…"> 等于谎报「一处都没移除」。
 R420：style/base/meta/link/form 也进 FORBIDDEN_TAGS（模型不许注入样式表，否则一行 CSS 就能
-关掉全页未溯源警示）；<img> 的 srcset 按属性丢弃计 1；内联 style 属性仍放行（冻结测试要求）。
+关掉全页未溯源警示）；<img> 的 srcset 按属性丢弃计 1。
 
 R407：禁标签是 void 元素（embed / param）时，丢弃时绝不进入抑制态——否则它后面整篇
 HTML 会被静默吞掉（不抛不报）。R411：未闭合的禁标签 → 其后内容一并丢弃（fail-closed）。
@@ -27,13 +28,11 @@ import re
 from html.parser import HTMLParser
 
 FORBIDDEN_TAGS = frozenset({
-    "script", "iframe", "object", "embed",
-    "style", "base", "meta", "link", "form",          # R420
+    "script", "iframe", "object", "embed", "style", "base", "meta", "link", "form",  # R420
 })
 _VOID = frozenset({
-    "area", "base", "br", "col", "embed", "hr", "img", "input",
-    "link", "meta", "param", "source", "track", "wbr",
-})
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "param", "source", "track", "wbr"})
 _C0 = re.compile(r"[\x00-\x20]")
 _DANGEROUS = ("http://", "https://", "//", "javascript:", "data:")
 
@@ -54,11 +53,10 @@ def _emit(tag: str, attrs) -> str:
 
 
 class _Sanitizer(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, strip_style: bool = False) -> None:
         super().__init__(convert_charrefs=True)
-        self.out: list[str] = []
-        self.removed = 0
-        self.notes: list[str] = []
+        self.strip_style = strip_style           # R506：AI 版连内联 style 一起剥
+        self.out, self.removed, self.notes = [], 0, []
         self._suppressed: list[str] = []
 
     def _note(self, text: str) -> None:
@@ -77,10 +75,11 @@ class _Sanitizer(HTMLParser):
             if tag not in _VOID:                 # R407：void 禁标签不进抑制态
                 self._suppressed.append(tag)
             return
-        if tag == "img" and any(low == "src" and _dangerous(value, ("data:",))
-                                for low, value in ((n.lower(), v) for n, v in attrs)):
+        src = next((v for n, v in attrs if n.lower() == "src"), None)
+        if tag == "img" and not (src and src == _C0.sub("", src)
+                                 and src.lower().startswith("data:image/")):
             self.removed += 1                    # 整个 img 算 1；属性不再另计
-            self._note("丢弃 data: 内联图片")
+            self._note("丢弃 img 的 src：只允许 data:image/ 内联图片，带 C0 也算夹带（R505）")
             return
         kept = []
         for name, value in attrs:
@@ -92,6 +91,10 @@ class _Sanitizer(HTMLParser):
             if tag == "img" and low == "srcset":  # R420：响应式图片可拉外链
                 self.removed += 1
                 self._note("丢弃 img 的 srcset 属性")
+                continue
+            if low == "style" and self.strip_style:
+                self.removed += 1
+                self._note("丢弃内联 style 属性（R506）")
                 continue
             if low == "href" and tag == "a" and _dangerous(value):
                 self.removed += 1
@@ -126,9 +129,9 @@ class _Sanitizer(HTMLParser):
         self.out.append(_html.escape(data, quote=False))
 
 
-def sanitize_html(text: str) -> tuple[str, int, list[str]]:
-    """返回 (clean, removed, notes)；removed 口径见 R307。"""
-    parser = _Sanitizer()
+def sanitize_html(text: str, *, strip_style: bool = False) -> tuple[str, int, list[str]]:
+    """返回 (clean, removed, notes)；removed 口径见 R307，strip_style 见 R506。"""
+    parser = _Sanitizer(strip_style)
     parser.feed(text)
     parser.close()
     if parser._suppressed:                        # R411：fail-closed

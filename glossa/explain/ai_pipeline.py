@@ -1,9 +1,10 @@
 """A6：AI 讲解编排（ai_pipeline.py）——两次调用、四道闸、一次组装。
 
 顺序固定（派发书 §2）：pack_for_plan → build_plan_prompt → complete → parse_plan →
-每节 build_pack → build_section_prompt → complete → parse_section → gate_html →
-gate_numbers（这一节素材包里的 numbers）→ gate_edges（这一节素材包里的边）→
-assemble.build_page。
+每节 build_pack → build_section_prompt → complete → parse_section → gate_html（strip_style=True，
+R506）→ gate_numbers（这一节素材包里的 numbers，空集不放行，R507）→ gate_edges（这一节素材包
+里的边）→ gate_labels（节点 label 必须查得到，R508）→ assemble.build_page（页头恒写未溯源/
+失败计数，R509）。
 
 两条不许商量的口径：
 - 一节失败不整页崩：解析或校验抛 BuildError 的那一节渲染成「这一段生成失败：<原因>」，
@@ -92,13 +93,15 @@ def _section(doc, item, pos, llm, root):
     pack = pack_mod.build_pack(doc, dict(item, index=pos), root)
     system, user = prompt.build_section_prompt(pack)
     data = prompt.parse_section(llm.complete(user, system), pos)
-    body, notes = gates.gate_html(data["html"])
-    body, _marked = gates.gate_numbers(body, _numbers(pack))
+    body, notes = gates.gate_html(data["html"], strip_style=True)   # R506：AI 版不留内联样式
+    body, _marked = gates.gate_numbers(body, _numbers(pack), program=False)  # R507：空集不放行
     figures, allowed = [], _pairs(pack)
     for fig in data["figures"]:
         clean, dropped = gates.gate_edges(fig, allowed)
-        figures.append(clean)
-        notes += dropped
+        clean, kept = gates.gate_labels(clean, pack)        # R508：label 查不到就整张丢弃
+        notes += dropped + kept
+        if clean is not None:
+            figures.append(clean)
     return {"title": data.get("title") or item["title"], "html": body, "figures": figures,
             "notes": list(pack.get("notes") or ()) + list(data.get("notes") or ()) + notes}
 
@@ -108,7 +111,7 @@ def run_ai(doc: dict, llm, style: str, *, root=None, max_sections: int = MAX_SEC
     if not isinstance(doc, dict):
         raise BuildError("run_ai 的 doc 必须是事实台账对象，收到 %r" % (type(doc).__name__,))
     base = pathlib.Path(root).resolve() if root else pathlib.Path.cwd()
-    notes, sections = [], []
+    notes, sections, failed = [], [], 0
     system, user = prompt.build_plan_prompt(doc)
     plan = prompt.parse_plan(llm.complete(user, system), doc)
     if not plan:
@@ -124,12 +127,14 @@ def run_ai(doc: dict, llm, style: str, *, root=None, max_sections: int = MAX_SEC
             sections.append({"title": item["title"], "figures": [], "notes": [],
                              "html": _FAILED % _html.escape(str(exc))})
             notes.append("第 %d 节「%s」生成失败，已按原文披露：%s" % (pos, item["title"], exc))
+            failed += 1
             continue
         sections.append(row)
         notes += row["notes"]
-    page = assemble.build_page(doc, sections, style, mode=MODE, note=deviation(llm))
+    page = assemble.build_page(doc, sections, style, mode=MODE, note=deviation(llm),
+                               failed=failed)           # R509：页头恒写计数，0 也写
     return {"html": page, "sections": sections, "untraced": page.count(_MARK),
-            "notes": notes, "mode": MODE, "deviation": deviation(llm)}
+            "notes": notes, "mode": MODE, "deviation": deviation(llm), "failed": failed}
 
 
 def write_page(html: str, out_dir) -> pathlib.Path:

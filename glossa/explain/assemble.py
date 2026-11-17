@@ -30,6 +30,8 @@ BADGE_KEYS: tuple = (("files", "文件"), ("symbols", "符号"), ("packages", "�
 DISCLOSURES: tuple[str, ...] = ("统计口径为 listing 计数，符号链接内容未计入。",
                                 "目录被剪枝时，其中的文件只按 listing 计数，不会进入 files 列表。")
 EMPTY_TEXT = "本次没有可讲的章节。"
+STATS = "未溯源 %d 处 · 失败 %d 节"   # R509：页头恒写，0 也写
+_MARK = '<mark class="untraced">'
 
 
 def _esc(text) -> str:
@@ -92,21 +94,26 @@ def badge_of(doc: dict) -> str:
     return " · ".join(shown) or "统计未登记"
 
 
-def build_page(doc: dict, sections: list, style: str, *, mode: str, note: str = "") -> str:
+def build_page(doc: dict, sections: list, style: str, *, mode: str, note: str = "",
+               untraced=None, failed: int = 0) -> str:
     """整页：注入 CSS、生成目录、组装 <main>，超限抛 BuildError（写盘之前）。
 
-    mode 决定页头标记（ai / program）；note 原样渲染成页头一行小字（A6 标注离线桩）。
+    mode 决定页头标记（ai / program）；R509：页头恒写「未溯源 N 处 · 失败 M 节」，
+    N 默认数 <main> 里的黄标（与 render.py 同口径），调用方也可传自己数好的值；
+    note 追加在统计行后面（A6 标注离线桩）。
     """
     css = styles.load_css(style)                 # 未知风格先响亮报错（ValueError）
     if mode not in MODES:
         raise BuildError("mode 只能是 ai 或 program，收到 %r" % (mode,))
     rows = _listed(sections)
+    body = build_main(rows, style)
+    marks = body.count(_MARK) if untraced is None else int(untraced)
+    header = STATS % (marks, max(0, int(failed))) + (" · " + str(note) if note else "")
     meta = (doc or {}).get("meta") or {}
     title = "笺疏 · %s" % ((meta.get("repo") or {}).get("root_name") or "未命名仓库")
     page = _ENV.get_template(_TEMPLATE).render(
         title=title, css=css, mode=mode, mode_text=MODES[mode], badge=badge_of(doc),
-        note=str(note or ""), toc=build_toc(rows), body=build_main(rows, style),
-        disclosures=DISCLOSURES)
+        note=header, toc=build_toc(rows), body=body, disclosures=DISCLOSURES)
     size, limit = len(page.encode("utf-8")), gates.MAX_PAGE_BYTES
     if size > limit:
         raise BuildError("AI 讲解页 %d 字节，超过单页上限 %d 字节（不截断，也不删旧页）"

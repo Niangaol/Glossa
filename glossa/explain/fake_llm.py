@@ -5,6 +5,9 @@
 facts[].edges。所以桩跑出来的页面天然 0 处未溯源：四道闸在桩上的通过不是「放宽」，而是
 桩没有东西可编——它连「数字没记全的那条事实」都不肯搬（见 _safe）。
 
+R508：图节点的 label 必须是读者看得懂的人话（成员名 / 文件名），且必须是这一节素材里
+真能查到的原文子串——桩绝不把 fact:… 印到图上，A4 的标签闸会整张图丢弃。
+
 桩永不进生产默认路径：只有 --llm fake（或测试显式注入）才会用到，页头因此必须标注
 「本页由离线桩生成，未调用真实模型」——那句 note 由 ai_pipeline.deviation 给出。
 两种故意失败形态（供测试用）：FakeLLM(bad_json=True) 让第一次写节的回包是坏 JSON，证明
@@ -82,6 +85,19 @@ def _load(prompt: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _short(text, cap: int = 18) -> str:
+    """人话标签：取原文第一段、截到 cap 字；必须是素材子串，否则 R508 的闸认不出来。"""
+    body = re.split(r"[，。；：、,;]", str(text or ""), maxsplit=1)[0].strip()
+    return body[:cap]
+
+
+def _label(raw) -> str:
+    """fact id / 路径 → 人话：成员名 > 文件名；桩图上绝不印 fact:（R508）。"""
+    text = re.sub(r"^fact:[^:]*:", "", str(raw or "").strip())
+    text = text.split("#", 1)[1] if "#" in text else text
+    return text.rstrip("/").rsplit("/", 1)[-1] or str(raw or "").strip()
+
+
 def _figure(facts: list) -> dict:
     """一张图：有事实边就画分层图（每条边都来自 facts[].edges），没边就画事实卡片。"""
     found = [(str(e.get("from") or ""), str(e.get("to") or ""), row.get("id"))
@@ -94,11 +110,14 @@ def _figure(facts: list) -> dict:
     edges = edges[:MAX_EDGE]
     if edges:
         ends = list(dict.fromkeys([e["from"] for e in edges] + [e["to"] for e in edges]))
-        return {"pattern": "layered", "caption": "每条连线都来自事实台账",
-                "nodes": [{"id": end, "label": end} for end in ends], "edges": edges}
-    picked = [str(row.get("id")) for row in facts if row.get("id")][:MAX_EDGE]
-    return {"pattern": "cards", "caption": "这一节用到的事实",
-            "nodes": [{"id": fact_id, "label": fact_id} for fact_id in picked]}
+        return {"pattern": "layered",
+                "caption": "每条连线都来自事实台账（节点名取自素材原文）",
+                "nodes": [{"id": end, "label": _label(end)} for end in ends], "edges": edges}
+    picked = [row for row in facts if row.get("id")][:MAX_EDGE]
+    return {"pattern": "cards", "caption": "这一节用到的事实（标签取自素材原文）",
+            "nodes": [{"id": str(row.get("id")),
+                       "label": _short(row.get("text")) or _label(row.get("id"))}
+                      for row in picked]}
 
 
 def _body(pack: dict, index: int, untraced: bool) -> str:
