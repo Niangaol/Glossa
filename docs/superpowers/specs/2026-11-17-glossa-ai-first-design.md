@@ -1,4 +1,4 @@
-﻿# 笺疏 M2 设计 v2：AI 写文字与图，程序给款式与抽线
+# 笺疏 M2 设计 v2：AI 写文字与图，程序给款式与抽线
 
 日期：2026-11-17　状态：待年糕批准　作者：lead
 （v2 按 m14616 重写：**CSS 不交给 AI**，AI 只写文字与图的连线；美术风格是几套预设、由用户选。）
@@ -149,7 +149,7 @@ AI 每段返回**严格 JSON**（不含 HTML，不含 CSS）：
 - 离线桩（`FakeLLM`）按真实协议的同一套 JSON 形状返回内容：plan 返回 3–5 节，每节返回 `{title, html, figures, notes}`，其中 figures 的节点与边**全部取自 pack 里给的事实边**。
 - 目的：把「程序侧」的东西（分节、画图、四道闸、体积、目录、三套风格）全部验证到位；真实模型只是把同一份 JSON 写得更好看，不改变流水线。
 - 约束：离线桩不许出现在生产路径上；它只能通过 `--llm fake` 或测试注入进入，且必须在页头标注「本页由离线桩生成，未调用真实模型」，防止把桩内容误当真实 AI 产出。
-- 真实 key 的接入方式（`GLOSSA_LLM_BACKEND=openai` + `GLOSSA_LLM_BASE_URL/API_KEY/MODEL`）保持不变，用户自己填即可。
+- 真实 key 的接入方式保持不变，用户自己填即可：`GLOSSA_LLM_BACKEND=openai` + `GLOSSA_OPENAI_BASE_URL` + `GLOSSA_OPENAI_API_KEY` + `GLOSSA_LLM`（前三项之外，模型名变量是 `GLOSSA_LLM`，没有 `GLOSSA_MODEL`；`PAPERTRACE_*` 同名变量是兜底，慢的推理模型可用 `GLOSSA_LLM_TIMEOUT` 调大超时）。
 ## 13. 裁决（A4 收尾，2026-11-17）
 
 **R498（批准）**：六种图范式以仓内真源为准 —— layered / flow / matrix / tree / bars / cards。我在 A4 派发书里写的 layers / chain / radial 是记错的名字，不许为迁就派发书另造第二套名字。未知 pattern 抛 ValueError 并列出这六种。
@@ -174,3 +174,24 @@ AI 每段返回**严格 JSON**（不含 HTML，不含 CSS）：
 **R516（必修）**：柱状图的值会以文本形式印进 SVG，而数字溯源闸只扫 html、扫不到图数据 → 模型编一个 99999，页面上就多一个零出处的数字，页头还写着「未溯源 0 处」。裁定：新增 `gates.gate_values`，柱状值必须能在本节素材 `facts[].numbers` 里核上（复用 `_numeric` 的归一化，认 `29,856` / `50%` 这类写法）；编的那一条丢掉、其余照画并披露，一条都核不上就整张图丢弃。内容闸因此是五道：`gate_html → gate_numbers → gate_edges → gate_labels → gate_values`。
 
 **错的代价**：不修时页面能通过当时全部测试、页头自称「未溯源 0 处」，却在 SVG 里印着模型编的名字和数字——这是这个设计里最不该发生的一类错误（静默的错误事实），比缺一段正文严重得多。
+
+## 15. 裁决（AIFINAL 评审结案，2026-11-17）
+
+评审报告 `.superpowers/sdd/2026-11-17-glossa/task-AIFINAL-review.md`（230 行）判 Changes required：Critical 1 / 高 3 / 中 6 / 低 5，14 条变异 9 红 5 绿。下面是逐条裁定与落点。
+
+**R517（Critical，接真模型的唯一入口从来没通）**：`papertrace.llm.client.LLMBackend` 只有 `chat(prompt, *, system=None) -> ChatResult`，而 `ai_pipeline` 要的是 `complete(prompt, system) -> str`；离线桩恰好有 `complete`，所以 1000+ 条测试全绿，而用户按文档填好 key 跑 `--ai --llm openai` 必然 AttributeError。修法：`ai_pipeline.ChatAdapter` 把 `chat()` 包成 `complete()`（空文本 / 非字符串响亮 `BuildError`，绝不把空串当正文），`as_completer()` 对已实现 `complete` 的对象原样放行，`build_llm()` 统一走它。同时把超时做成可配：`llm_config.TIMEOUT_PAIR = ("GLOSSA_LLM_TIMEOUT", "PAPERTRACE_LLM_TIMEOUT")`，`timeout_seconds()` 读不到就用默认，写错值（非数字、非正数）响亮 `ValueError`，`backend()` 显式构造 `OpenAICompatBackend(timeout=...)`——StepPlan 的 step-5-preview 真跑一节要 35.9 秒，默认 60 秒太紧。
+
+**R518（Critical，页头那个 0 只覆盖了一半通道）**：「未溯源 N 处」只数 `<main>` 里的黄标，可图注、卡片 `text`、连线标签、节标题、模型 `notes` 这五处由程序绘制或转义输出，数字既不标黄也不计数。修法：`gates.count_plain_numbers(texts, allowed)` 只记账不加标记（SVG 里塞 `<mark>` 非法、标题会被转义），计入同一个页头总数，并在本节追加一句「图注/卡片/连线标签/标题/说明里另有 N 处数字…已计入页头」。**只查模型写的文字**：程序自己的说明（素材包预算、边被裁了几条）是程序事实，不计入。
+
+**R519（页头自相矛盾）**：桩跑出来的页头同时写「本页由模型分节撰写」和「本页由离线桩生成，未调用真实模型」。修法：`assemble.build_page(..., mode_text=None)` 允许覆盖徽章，`ai_pipeline.mode_text()` 对桩返回「本页由离线桩分节组装，未调用真实模型」、对真后端返回 `None` 交回默认那句。
+
+**D2/D3（文档说假话）**：README 与 docs/glossa.md 的溯源闸行补上「图注/卡片/连线标签/标题/模型说明标不了黄标，只计数并计入同一总数（R518）」；设计文档 §12 的三个变量名原来全写错，改成 `GLOSSA_LLM_BACKEND` + `GLOSSA_OPENAI_BASE_URL` + `GLOSSA_OPENAI_API_KEY` + `GLOSSA_LLM`（没有 `GLOSSA_MODEL`）。
+
+**D4（fact:graph 自相矛盾）**：截断时原文写「120 个节点…其中 233 个因截断未画」，两个数字互相打架。改成「画出 120 个节点…另有 233 个节点被截断、没有画进图（截断只计数，清单不在页面上）」。
+
+**D8（说明把包撑爆）**：一节的源文件大面积读不到时，每失败一条加一条说明，实测 486 条 / 42,756 字节，把 8000 字节预算吃光、facts 被 trim 到 0——模型什么都看不到。修法：`pack.MAX_NOTES = 8`，第 9 条起折成一句「另有 N 条跳过说明已略（只附前 8 条）」；缺 fact id 的名单也截到 12 个 + 「等 N 个」。说明照样计入包体积，但不再可能把 facts 挤空。
+
+**D10（清单不全不披露）**：桩的原文片段清单只列包里那几段，页面上读起来像全部。桩的正文补一句「上面这段清单只列本节素材包里真有的原文片段，台账里其它文件没有搬进来」。这句里不许写数字——写了就会被溯源闸标成未溯源（实测把一条程序说明标成 5 处假黄）。
+
+**错的代价**：R517 让「配好 key 跑 AI 讲解」这条唯一被用户期待的路在真模型上直接崩（而所有测试都是绿的）；R518 让页头那个数字变成半个谎；D8 让模型在最坏情况下拿到 0 条事实却照常出页。三条都属于「看起来成功、其实没发生」，按尺子都该在合并前修掉。
+

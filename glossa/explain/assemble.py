@@ -95,12 +95,13 @@ def badge_of(doc: dict) -> str:
 
 
 def build_page(doc: dict, sections: list, style: str, *, mode: str, note: str = "",
-               untraced=None, failed: int = 0) -> str:
+               untraced=None, failed: int = 0, mode_text=None) -> str:
     """整页：注入 CSS、生成目录、组装 <main>，超限抛 BuildError（写盘之前）。
 
     mode 决定页头标记（ai / program）；R509：页头恒写「未溯源 N 处 · 失败 M 节」，
     N 默认数 <main> 里的黄标（与 render.py 同口径），调用方也可传自己数好的值；
-    note 追加在统计行后面（A6 标注离线桩）。
+    note 追加在统计行后面（A6 标注离线桩）；mode_text 可替换页头徽章文字（R519：桩跑出来
+    不能同时写「模型分节撰写」和「未调用真实模型」，两句话直接冲突）。
     """
     css = styles.load_css(style)                 # 未知风格先响亮报错（ValueError）
     if mode not in MODES:
@@ -112,7 +113,8 @@ def build_page(doc: dict, sections: list, style: str, *, mode: str, note: str = 
     meta = (doc or {}).get("meta") or {}
     title = "笺疏 · %s" % ((meta.get("repo") or {}).get("root_name") or "未命名仓库")
     page = _ENV.get_template(_TEMPLATE).render(
-        title=title, css=css, mode=mode, mode_text=MODES[mode], badge=badge_of(doc),
+        title=title, css=css, mode=mode,
+        mode_text=MODES[mode] if mode_text is None else str(mode_text), badge=badge_of(doc),
         note=header, toc=build_toc(rows), body=body, disclosures=DISCLOSURES)
     size, limit = len(page.encode("utf-8")), gates.MAX_PAGE_BYTES
     if size > limit:

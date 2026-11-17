@@ -18,57 +18,37 @@ untraced 数的是页面上的黄标个数（与 render.py 同口径），不是
 from __future__ import annotations
 
 import html as _html
-import os
 import pathlib
 
-from glossa.explain import (assemble, fake_llm, gates, llm_config, narrate, pack as pack_mod,
-                            prompt)
+from glossa.explain import assemble, fake_llm, gates, pack as pack_mod, prompt
+from glossa.explain.llm_bridge import (ChatAdapter, DEV_FAKE, STUB_MODE,   # R517：真后端适配层
+                                      as_completer, backend, deviation,
+                                      build_llm as _build_llm, mode_text)
 from papertrace.exceptions import BuildError
 
 MODE = "ai"
 MAX_SECTIONS = 8
-DEV_FAKE = "本页由离线桩生成，未调用真实模型"
 PAGE = "explain.html"
 _MARK = '<mark class="untraced">'
 _FAILED = '<p class="note">这一段生成失败：%s</p>'
 
-
-def backend():
-    """把 GLOSSA_* 四项临时映射成 papertrace 认的变量，问完立刻恢复原样。
-
-    「读哪一层、配齐了没有」由 llm_config 决定；这里只保证真后端读到同一份值，否则
-    GLOSSA_OPENAI_API_KEY 配齐了、后端却回头去点名 PAPERTRACE_OPENAI_API_KEY。
-    """
-    saved = {}
-    for glossa_name, paper_name in llm_config.ENV_PAIRS:
-        value = (os.environ.get(glossa_name) or "").strip()
-        if value:
-            saved[paper_name] = os.environ.get(paper_name)
-            os.environ[paper_name] = value
-    try:
-        return narrate.get_llm()
-    finally:
-        for name, previous in saved.items():
-            if previous is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = previous
-
-
 def build_llm(kind="openai"):
-    """fake 走离线桩，其它走真后端（配不齐是 BuildError，连不上是 LLMUnavailable）。"""
-    if str(kind or "").strip().lower() == fake_llm.NAME:
-        return fake_llm.FakeLLM()
-    cfg = llm_config.resolve()
-    if not llm_config.ready(cfg):
-        raise BuildError("AI 讲解需要一个可用的模型后端：%s；没有 key 时先用离线桩"
-                         "（--llm fake / llm=\"fake\"）跑通。" % llm_config.describe(cfg))
-    return backend()
+    """编排侧入口：真后端工厂走本模块的 backend()，测试注入才不会打偏（R517）。"""
+    return _build_llm(kind, backend)
 
 
-def deviation(llm) -> str:
-    """「无 AI / 离线桩」的说明串：桩跑出来就必须在页头承认（设计 §12）。"""
-    return DEV_FAKE if str(getattr(llm, "name", "") or "") == fake_llm.NAME else ""
+def _plain_texts(data, item, figures, notes) -> list:
+    """R518：图注、连线/卡片标签、标题、说明——这些位置由程序画，数字也必须能追溯。"""
+    texts = [data.get("title") or item.get("title") or ""]
+    for fig in figures:
+        texts.append(fig.get("caption") or "")
+        for edge in fig.get("edges") or ():
+            texts.append(edge.get("label") or "")
+        for row in list(fig.get("bars") or ()) + list(fig.get("cards") or ()):
+            texts.append(row.get("label") or "")
+            texts.append(row.get("text") or "")
+    texts.extend(notes)
+    return texts
 
 
 def _numbers(pack: dict) -> set:
@@ -106,8 +86,14 @@ def _section(doc, item, pos, llm, root):
         notes += dropped + kept
         if clean is not None:
             figures.append(clean)
+    section_notes = list(pack.get("notes") or ()) + list(data.get("notes") or ()) + notes
+    unmarked = gates.count_plain_numbers(                       # R518：程序画的地方也要查数字
+        _plain_texts(data, item, figures, data.get("notes") or ()), _numbers(pack))   # 只查模型写的，程序自己的说明不算
+    if unmarked:
+        section_notes.append("图注/卡片/连线标签/标题/说明里另有 %d 处数字在本节素材里查不到出处"
+                             "（这些位置由程序绘制，加不了黄标，已计入页头的未溯源总数）" % unmarked)
     return {"title": data.get("title") or item["title"], "html": body, "figures": figures,
-            "notes": list(pack.get("notes") or ()) + list(data.get("notes") or ()) + notes}
+            "notes": section_notes, "unmarked": unmarked}
 
 
 def run_ai(doc: dict, llm, style: str, *, root=None, max_sections: int = MAX_SECTIONS) -> dict:
@@ -135,9 +121,12 @@ def run_ai(doc: dict, llm, style: str, *, root=None, max_sections: int = MAX_SEC
             continue
         sections.append(row)
         notes += row["notes"]
+    marks = sum(str(row.get("html") or "").count(_MARK) for row in sections)
+    unmarked = sum(int(row.get("unmarked") or 0) for row in sections)
     page = assemble.build_page(doc, sections, style, mode=MODE, note=deviation(llm),
-                               failed=failed)           # R509：页头恒写计数，0 也写
-    return {"html": page, "sections": sections, "untraced": page.count(_MARK),
+                               untraced=marks + unmarked, failed=failed,   # R509/R518：两处都算
+                               mode_text=mode_text(llm))
+    return {"html": page, "sections": sections, "untraced": marks + unmarked, "unmarked": unmarked,
             "notes": notes, "mode": MODE, "deviation": deviation(llm), "failed": failed}
 
 

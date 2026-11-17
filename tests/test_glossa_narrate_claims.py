@@ -122,7 +122,7 @@ def test_truncated_nodes_lives_in_fact_graph_and_page_keeps_one_form():
     assert doc["graph"]["truncated"] is True and cut == 10
     fact = doc["facts"]["fact:graph"]
     assert cut in fact["numbers"], "truncated_nodes 必须进 fact:graph 的 numbers（R322 数字要有出处）"
-    assert "其中 %d 个节点因截断未画" % cut in fact["text"]
+    assert "另有 %d 个节点被截断" % cut in fact["text"]
     text = _section4(doc)
     assert "另有 %d 个节点没有画" % cut in text
     assert "图装不下的节点没画进这张图" not in text, "无数字的第二种形态必须删掉"

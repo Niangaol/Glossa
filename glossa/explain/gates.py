@@ -142,6 +142,24 @@ def gate_values(fig: dict, allowed) -> tuple[dict | None, list[str]]:
                                   "其余 %d 条照画（R516）" % (lost, len(kept))]
 
 
+
+
+def count_plain_numbers(texts, allowed) -> int:
+    """R518：程序画/贴的地方（标题、图注、连线标签、卡片文字、说明）里的数字也要有出处。
+
+    这些位置不像正文那样能包黄标（SVG 文本里加 <mark> 是非法标记、标题会被转义），所以
+    只记账：数出「本节素材里查不到」的数字个数，由编排写进页头与本节披露，绝不假装 0。
+    """
+    numbers = _numeric(allowed)
+    count = 0
+    for text in texts or ():
+        for token in guard._NUM.findall(str(text or "")):
+            value = guard._as_number(token)
+            if value is None or value not in numbers:
+                count += 1
+    return count
+
+
 def gate_edges(fig: dict, allowed: set[tuple[str, str]]) -> tuple[dict, list[str]]:
     """连线闸：只有 (from, to) 在 allowed 里、节点也合法的边才画；丢的边逐条进 notes。"""
     pairs = [{"from": src, "to": dst, "kind": "allowed"}

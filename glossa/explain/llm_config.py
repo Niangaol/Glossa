@@ -23,6 +23,8 @@ ENV_PAIRS = (
     ("GLOSSA_OPENAI_API_KEY", "PAPERTRACE_OPENAI_API_KEY"),
     ("GLOSSA_LLM", "PAPERTRACE_LLM"),
 )
+#: 超时不是「连接参数」，缺了也算 ready；单独一对，让慢的推理模型能调长（R517）。
+TIMEOUT_PAIR = ("GLOSSA_LLM_TIMEOUT", "PAPERTRACE_LLM_TIMEOUT")
 BACKENDS = ("openai", "offline")
 _LAYERS = ("glossa", "papertrace")
 
@@ -86,6 +88,28 @@ def missing(cfg: Config):
 def ready(cfg: Config) -> bool:
     """真能问模型的唯一判据：选了 openai 且三项连接参数都非空。"""
     return cfg.backend == "openai" and not missing(cfg)
+
+
+
+
+def timeout_seconds(default=None):
+    """R517：真模型（尤其推理模型）比 60 秒慢，超时用环境变量调。
+
+    读 GLOSSA_LLM_TIMEOUT，再读 PAPERTRACE_LLM_TIMEOUT；都没设返回 default（让调用方
+    用后端的默认值）。写错值响亮 ValueError，不悄悄退回默认秒数。
+    """
+    for name in TIMEOUT_PAIR:
+        raw = _clean(os.environ.get(name))
+        if not raw:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            raise ValueError("%s=%r 不是秒数（要一个正数）" % (name, raw)) from None
+        if value <= 0:
+            raise ValueError("%s=%r 必须是正数秒" % (name, raw))
+        return value
+    return default
 
 
 def describe(cfg: Config) -> str:

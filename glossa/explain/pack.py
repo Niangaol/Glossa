@@ -24,6 +24,7 @@ MAX_SOURCE_LINES = 40
 MAX_FACTS = 40          # 没点名事实时的兜底条数：包永远比台账小
 MAX_PLAN_FACTS = 60     # 分节那次最多看这么多条事实：按种类抽样，不是前 60 条（R501）
 MAX_EDGES = 40          # 段包里图事实附带的边：够模型选点，不至于撑爆
+MAX_NOTES = pack_trim.MAX_NOTES   # D8：明细说明有条数上限，唯一真源在 pack_trim
 MAX_PLAN_EDGES = 8      # 分节那次只带这么多条边：40 条边就能吃掉整个 8000 字节预算（R501）
 _KINDS = ("totals", "files", "graph", "pkg", "project", "entry", "degraded", "file",
           "symbol", "source", "bonus", "import", "namespace", "excluded")
@@ -71,7 +72,8 @@ def _facts(doc: dict, section: dict, notes: list[str]) -> list[dict]:
     wanted = [item for item in (section.get("facts") or []) if isinstance(item, str)]
     missing = [item for item in wanted if item not in rows]
     if missing:
-        notes.append("素材包里没有这些 fact id，已跳过：" + "、".join(missing))
+        head = "、".join(missing[:12]) + ("等 %d 个" % len(missing) if len(missing) > 12 else "")
+        notes.append("素材包里没有这些 fact id，已跳过：" + head)
     chosen = [item for item in wanted if item in rows] if wanted else list(rows)[:MAX_FACTS]
     edges = _edge_rows(doc)
     return [_fact(rows, fact_id, edges) for fact_id in chosen]
@@ -123,10 +125,10 @@ def _sources(doc: dict, section: dict, root, notes: list[str]) -> list[dict]:
 
 def build_pack(doc: dict, section: dict, root, *, extra=None) -> dict:
     """装配一节的素材包；extra 原样并入（例如数据闸的提示），同样计入字节上限。"""
-    notes: list[str] = []
+    notes, system = pack_trim.Notes(), []   # 明细条数有上限；程序的固定说明另放
     sources, cut = pack_trim.budget_sources(_sources(doc, section, root, notes))
     if cut:                                     # 份额内截断是正常取舍：一句说明，不算截断
-        notes.append(pack_trim.share_note(len(sources)))
+        system.append(pack_trim.share_note(len(sources)))
     pack = {
         "repo": _repo(doc),
         "section": {"index": int(section.get("index") or 0),
@@ -142,12 +144,13 @@ def build_pack(doc: dict, section: dict, root, *, extra=None) -> dict:
         pack.update(extra)
     edges = pack_trim.trim_edges(pack, MAX_PACK_BYTES)   # 边是「够选点」的信息：先砍半
     if edges:
-        notes.append(pack_trim.edge_note(*edges))
+        system.append(pack_trim.edge_note(*edges))
     dropped = pack_trim.trim(pack, MAX_PACK_BYTES)
     for _round in range(4):                     # 说明自己也占字节：加进去之后再量一次
         cut_facts = any(dropped.values())
         pack["truncated"] = cut_facts           # 只有真要动 facts 才算截断（R511）
-        pack["notes"] = notes + ([pack_trim.emergency_note(dropped, MAX_PACK_BYTES)] if cut_facts else [])
+        pack["notes"] = (list(notes) + notes.spill() + system
+                         + ([pack_trim.emergency_note(dropped, MAX_PACK_BYTES)] if cut_facts else []))
         if pack_trim.size(pack) <= MAX_PACK_BYTES:
             break
         again = pack_trim.trim(pack, MAX_PACK_BYTES)

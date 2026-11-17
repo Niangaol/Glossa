@@ -161,7 +161,7 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
     cut = int(graph.get("truncated_nodes") or 0) if graph.get("truncated") else 0
     nodes_n, edges_n = len(graph.get("nodes") or []), len(graph.get("edges") or [])
     cycles_n, layers_n = len(graph.get("cycles") or []), len(graph.get("layers") or [])
-    head = (f"依赖图（{graph.get('level')} 级）：{nodes_n} 个节点、{edges_n} 条边、{cycles_n} 个环")
+    head = (f"依赖图（{graph.get('level')} 级）：画出 {nodes_n} 个节点、{edges_n} 条边、{cycles_n} 个环")
     if not graph.get("reachable_from_entries"):
         # R488：没有可解析的入口 = 可达性没算过，不许写一个冒名的「0 个不可达文件」
         numbers = [nodes_n, edges_n, cycles_n, layers_n]
@@ -172,7 +172,7 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
         text = f"{head}、{unreachable_n} 个不可达文件，分 {layers_n} 层。"
     if cut:                                    # R477：截断缺口必须能在 numbers 里找到出处
         numbers.append(cut)
-        text += f"其中 {cut} 个节点因截断未画（截断是计数，清单不在页面上）。"
+        text += f"另有 {cut} 个节点被截断、没有画进图（截断只计数，清单不在页面上）。"
     project_edges = graph.get("project_edges") or []
     if graph.get("level") == "file" and project_edges:   # R479：页面上的 N 必须能在这里溯源
         numbers.append(len(project_edges))

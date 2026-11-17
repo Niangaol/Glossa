@@ -162,6 +162,8 @@ def _body(pack: dict, index: int, untraced: bool) -> str:
              '<div class="grid">%s</div>' % (cards or '<div class="card"><p>这一节的事实，台账'
              '里把数字记全的一条都没有，所以一条都没搬。</p></div>'),
              '<ol class="steps">%s</ol>' % (paths or "<li><code>（本节没有原文片段）</code></li>"),
+             # D10：清单不全就必须说清楚只列了包里这几段，不许让人以为这就是全部
+             '<p class="note">上面这段清单只列本节素材包里真有的原文片段，台账里其它文件没有搬进来。</p>',
              '<p class="kbd">离线桩只搬运素材，不加新说法。</p>']
     if untraced and index == 1:
         parts.append('<p class="kbd">溯源闸探针：%d 这个数字在素材里没有出处。</p>' % BOGUS)

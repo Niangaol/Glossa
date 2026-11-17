@@ -114,7 +114,7 @@ python -m glossa explain --repo D:\path\to\repo --ai --llm openai --style cards 
 | 闸 | 实现 | 拦什么 |
 | -- | ---- | ---- |
 | 安全闸 | `gates.gate_html` | `<script>/<style>/<iframe>/<object>/<embed>/<form>/<link>/<meta>/<base>` 删除、`on*` 事件属性删除、`<a href>` 的危险 scheme 只去 href；**AI 模式连内联 `style` 属性一起剥掉**（R506），程序版保留；`<img>` 只认干净的 `data:image/...`（R505），外链图片整张丢弃 |
-| 溯源闸 | `gates.gate_numbers` | 这一节素材包 `facts[].numbers` 之外的数字全部 `<mark class="untraced">` 黄标并计入页头；**空集不放行**（R507）：一个数字都不可溯源时全标，不是全放 |
+| 溯源闸 | `gates.gate_numbers` | 这一节素材包 `facts[].numbers` 之外的数字全部 `<mark class="untraced">` 黄标并计入页头；**空集不放行**（R507）：一个数字都不可溯源时全标，不是全放。正文之外的通道（图注、卡片文字、连线标签、节标题、模型说明）**加不了黄标**（SVG 里塞 `<mark>` 非法、标题会被转义），改由 `gates.count_plain_numbers` 只计数，同样计入页头那一个总数并逐节披露（R518） |
 | 连线闸 | `gates.gate_edges` | 图里每条边必须是本节素材 `facts[].edges` 里真有的 `(from, to)`，复用 `patterns.validate_figure`；编的边丢弃并逐个披露 |
 | 标签闸 | `gates.gate_labels` | 图上的 label 必须是**人话**且能在本节素材原文里查到（R508）：`fact:` 开头或整串/每个词都查不到的，整张图丢弃并披露（披露里不回声模型编的 label）。**节点、柱状、卡片三种数据一起查**（R515）——bars/cards 图的 `nodes` 是空的，只看 nodes 等于对它们完全失效 |
 | 数值闸 | `gates.gate_values` | 柱状图的值必须能在本节素材的 `numbers` 里核上（R516）：数值以文本印进 SVG，数字溯源闸只扫 html 扫不到图数据；编的那一条丢掉、其余照画，一条都核不上就整张图丢弃 |

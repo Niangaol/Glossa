@@ -55,6 +55,9 @@ def bad(args):
     if value is True:
         return ("glossa explain：--ai 需要明确指定后端，裸 --llm 不算；"
                 "请写 --ai --llm fake 或 --ai --llm openai。")
+    if value == "offline":
+        return ("glossa explain：--ai 要的是能写正文的模型后端，offline 不是它；"
+                "想跑不联网的离线桩请写 --llm fake，想接真模型请写 --llm openai。")
     return ("glossa explain：--ai 不能和 --llm %r 一起用；--llm 只接受 %s。"
             % (value, " / ".join(CHOICES)))
 
@@ -74,12 +77,19 @@ def run(args, doc):
         except ValueError as exc:                 # backend 写错：报原文，不吞成 traceback
             return cli_facts.fail(NO_RUNTIME, "glossa explain：AI 配置不合法：%s" % exc)
         if not llm_config.ready(cfg):
+            gaps = list(llm_config.missing(cfg))
+            if cfg.backend != "openai":
+                gaps.insert(0, "GLOSSA_LLM_BACKEND / PAPERTRACE_LLM_BACKEND（现在是 %s，要设成 openai）"
+                            % cfg.backend)
             return cli_facts.fail(NO_RUNTIME,
-                                  "glossa explain：--ai 需要可用的模型后端：%s"
-                                  "；先用 --llm fake 离线跑通。" % llm_config.describe(cfg))
+                                  "glossa explain：--ai 需要可用的模型后端：%s · 来源 %s；缺 %s；"
+                                  "先用 --llm fake 离线跑通。"
+                                  % (cfg.model or "未指定模型", cfg.source, "、".join(gaps)))
     try:
         result = ai_pipeline.run_ai(doc, ai_pipeline.build_llm(name), args.style,
                                     root=pathlib.Path(args.repo))
+    except ValueError as exc:                     # 超时/后端取值写错：报原文，不吞成 traceback
+        return cli_facts.fail(NO_RUNTIME, "glossa explain：AI 配置不合法：%s" % exc)
     except LLMUnavailable as exc:                 # 配了但连不上：仍是 4，绝不静默降级
         return cli_facts.fail(NO_RUNTIME, "glossa explain：模型后端不可用：%s" % exc)
     except BuildError as exc:                     # 含分节解析失败、体积超限

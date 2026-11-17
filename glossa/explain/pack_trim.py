@@ -23,6 +23,28 @@ SHARE_NOTE = "源码片段按 %d 字节预算截断，共保留 %d 段"
 EDGE_NOTE = "图的边按字节预算留了 %d 条（共 %d 条）"
 
 
+MAX_NOTES = 8              # 明细说明的条数上限（D8：源文件大面积读不到时，说明能把包撑爆）
+
+
+class Notes(list):
+    """只留前 MAX_NOTES 条明细，其余折成一句计数（说明也占字节，不能让说明把 facts 挤出去）。"""
+
+    def __init__(self):
+        super().__init__()
+        self.missed = 0
+
+    def append(self, line):
+        if len(self) < MAX_NOTES:
+            super().append(line)
+        else:
+            self.missed += 1
+
+    def spill(self) -> list:
+        if not self.missed:
+            return []
+        return ["另有 %d 条跳过说明已略（只附前 %d 条）" % (self.missed, MAX_NOTES)]
+
+
 def size(value) -> int:
     """UTF-8 真字节。"""
     return len(json.dumps(value, ensure_ascii=False).encode("utf-8"))
