@@ -136,6 +136,13 @@ python -m glossa explain --repo D:\path\to\repo --ai --llm openai --style cards 
 
 四项缺任何一项 `ready()` 就是 false，命令以 **4** 退出并逐个点名缺哪个变量（实测报「缺 GLOSSA_OPENAI_BASE_URL / PAPERTRACE_OPENAI_BASE_URL、GLOSSA_OPENAI_API_KEY / …、GLOSSA_LLM / …」）。
 
+另有两个**可选**旋钮，只影响真模型（缺了不影响 `ready()`）：
+
+| 变量 | 缺省 | 含义 |
+| ---- | ---- | ---- |
+| `GLOSSA_LLM_TIMEOUT` | 后端默认 60 秒 | 单次请求超时（秒，正数）。推理模型真跑一节可能要几十秒，写错值响亮 `ValueError`（exit 4），不悄悄退回默认 |
+| `GLOSSA_LLM_MAX_TOKENS` | 不设，交给服务端 | 单次最多生成多少 token（正整数）。**推理模型不设这个基本跑不完**：StepPlan 的 `step-5-preview` 在 2000 时 `content` 是空的——token 全花在 `reasoning_content` 上，实测 8000 才稳定出正文（16–21 秒一调） |
+
 ### AI 路径的退出码
 
 | 码 | 什么时候 |

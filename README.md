@@ -655,6 +655,8 @@ $env:GLOSSA_LLM_BACKEND='openai'
 $env:GLOSSA_OPENAI_BASE_URL='https://api.deepseek.com/v1'
 $env:GLOSSA_OPENAI_API_KEY='sk-...'
 $env:GLOSSA_LLM='deepseek-chat'        # 模型名，变量就叫 GLOSSA_LLM
+$env:GLOSSA_LLM_TIMEOUT='300'         # 可选：单次请求超时（秒）
+$env:GLOSSA_LLM_MAX_TOKENS='8000'     # 可选：推理模型必须给上限，否则它把 token 全花在思维链上
 python -m glossa explain --repo D:\path\to\repo --ai --llm openai --style report --out out --force
 ```
 

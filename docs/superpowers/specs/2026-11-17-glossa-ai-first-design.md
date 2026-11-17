@@ -195,3 +195,18 @@ AI 每段返回**严格 JSON**（不含 HTML，不含 CSS）：
 
 **错的代价**：R517 让「配好 key 跑 AI 讲解」这条唯一被用户期待的路在真模型上直接崩（而所有测试都是绿的）；R518 让页头那个数字变成半个谎；D8 让模型在最坏情况下拿到 0 条事实却照常出页。三条都属于「看起来成功、其实没发生」，按尺子都该在合并前修掉。
 
+## 16. 裁决（第一次真跑 StepPlan，2026-11-17）
+
+配置到位后（key 在 `~/.dsh/.credentials.yaml` 的 `refs.STEP_PLAN_API_KEY`，端点 `https://api.stepfun.com/step_plan/v1`，模型 `step-5-preview` / `step-3.7-flash`），第一次真跑 `--ai --llm openai` 暴露三件事，都有对应裁决。
+
+**R520（推理模型必须给 token 上限）**：StepPlan 的 `step-5-preview` / `step-3.7-flash` 都是推理模型，`max_tokens=2000` 时 `content` 是空的、`finish_reason=length`——2000 个 token 全花在 `reasoning_content`（实测 4560 / 4666 字符）上。不设上限时服务端默认更慢，第一次真跑在 300 秒超时后 exit 4。修法：`papertrace.llm.openai_backend` 认 `PAPERTRACE_LLM_MAX_TOKENS`（显式入参优先），只在配置过时才把这个键写进请求体（默认请求形状一个字节都没变）；glossa 侧用 `GLOSSA_LLM_MAX_TOKENS`（`llm_config.MAX_TOKENS_PAIR`），写错值响亮 `ValueError`。实测 8000 时两个模型都在 16–21 秒稳定返回正文。
+
+**R521（一张图不合规不许连坐整节正文）**：真模型给的 `figures` 里常常缺 `pattern`（或写成别的键），`patterns.validate_figure` 抛 `ValueError` 后整节被判「生成失败」——第一次真跑 5 节全灭，页头写「失败 5 节」，页面除了失败说明一个字都没有。修法：每张图的 `gate_edges → gate_labels → gate_values` 包在 `try/except (BuildError, ValueError)` 里，坏的那张整张丢弃并记一句「第 N 节的一张图被丢弃（原因）」，正文照常上页。SYSTEM 里补第 8 条把图的形状写死：`{"pattern":..., "caption":..., "nodes":[{"id","label"}], "edges":[{"from","to","label"}]}`，并明说「没有图就写 figures: []」。
+
+**R522（JSON 坏了给一次补救机会，只给一次）**：真模型的一节返回被截断（`Unterminated string`），`parse_section` 直接判死。修法：`_ask_section` 只对「不是合法 JSON」这一类错误重试一次，提示词追加一句「上一轮不是合法 JSON（可能被截断），请只输出一个完整 JSON 对象」；第二次还坏就按原文披露这一节失败。
+
+**R523（全部失败不写半张页）**：5 节全失败时 exit 0 并写出只有失败说明的页面，等于交了一份没用的东西还报成功。修法：`run_ai` 在 `failed == len(sections)` 时抛 `BuildError`（exit 2，不写盘）；部分失败照旧上页并在页头写「失败 M 节」。
+
+**实跑结果（真模型，2026-11-17）**：ts-monorepo 夹具 → 4 节 / 6 张图 / 0 未溯源 / 0 失败 / 26,041 字节 / `<script>` 0 / 除 SVG 命名空间外零 http；正文里的数字（13 文件、10 符号、9 条 import、6 条边、2 层）全部来自台账，模型自己写的那节把 `packages/a`、`@x/b`、`serve/check/test` 讲成了人话。
+
+
