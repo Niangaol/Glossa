@@ -165,7 +165,10 @@ def test_ai_with_a_bare_or_offline_llm_flag_is_a_loud_error(repo, capsys):
     assert "--ai" in capsys.readouterr().out
     assert cli.main(["explain", "--repo", str(repo), "--out", str(repo / "o3"),
                      "--ai", "--llm", "offline"]) == 2
-    assert "offline" in capsys.readouterr().out
+    text = capsys.readouterr().out
+    assert "offline" in text
+    # D7：原来这句把 offline 同时说成「不接受」和「可接受」，还让人猜该用哪个
+    assert "--llm fake" in text and "offline 不是它" in text
 
 
 def test_ollama_is_recognised_but_reported_unimplemented(repo, capsys):
