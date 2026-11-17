@@ -131,3 +131,18 @@ def test_layered_and_cards_still_come_back_for_thin_sections():
     cards = fake_llm._figure([{"id": "fact:file:a.py", "text": "a.py 是入口文件",
                                "numbers": [], "edges": []}], [])
     assert cards["pattern"] == "cards" and cards["nodes"][0]["label"] == "a.py 是入口文件"
+
+# 评审缺口：bar_width 在产品测试里一次都没被直接引用（改成常数也全绿）
+def test_bar_width_is_proportional_to_the_value():
+    from glossa.explain import draw_bars
+    assert draw_bars.bar_width(200, 200, 480) == 480      # 最大值占满条区
+    assert draw_bars.bar_width(100, 200, 480) == 240
+    assert abs(draw_bars.bar_width(3, 200, 480) - 7) <= 1
+    assert draw_bars.bar_width(0, 200, 480) == 0          # 0 与负数照画但不占宽
+    assert draw_bars.bar_width(-5, 200, 480) == 0
+    assert draw_bars.bar_width(1, 0, 480) == 0
+
+
+def test_value_text_drops_trailing_zeroes():
+    from glossa.explain import draw_bars
+    assert [draw_bars.value_text(v) for v in (3, 3.0, 3.5, 3.50)] == ["3", "3", "3.5", "3.5"]
