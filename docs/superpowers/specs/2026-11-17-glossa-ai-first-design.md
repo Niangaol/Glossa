@@ -150,3 +150,19 @@ AI 每段返回**严格 JSON**（不含 HTML，不含 CSS）：
 - 目的：把「程序侧」的东西（分节、画图、四道闸、体积、目录、三套风格）全部验证到位；真实模型只是把同一份 JSON 写得更好看，不改变流水线。
 - 约束：离线桩不许出现在生产路径上；它只能通过 `--llm fake` 或测试注入进入，且必须在页头标注「本页由离线桩生成，未调用真实模型」，防止把桩内容误当真实 AI 产出。
 - 真实 key 的接入方式（`GLOSSA_LLM_BACKEND=openai` + `GLOSSA_LLM_BASE_URL/API_KEY/MODEL`）保持不变，用户自己填即可。
+## 13. 裁决（A4 收尾，2026-11-17）
+
+**R498（批准）**：六种图范式以仓内真源为准 —— layered / flow / matrix / tree / bars / cards。我在 A4 派发书里写的 layers / chain / radial 是记错的名字，不许为迁就派发书另造第二套名字。未知 pattern 抛 ValueError 并列出这六种。
+
+**R499（统一体积口径）**：页面体积只有一个真源 —— papertrace.constants.HTML_MAX_BYTES（8,000,000）。glossa/explain/gates.py 的 MAX_PAGE_BYTES 改为从该常量取（不许另写 2,000,000），render/assemble 的超限判定一律读它。
+
+**R500（已知局限，A2b 再修）**：patterns.validate_figure 目前只保留 pattern/caption/nodes/edges/groups，所以 bars 与 cards 的数据数组到不了画图器，只能退化成单列清单/两列卡片。A5 不许为了让条形图好看去改 patterns.py；等 A6 出页后再单独开 A2b 放行这两个字段（值必须来自 facts 的 numbers）。
+## 14. 裁决（A6 收尾，2026-11-17）
+
+**R501（必修）**：`pack_for_plan` 不许只取 `facts[:60]` —— 三仓实测都只有 3 节、0 张图，因为窗口里全是 `fact:file:*`，唯一带边的 `fact:graph` 永远进不来。改为按 prefix 分组、每组至少 1 条，再轮转补齐到 60 条或 8000 字节；`fact:graph` 进包时必须带 `edges` 并标 `has_edges`。理由：不给 AI 边，它就不可能画关系图，而「图里模块关系」正是用户最想要的那件事。
+
+**R502（必修）**：每个 fact 的 `text` 里写出来的数字必须全部在 `numbers` 里（R398-M3 只钉了反方向）。`fact:totals` 文字里有 6/11/259/302 而未入 numbers，真模型照抄就会被溯源闸标 4 处假黄 —— 这是 facts 层的假事实，按尺子该判 Critical。修法：补 numbers，不许改文字迁就数字。
+
+**R503（批准）**：MCP `render_explain` 的 required 从 `("repo","blocks")` 改为 `("repo",)`。理由：ai 模式根本没有 blocks；program 模式缺 blocks 仍走同一句 BuildError → isError，既有 32602 测试用的是 `analyze_repo`，不受影响。
+
+**R504（A2b 排队，仍不修）**：`bars` / `cards` 数据数组尚未放行（见 R500）。等 A7 出页后单开一片，值与边一起过闸。
