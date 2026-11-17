@@ -5,14 +5,17 @@ FACT_KINDS 是 14 种 id 的**唯一清单**：schema 的 patternProperties 只�
 numbers 一律走 numbers_of（只在 facts_io 实现一次，这里原样再导出），且**每个数字都要在
 text 里出现**（R398 M3：numbers 是正文引用值，不是死数据）。
 text 是一句人话且**不许空串**：讲解层引用了 id 却拿不到话说，就是空引用。
-同 id 多来源（namespace/entry/pkg/同名符号）时 text 要列出后续来源，最多 3 处，其余「等 N 处」（R398 M4）；
-numbers 与 text 必须同步——只收 text 里真展示的来源行号，「等 N 处」的 N 不进 numbers（R426）。
+同 id 多来源（namespace/entry/pkg/同名符号）时 text 要列出后续来源，最多 3 处，其余「等 N 处」（R398 M4）。
+R502：text 里出现的每个数字都必须在 numbers 里——缺的补进 numbers（升序去重），绝不改文字；
+R426 的反方向（numbers ⊆ text 的数字）继续成立，两个方向都钉住。
 摘录 120 字截断必须标「…（已截断，原文共 N 字符）」（M1）；行区间钳位与取不到原文的判断在
 facts_io.source_span（M2）：取不到就**不产** fact:source，只记降级。
 引用不存在的 id → require 抛 BuildError 并点名（GC33：不猜、不静默跳过）。
 """
 
 from __future__ import annotations
+
+import re
 
 from glossa import fact_text, facts_io
 from glossa.facts_io import numbers_of
@@ -23,12 +26,25 @@ FACT_KINDS: tuple[str, ...] = (
     "namespace", "graph", "excluded", "degraded", "source", "bonus")
 
 
+_TEXT_DIGITS = re.compile(r"\d[\d,]*")
+
+
+def numbers_in_text(text: str) -> set[int]:
+    """R502：text 里真写出来的数字（千分位先去掉；"1,234" 记 1234）。"""
+    return {int(token.replace(",", "")) for token in _TEXT_DIGITS.findall(str(text or ""))
+            if token.replace(",", "")}
+
+
+def sync_numbers(facts: dict) -> dict:
+    """R502：整本台账按 text 补 numbers（升序去重）；便携化改过文字后再来一遍。"""
+    for row in facts.values():
+        row["numbers"] = numbers_of(list(row.get("numbers") or []) + list(numbers_in_text(row.get("text") or "")))
+    return facts
+
+
 def numbers_for(facts: dict, cites: list[str]) -> set[int]:
     """把一组 fact id 的 numbers 并起来；缺 id 由 require 负责报。"""
-    out: set[int] = set()
-    for fact_id in cites:
-        out.update((facts.get(fact_id) or {}).get("numbers") or [])
-    return out
+    return {number for fact_id in cites for number in ((facts.get(fact_id) or {}).get("numbers") or [])}
 
 
 def require(facts: dict, cites: list[str]) -> None:
@@ -46,6 +62,7 @@ def put_degraded(facts: dict, doc: dict) -> None:
     facts["fact:degraded"] = {                  # 直接覆盖：_put 会往后追加 numbers，重算就重复了
         "numbers": numbers_of([len(degraded)] + counts),
         "text": f"共 {len(degraded)} 条降级说明{detail}，没看清的地方都记在这里。"}
+    sync_numbers({"fact:degraded": facts["fact:degraded"]})
 
 
 def _put(facts: dict, fact_id: str, numbers, text: str,
@@ -79,7 +96,8 @@ def _totals_text(totals: dict) -> str:
 
 def totals_fact(totals: dict) -> dict:
     """fact:totals 与 totals 同源的唯一入口（build_repo_doc 追平 totals 时复用它）。"""
-    return {"numbers": numbers_of(list(totals.values())), "text": _totals_text(totals)}
+    return sync_numbers({"fact:totals": {"numbers": numbers_of(list(totals.values())),
+                                         "text": _totals_text(totals)}})["fact:totals"]
 
 
 def _file_facts(facts: dict, srcs: dict, row: dict) -> None:
@@ -176,4 +194,5 @@ def build_facts(doc: dict, *, repo_root=None, bonus: dict | None = None) -> dict
         counts = [len(bonus.get(key) or []) for key in ("nodes", "edges", "anchors")]
         _put(facts, "fact:bonus", counts,
              f"旧 trace 对账：{counts[0]} 个模型算子节点、{counts[1]} 条边、{counts[2]} 个锚点。")
+    sync_numbers(facts)                         # R502：文本里写出来的数字一律要有出处
     return facts

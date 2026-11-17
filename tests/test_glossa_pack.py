@@ -161,14 +161,32 @@ def test_graph_fact_carries_edges_from_the_graph(work):
     out = pack_mod.build_pack(
         doc, {"index": 1, "title": "t", "goal": "", "facts": ["fact:graph"]}, work)
     assert out["facts"] == [{"id": "fact:graph", "text": "依赖图 2 个节点、1 条边。",
-                             "numbers": [2, 1],
+                             "numbers": [2, 1], "has_edges": True,
                              "edges": [{"from": "a.py", "to": "b.py", "label": "import"}]}]
 
 
-def test_pack_for_plan_is_only_repo_totals_graph(work):
+def test_pack_for_plan_carries_summaries_and_sampled_facts(work):
     doc = _doc(["a.py", "b.py"], edges=[{"from": "a.py", "to": "b.py"}])
     plan = pack_mod.pack_for_plan(doc)
-    assert set(plan) == {"repo", "totals", "graph"}
-    assert plan["totals"]["files"] == 2
+    assert set(plan) == {"repo", "totals", "graph", "facts", "has_edges", "truncated"}
+    assert plan["totals"]["files"] == 2 and plan["has_edges"] is True
     assert plan["graph"] == {"level": "file", "nodes": 2, "edges": 1, "project_edges": 0,
                              "cycles": 0, "layers": 2, "unreachable": 0, "truncated": False}
+def test_graph_fact_keeps_edges_when_the_pack_is_over_budget(work):
+    """PokemonData 的真形：边很长，整条图事实单体就超 8KB——砍边，别丢事实。"""
+    paths = ["h%d.py" % i for i in range(6)]
+    for path in paths:
+        _write(work, path, ["第 %02d 行：%s" % (i, "内容" * 16) for i in range(1, 41)])
+    names = ["pkg/very_long_directory_name_%02d/another_long_directory_module_%02d/"
+             "file_with_a_long_name_for_edges.py" % (i, i + 1) for i in range(60)]
+    edges = [{"from": names[i], "to": names[(i + 1) % 60], "kind": "import"} for i in range(60)]
+    doc = _doc(paths, facts={"fact:graph": {"text": "依赖图 60 条边。", "numbers": [60]}},
+               edges=edges)
+    out = pack_mod.build_pack(
+        doc, {"index": 1, "title": "t", "goal": "", "facts": ["fact:graph"], "sources": paths}, work)
+    assert out["truncated"] is True and out["sources"] == []       # sources 先走
+    assert [row["id"] for row in out["facts"]] == ["fact:graph"]   # 图事实不许被整条丢掉
+    assert 0 < len(out["facts"][0]["edges"]) < pack_mod.MAX_EDGES  # 边被砍半到装得下
+    assert out["facts"][0]["has_edges"] is True
+    assert len(json.dumps(out, ensure_ascii=False).encode("utf-8")) <= pack_mod.MAX_PACK_BYTES
+

@@ -1,6 +1,7 @@
-"""T6 修复轮 3（R426/R433 M-6、M-8）：numbers 只收 text 真展示的来源；摘录阈值与区间抢救。
+"""T6 修复轮 3（R426/R433 M-6、M-8）与 A7（R502）：numbers 与 text 的数字双向对齐。
 
-R426 的不变量是 numbers ⊆ text 的数字集合（不是相等）：「等 N 处」的 N 在 text 里但不必进 numbers。
+R426 的不变量是 numbers ⊆ text 的数字集合（不是相等）；R502 补上反方向——text 里写出来的
+每个数字都必须在 numbers 里（「等 N 处」的 N 也算），所以现在两个方向同时成立。
 """
 import pathlib
 import shutil
@@ -36,7 +37,7 @@ def test_numbers_only_cover_the_sources_shown_in_text():
     row = fact_ids.build_facts(_doc(files))["fact:namespace:Demo.Core"]
     assert "等 5 处" in row["text"]
     assert "第 4 行" not in row["text"] and "第 5 行" not in row["text"]
-    assert row["numbers"] == [1, 2, 3], "numbers 只许含 text 真展示的那 3 条来源行号"
+    assert row["numbers"] == [1, 2, 3, 5], "三条来源行号 + 「等 5 处」的 5（R502：文字里的都算）"
     assert all(str(number) in row["text"] for number in row["numbers"])
 
 
@@ -48,6 +49,22 @@ def test_entry_numbers_stay_on_the_sources_the_text_lists():
     row = fact_ids.build_facts(doc)["fact:entry:build"]
     assert "等 5 处" in row["text"] and "第 4/5 个" not in row["text"]
     assert row["numbers"] == [1, 2, 3, 5]
+
+
+def test_totals_fact_numbers_cover_every_number_in_its_text():
+    doc = _doc([])
+    doc["totals"] = {"files": 259, "symbols": 302, "imports": 4, "by_lang": {"python": 6,
+                                                                             "csharp": 11}}
+    row = fact_ids.build_facts(doc)["fact:totals"]
+    for number in (6, 11, 259, 302):
+        assert number in row["numbers"], row["numbers"]
+    written = {int(token.replace(",", "")) for token in fact_ids._TEXT_DIGITS.findall(row["text"])}
+    assert written <= set(row["numbers"]), "文字里写出来的数字缺 %s" % sorted(written - set(row["numbers"]))
+
+
+def test_numbers_in_text_drops_thousands_separators():
+    assert fact_ids.numbers_in_text("共 1,234 个文件、7 个包") == {1234, 7}
+    assert fact_ids.numbers_in_text("没有数字") == set()
 
 
 def test_every_number_appears_in_its_fact_text_for_every_fixture():
@@ -79,7 +96,7 @@ def test_reversed_span_is_rescued_into_a_fact():
                                 "end_line": 2}], lines=4)])
     row = fact_ids.build_facts(doc, repo_root=root)["fact:source:x.ts:2-4"]
     assert "l2" in row["text"] and "l4" in row["text"] and "l1" not in row["text"]
-    assert row["numbers"] == [2, 4]
+    assert row["numbers"] == [2, 3, 4, 9], "摘录里的 2/3/4 与「行区间 9–2」的 9 一样都要有出处（R502）"
 
 
 def test_bad_line_range_is_clamped_or_dropped():

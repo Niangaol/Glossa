@@ -187,4 +187,5 @@ def build_repo_doc(root, *, max_file_bytes: int = 1_000_000, max_files: int = 20
     if doc["totals"]["degraded"] != len(doc["degraded"]):      # R398 M2：泄漏阶段新增的降级要追平 totals
         doc["totals"] = totals_of(doc)
         doc["facts"]["fact:totals"] = fact_ids.totals_fact(doc["totals"])
+    fact_ids.sync_numbers(doc["facts"])                        # R502：便携化改过文字后再对一遍账
     return doc

@@ -18,7 +18,6 @@ from glossa.explain import pack as pack_mod
 from glossa.explain import patterns, styles
 from papertrace.exceptions import BuildError
 
-MAX_FACT_LINES = 60         # 分节那次给模型看的事实行数：够选点，不至于把窗口吃满
 MAX_FACT_CHARS = 120        # 每条事实在提示里只留这么长（全文在段包里）
 PEEK = 200                  # 报错时附的原文长度
 
@@ -57,17 +56,30 @@ def _loads(text: str, what: str):
         raise BuildError("%s 不是合法 JSON（%s）：%s" % (what, exc, _peek(text))) from None
 
 
+def _fact_line(row: dict) -> str:
+    """一条事实行："- id：text"（桩按这个形状取 id）；带边的图事实把边一起写出来给模型看。"""
+    text = str(row.get("text") or "")[:MAX_FACT_CHARS]
+    edges = [edge for edge in row.get("edges") or () if isinstance(edge, dict)]
+    if not edges:
+        return "- %s：%s" % (row.get("id"), text)
+    pairs = "、".join("%s→%s" % (edge.get("from"), edge.get("to")) for edge in edges)
+    return "- %s：%s（可画图的边：%s）" % (row.get("id"), text, pairs)
+
+
 def build_plan_prompt(doc: dict) -> tuple[str, str]:
-    """分节那次：repo/totals/graph 摘要 + 事实行（id 与一句话），分 3–6 节。"""
-    facts = doc.get("facts") or {}
-    rows = []
-    for fact_id, row in list(facts.items())[:MAX_FACT_LINES]:
-        rows.append("- %s：%s" % (fact_id, str((row or {}).get("text") or "")[:MAX_FACT_CHARS]))
+    """分节那次：repo/totals/graph 摘要 + 按种类抽样的事实行（R501），分 3–6 节。"""
+    plan = pack_mod.pack_for_plan(doc)
+    facts, total = plan.get("facts") or [], len(doc.get("facts") or {})
+    summary = {key: plan[key] for key in ("repo", "totals", "graph") if key in plan}
+    if plan.get("has_edges"):
+        summary["has_edges"] = True
+    rows = [_fact_line(row) for row in facts]
     user = "\n".join([
         "仓库摘要（JSON）：",
-        json.dumps(pack_mod.pack_for_plan(doc), ensure_ascii=False, indent=2),
+        json.dumps(summary, ensure_ascii=False, indent=2),
         "",
-        "可用事实 %d 条，先列 %d 条；facts 只能从这里选：" % (len(facts), len(rows)),
+        "可用事实 %d 条（台账共 %d 条，按种类抽样、每组至少 1 条）；facts 只能从这里选："
+        % (len(facts), total),
         "\n".join(rows) or "（无）",
         "",
         "任务：把这次讲解分成 3–6 节，每节一句标题与一句目标，并点名这节要用的事实 id。",

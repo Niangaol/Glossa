@@ -6,6 +6,7 @@
 全空时返回空列表而不是抛。
 """
 import json
+import re
 
 import pytest
 
@@ -113,6 +114,26 @@ def test_parse_plan_rejects_bad_json():
     with pytest.raises(BuildError) as info:
         prompt.parse_plan("分节如下：一、入口", _doc())
     assert "分节如下" in str(info.value)
+
+
+def test_plan_prompt_offers_every_kind_and_the_graph_edges():
+    facts = {"fact:file:f%02d.py" % i: {"text": "f%d.py 一行。" % i, "numbers": [1]}
+             for i in range(70)}
+    facts["fact:graph"] = {"text": "依赖图 2 个节点、1 条边。", "numbers": [1, 2]}
+    facts["fact:totals"] = {"text": "全仓 2 个文件。", "numbers": [2]}
+    doc = {"meta": {"repo": {"url": "demo", "commit": "b" * 40, "root_name": "demo",
+                             "language": "python"}},
+           "totals": {"files": 2}, "facts": facts,
+           "graph": {"level": "file", "nodes": [], "edges": [{"from": "a.py", "to": "b.py"}],
+                     "project_edges": [], "cycles": [], "layers": [], "unreachable": [],
+                     "truncated": False}}
+    system, user = prompt.build_plan_prompt(doc)
+    assert system == prompt.SYSTEM
+    assert "- fact:graph：" in user and "可画图的边：a.py→b.py" in user
+    assert '"has_edges": true' in user, "带边的图事实必须在摘要里亮出来（R501）"
+    offered = set(re.findall(r"^- (fact:\S+?)：", user, re.M))
+    assert offered == {row["id"] for row in pack_mod.pack_for_plan(doc)["facts"]}
+    assert "fact:file:f00.py" in offered
 
 
 def test_both_prompt_builders_return_the_system_and_a_json_task():
