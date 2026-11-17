@@ -30,6 +30,8 @@ _RULES = (
     "6. 输出严格 JSON，不要 markdown 围栏外的解释。",
     "7. bars 的数据写在 bars: [{label, value}]（≤12 条，value 必须数字）；"
     "cards 写在 cards: [{label, text}]（≤8 条，两项都要非空）。",
+    "8. 每张图的形状是 {\"pattern\":\"六种范式之一\",\"caption\":\"一句话\",\"nodes\":[{\"id\",\"label\"}],"
+    "\"edges\":[{\"from\",\"to\",\"label\"}]}；pattern 必填，没有图就写 figures: []。",
 )
 SYSTEM = "你是给代码仓库写讲解页的作者：只讲查得到的事，讲清楚。\n约束：\n" + "\n".join(_RULES)
 

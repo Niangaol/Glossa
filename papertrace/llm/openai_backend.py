@@ -1,18 +1,14 @@
 """OpenAI 兼容后端（云端中转）：S8 起点亮，但默认仍然是 offline。
 
 控制器裁决（原文照录在 task-S8-report.md）：
-- R59：model 只从 `PAPERTRACE_LLM` 读；`openai:deepseek` 的冒号后缀只是被容忍的
-  写法，**不是模型名**；缺 model → `LLMUnavailable` 且点名 `PAPERTRACE_LLM`，绝不
-  猜默认模型名（qwen2.5-coder:7b 是 ollama 的默认）。
-- R61：先捕 HTTPError（真实状态码）再捕 URLError 再捕 TimeoutError——HTTPError
-  是 URLError 的子类，顺序反了状态码就被吞成笼统网络错误；禁止裸 except
-  Exception；超时两种形态（socket.timeout 与 urllib 的 URLError 包装）都要覆盖。
-- DeepSeek 没有 embeddings 端点 → embed() 404 或缺 data → LLMUnavailable；只配
-  openai 时 s_retr 仍然是 0，出的是黄线不是绿线。
-
-传输层可注入：transport(request) -> {"status": int, "text": str}，其中
-request = {"url", "body", "headers", "timeout"}；产品默认 _urllib_transport
-（标准库 urllib.request.urlopen，零新依赖）。测试注入假传输，全程不联网。
+- R59：model 只从 PAPERTRACE_LLM 读；openai:deepseek 的冒号后缀只是被容忍的写法，不是
+  模型名；缺 model → LLMUnavailable 且点名 PAPERTRACE_LLM，绝不猜默认模型名。
+- R61：先捕 HTTPError（真实状态码）再捕 URLError 再捕 TimeoutError——HTTPError 是
+  URLError 的子类，顺序反了状态码就被吞成笼统网络错误；禁止裸 except Exception。
+- DeepSeek 没有 embeddings 端点 → embed() 404 或缺 data → LLMUnavailable；只配 openai
+  时 s_retr 仍然是 0，出的是黄线不是绿线。
+传输层可注入：transport(request) -> {"status": int, "text": str}，request 是
+{"url", "body", "headers", "timeout"}；产品默认 urllib（零新依赖），测试注入假传输。
 """
 
 from __future__ import annotations
@@ -28,6 +24,7 @@ from papertrace.llm.client import ChatResult
 ENV_BASE_URL = "PAPERTRACE_OPENAI_BASE_URL"
 ENV_API_KEY = "PAPERTRACE_OPENAI_API_KEY"
 ENV_MODEL = "PAPERTRACE_LLM"
+ENV_MAX_TOKENS = "PAPERTRACE_LLM_MAX_TOKENS"   # 推理模型的预算；不设就等它写满服务端默认
 
 CHAT_PATH = "/chat/completions"
 EMBED_PATH = "/embeddings"
@@ -74,13 +71,15 @@ class OpenAICompatBackend:
     `chat()` / `embed()` 第一次被调用时点名（R60）。
     """
 
-    def __init__(self, *, base_url=None, api_key=None, model=None, transport=None, timeout=DEFAULT_TIMEOUT):
+    def __init__(self, *, base_url=None, api_key=None, model=None, transport=None,
+                 timeout=DEFAULT_TIMEOUT, max_tokens=None):
         self.name = "openai"
         self._base_url = _env_or(base_url, ENV_BASE_URL)
         self._api_key = _env_or(api_key, ENV_API_KEY)
         self._model = _env_or(model, ENV_MODEL)
         self._transport = _urllib_transport if transport is None else transport
         self._timeout = timeout
+        self._max_tokens = int(max_tokens or os.environ.get(ENV_MAX_TOKENS) or 0) or None
 
 
     def chat(self, prompt, *, system=None):
@@ -91,7 +90,9 @@ class OpenAICompatBackend:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
         # temperature=0：判断题要可复现，同一个问题两次问必须得到同一个答案。
-        data = self._post_json(CHAT_PATH, {"model": self._model, "messages": messages, "temperature": 0})
+        payload = {"model": self._model, "messages": messages, "temperature": 0}
+        payload.update({"max_tokens": self._max_tokens} if self._max_tokens else {})   # 只在配置过时下发
+        data = self._post_json(CHAT_PATH, payload)
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
             raise LLMUnavailable("OpenAI 兼容后端的响应里 choices 为空或缺失：没有可用的回答，不返回假 yes")

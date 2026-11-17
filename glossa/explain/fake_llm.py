@@ -99,6 +99,9 @@ def _short(text, cap: int = 18) -> str:
     return body[:cap]
 
 
+_RETRY = "上一轮的返回不是合法 JSON"   # ai_pipeline 重试时追加的那句（R522）
+
+
 def _label(raw) -> str:
     """fact id / 路径 → 人话：成员名 > 文件名；桩图上绝不印 fact:（R508）。"""
     text = re.sub(r"^fact:[^:]*:", "", str(raw or "").strip())
@@ -186,7 +189,7 @@ class FakeLLM:
             return json.dumps({"sections": _plan(text)}, ensure_ascii=False)
         if _SECTION_TASK in text:
             self.sections += 1
-            if self.bad_json and self.sections == 1:
+            if self.bad_json and (self.sections == 1 or _RETRY in text):   # R522：重试也坏
                 return '{"title": "坏掉的一节", "html": "<p class=\\"lead\\">这不是 JSON'
             pack = _load(text)
             facts = _safe(pack)

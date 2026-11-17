@@ -69,20 +69,36 @@ def _pairs(pack: dict) -> set:
     return out
 
 
+def _ask_section(llm, user, system, pos):
+    """R522：回包不是合法 JSON 时给一次补救机会（只对 JSON 错误重试一次，别的不重试）。"""
+    text = llm.complete(user, system)
+    try:
+        return prompt.parse_section(text, pos)
+    except BuildError as exc:
+        if "不是合法 JSON" not in str(exc):
+            raise
+    retry = user + "\n\n上一轮的返回不是合法 JSON（可能被截断）。请只输出一个完整的 JSON 对象，不要解释。"
+    return prompt.parse_section(llm.complete(retry, system), pos)
+
+
 def _section(doc, item, pos, llm, root):
     """写一节并过三道内容闸，返回 {title, html, figures, notes}。"""
     pack = pack_mod.build_pack(doc, dict(item, index=pos), root)
     system, user = prompt.build_section_prompt(pack)
-    data = prompt.parse_section(llm.complete(user, system), pos)
+    data = _ask_section(llm, user, system, pos)
     body, notes = gates.gate_html(data["html"], strip_style=True)   # R506：AI 版不留内联样式
     body, _marked = gates.gate_numbers(body, _numbers(pack), program=False)  # R507：空集不放行
     figures, allowed = [], _pairs(pack)
     for fig in data["figures"]:
-        clean, dropped = gates.gate_edges(fig, allowed)
-        clean, kept = gates.gate_labels(clean, pack)        # R508/R515：label 查不到就整张丢弃
-        if clean is not None:                                # R516：编出来的条形值一条都不印
-            clean, valued = gates.gate_values(clean, _numbers(pack))
-            kept = kept + valued
+        try:
+            clean, dropped = gates.gate_edges(fig, allowed)
+            clean, kept = gates.gate_labels(clean, pack)    # R508/R515：label 查不到就整张丢弃
+            if clean is not None:                            # R516：编出来的条形值一条都不印
+                clean, valued = gates.gate_values(clean, _numbers(pack))
+                kept = kept + valued
+        except (BuildError, ValueError) as exc:   # R521：一张图不合规不许连坐整节正文
+            notes.append("第 %d 节的一张图被丢弃（%s）" % (pos, exc))
+            continue
         notes += dropped + kept
         if clean is not None:
             figures.append(clean)
@@ -121,6 +137,8 @@ def run_ai(doc: dict, llm, style: str, *, root=None, max_sections: int = MAX_SEC
             continue
         sections.append(row)
         notes += row["notes"]
+    if sections and failed == len(sections):      # R523：全部失败就没有可交付的页面，别写半张页
+        raise BuildError("模型写的 %d 节全部失败（不是合法 JSON 或没过内容闸），没有可交付的页面" % failed)
     marks = sum(str(row.get("html") or "").count(_MARK) for row in sections)
     unmarked = sum(int(row.get("unmarked") or 0) for row in sections)
     page = assemble.build_page(doc, sections, style, mode=MODE, note=deviation(llm),

@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 
 from glossa.explain import fake_llm, llm_config, narrate
-from papertrace.exceptions import BuildError
+from papertrace.exceptions import BuildError, LLMUnavailable
 
 DEV_FAKE = "本页由离线桩生成，未调用真实模型"
 STUB_MODE = "本页由离线桩分节组装，未调用真实模型"   # R519：不许与「模型分节撰写」并存
@@ -28,17 +28,23 @@ def backend():
     GLOSSA_OPENAI_API_KEY 配齐了、后端却回头去点名 PAPERTRACE_OPENAI_API_KEY。
     """
     saved = {}
-    for glossa_name, paper_name in tuple(llm_config.ENV_PAIRS) + (llm_config.TIMEOUT_PAIR,):
+    pairs = tuple(llm_config.ENV_PAIRS) + (llm_config.TIMEOUT_PAIR, llm_config.MAX_TOKENS_PAIR)
+    for glossa_name, paper_name in pairs:
         value = (os.environ.get(glossa_name) or "").strip()
         if value:
             saved[paper_name] = os.environ.get(paper_name)
             os.environ[paper_name] = value
     try:
-        timeout = llm_config.timeout_seconds()
-        if timeout is None:
-            return narrate.get_llm()
+        timeout, limit = llm_config.timeout_seconds(), llm_config.max_tokens()
+        if timeout is None and limit is None:
+            return narrate.get_llm()          # 两项都没配：保持后端自己的默认
         from papertrace.llm.openai_backend import OpenAICompatBackend
-        return OpenAICompatBackend(timeout=timeout)
+        kwargs = {}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        if limit is not None:
+            kwargs["max_tokens"] = limit
+        return OpenAICompatBackend(**kwargs)
     finally:
         for name, previous in saved.items():
             if previous is None:
@@ -55,11 +61,18 @@ class ChatAdapter:
         self.name = str(getattr(backend, "name", "") or type(backend).__name__)
 
     def complete(self, prompt: str, system: str = "") -> str:
-        result = self.backend.chat(prompt, system=system or None)
-        text = getattr(result, "text", result)
-        if not isinstance(text, str) or not text.strip():
-            raise BuildError(_EMPTY % self.name)
-        return text
+        """R524：推理模型偶发返回空 content（token 全花在思维链）——给一次重试，不把空串当正文。"""
+        for attempt in (1, 2):
+            try:
+                result = self.backend.chat(prompt, system=system or None)
+            except LLMUnavailable:
+                if attempt == 2:
+                    raise
+                continue
+            text = getattr(result, "text", result)
+            if isinstance(text, str) and text.strip():
+                return text
+        raise BuildError(_EMPTY % self.name)
 
 
 def as_completer(llm):

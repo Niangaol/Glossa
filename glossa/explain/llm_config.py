@@ -25,6 +25,8 @@ ENV_PAIRS = (
 )
 #: 超时不是「连接参数」，缺了也算 ready；单独一对，让慢的推理模型能调长（R517）。
 TIMEOUT_PAIR = ("GLOSSA_LLM_TIMEOUT", "PAPERTRACE_LLM_TIMEOUT")
+#: 生成上限同理：不设就交给服务端默认，设了才不会等推理模型慢慢写满。
+MAX_TOKENS_PAIR = ("GLOSSA_LLM_MAX_TOKENS", "PAPERTRACE_LLM_MAX_TOKENS")
 BACKENDS = ("openai", "offline")
 _LAYERS = ("glossa", "papertrace")
 
@@ -108,6 +110,25 @@ def timeout_seconds(default=None):
             raise ValueError("%s=%r 不是秒数（要一个正数）" % (name, raw)) from None
         if value <= 0:
             raise ValueError("%s=%r 必须是正数秒" % (name, raw))
+        return value
+    return default
+
+
+def max_tokens(default=None):
+    """R520：一次最多生成多少 token（推理模型必须给个上限，否则慢到超时）。
+
+    读 GLOSSA_LLM_MAX_TOKENS，再读 PAPERTRACE_LLM_MAX_TOKENS；写错值响亮 ValueError。
+    """
+    for name in MAX_TOKENS_PAIR:
+        raw = _clean(os.environ.get(name))
+        if not raw:
+            continue
+        try:
+            value = int(raw)
+        except ValueError:
+            raise ValueError("%s=%r 不是整数（要一个正整数）" % (name, raw)) from None
+        if value <= 0:
+            raise ValueError("%s=%r 必须是正整数" % (name, raw))
         return value
     return default
 

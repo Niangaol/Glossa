@@ -181,3 +181,72 @@ def test_timeout_env_is_read_and_validated(monkeypatch):
     monkeypatch.setenv("GLOSSA_LLM_TIMEOUT", "-1")
     with pytest.raises(ValueError, match="正数"):
         llm_config.timeout_seconds()
+
+# R520：推理模型把 token 花在思维链上，不设上限就慢慢写满（实测 2000 时 content 为空）
+def test_max_tokens_env_is_read_and_validated(monkeypatch):
+    monkeypatch.delenv("PAPERTRACE_LLM_MAX_TOKENS", raising=False)
+    monkeypatch.setenv("GLOSSA_LLM_MAX_TOKENS", "8000")
+    assert llm_config.max_tokens() == 8000
+    monkeypatch.setenv("GLOSSA_LLM_MAX_TOKENS", "很多")
+    with pytest.raises(ValueError, match="不是整数"):
+        llm_config.max_tokens()
+    monkeypatch.setenv("GLOSSA_LLM_MAX_TOKENS", "0")
+    with pytest.raises(ValueError, match="正整数"):
+        llm_config.max_tokens()
+
+
+def _sent_body(monkeypatch, **kwargs):
+    from papertrace.llm import openai_backend
+    sent = {}
+
+    def transport(request):
+        sent.update(request["body"])
+        return {"status": 200, "text": json.dumps(
+            {"choices": [{"message": {"content": "好"}}], "model": "m"})}
+
+    monkeypatch.setenv("PAPERTRACE_OPENAI_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("PAPERTRACE_OPENAI_API_KEY", "k")
+    monkeypatch.setenv("PAPERTRACE_LLM", "m")
+    openai_backend.OpenAICompatBackend(transport=transport, **kwargs).chat("问一句")
+    return sent
+
+
+def test_backend_payload_carries_max_tokens(monkeypatch):
+    assert _sent_body(monkeypatch, max_tokens=8000)["max_tokens"] == 8000
+
+
+def test_backend_payload_stays_the_same_without_max_tokens(monkeypatch):
+    monkeypatch.delenv("PAPERTRACE_LLM_MAX_TOKENS", raising=False)
+    assert "max_tokens" not in _sent_body(monkeypatch)
+
+# R524：推理模型偶发返回空 content（token 全花在思维链上）——重试一次，别把空串当正文
+def test_chat_adapter_retries_once_on_an_unavailable_backend():
+    from papertrace.exceptions import LLMUnavailable
+
+    class Flaky(Echo):
+        def __init__(self):
+            super().__init__("第二次成功")
+            self.fail = True
+
+        def chat(self, prompt, *, system=None):
+            self.calls += 1
+            if self.fail:
+                self.fail = False
+                raise LLMUnavailable("响应缺 message.content 或内容为空")
+            return ChatResult(self.text, "m", "openai")
+
+    wrapper = ai_pipeline.ChatAdapter(Flaky())
+    assert wrapper.complete("问") == "第二次成功"
+    assert wrapper.backend.calls == 2
+
+
+def test_chat_adapter_gives_up_after_the_second_empty_answer():
+    class Blank(Echo):
+        def chat(self, prompt, *, system=None):
+            self.calls += 1
+            return ChatResult("   ", "m", "openai")
+
+    wrapper = ai_pipeline.ChatAdapter(Blank())
+    with pytest.raises(BuildError, match="空文本"):
+        wrapper.complete("问")
+    assert wrapper.backend.calls == 2
