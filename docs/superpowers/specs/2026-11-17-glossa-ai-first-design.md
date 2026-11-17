@@ -209,4 +209,8 @@ AI 每段返回**严格 JSON**（不含 HTML，不含 CSS）：
 
 **实跑结果（真模型，2026-11-17）**：ts-monorepo 夹具 → 4 节 / 6 张图 / 0 未溯源 / 0 失败 / 26,041 字节 / `<script>` 0 / 除 SVG 命名空间外零 http；正文里的数字（13 文件、10 符号、9 条 import、6 条边、2 层）全部来自台账，模型自己写的那节把 `packages/a`、`@x/b`、`serve/check/test` 讲成了人话。
 
+## §17 R525–R526（真跑 SafeTrace 暴露的两条）
 
+**R525（token 预算按真仓库定，别按夹具定）**：`GLOSSA_LLM_MAX_TOKENS=8000` 在 ts-monorepo 夹具上够用，在 SafeTrace 上不够——每节素材更大、思维链更长，两个模型都出现过 `content` 为空、`finish_reason=length`，`ChatAdapter` 重试一次仍空，于是 exit 4。实测同一提示：16000 token 时 step-3.7-flash 21.4 秒 / step-5-preview 10.6 秒，`finish_reason=stop` 且正文完整。裁定：文档与 README 的推荐值改成 16000；`ChatAdapter` 两次空回时的错误信息必须点名 `GLOSSA_LLM_MAX_TOKENS`（不许只说「空文本」），用户才知道该拧哪个旋钮。
+
+**R526（提交哈希不是数字）**：真跑页头报「未溯源 11 处」，逐条看全是同一个 commit `9ca2b4f9a17f3cf190f3b604c1dff779198c25a4` 被数字正则撕成 9 / 2 / 4 / 9 / 190 / 604 / 779198 … 一串假黄标。裁定：`glossa/explain/guard.py` 的 `_NUM` 前后加 `(?<![0-9A-Za-z])` / `(?![0-9A-Za-z])`——紧贴 ASCII 字母或数字的连续数字（提交哈希、`0x1F`、`x86`）不是「数字」，不许标也不许计数；紧贴汉字的数字照旧（「共 13 个文件」）。修后同一仓库重跑：**未溯源 2 处**（都是模型在程序绘制处写的数字，页面如实计入页头），黄标 0 处、7 图、5 节、35,479 字节。

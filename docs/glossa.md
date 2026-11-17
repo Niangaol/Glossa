@@ -141,7 +141,7 @@ python -m glossa explain --repo D:\path\to\repo --ai --llm openai --style cards 
 | 变量 | 缺省 | 含义 |
 | ---- | ---- | ---- |
 | `GLOSSA_LLM_TIMEOUT` | 后端默认 60 秒 | 单次请求超时（秒，正数）。推理模型真跑一节可能要几十秒，写错值响亮 `ValueError`（exit 4），不悄悄退回默认 |
-| `GLOSSA_LLM_MAX_TOKENS` | 不设，交给服务端 | 单次最多生成多少 token（正整数）。**推理模型不设这个基本跑不完**：StepPlan 的 `step-5-preview` 在 2000 时 `content` 是空的——token 全花在 `reasoning_content` 上，实测 8000 才稳定出正文（16–21 秒一调） |
+| `GLOSSA_LLM_MAX_TOKENS` | 不设，交给服务端 | 单次最多生成多少 token（正整数）。**推理模型不设这个基本跑不完**：StepPlan 的 `step-5-preview` 在 2000 时 `content` 是空的——token 全花在 `reasoning_content` 上，实测 8000 在小素材上够用（16–21 秒一调），但 SafeTrace 这种真仓库的每节素材更大、思维链更长，8000 仍会空回、16000 才稳定（各节 10–21 秒）；连续两次空回时程序会直接点名这个变量 |
 
 ### AI 路径的退出码
 

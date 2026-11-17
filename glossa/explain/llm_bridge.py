@@ -53,6 +53,9 @@ def backend():
                 os.environ[name] = previous
 
 
+_TOKENS_HINT = "（推理模型可能把 token 全花在思维链上了，试试调大 GLOSSA_LLM_MAX_TOKENS，例如 16000）"
+
+
 class ChatAdapter:
     """只有 chat() 的后端 → 有 complete() 的编排接口（真模型唯一的入口）。"""
 
@@ -72,7 +75,7 @@ class ChatAdapter:
             text = getattr(result, "text", result)
             if isinstance(text, str) and text.strip():
                 return text
-        raise BuildError(_EMPTY % self.name)
+        raise BuildError(_EMPTY % self.name + _TOKENS_HINT)
 
 
 def as_completer(llm):

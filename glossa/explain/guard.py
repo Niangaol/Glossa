@@ -15,7 +15,7 @@ R407：禁标签是 void 元素（embed / param）时，丢弃时绝不进入抑
 HTML 会被静默吞掉（不抛不报）。R411：未闭合的禁标签 → 其后内容一并丢弃（fail-closed）。
 
 R308：re.split(r'(<[^>]*>)') 切标签/文本，只处理文本段；<code> 深度 >0 整段跳过；
-数字正则 r'\d[\d,]*(?:\.\d+)?%?'，比对前去掉逗号与百分号（29,856→29856、50%→50）；
+数字正则 `_NUM`（R526：前后不许贴 ASCII 字母/数字，否则提交哈希 9ca2b4f9… 会被撕成一串假数字），比对前去掉逗号与百分号（29,856→29856、50%→50）；
 命中 numbers 原样不动，未命中原样包 <mark class="untraced">（不改写、不四舍五入）。
 日期 2026-11-16 会被拆成 2026、11、16 三个数——这是预期行为，不是缺陷。
 R419：模型自写的 <mark class="untraced"> 先降级成普通 <mark>（保文字、失去「已标记」身份），
@@ -140,7 +140,8 @@ def sanitize_html(text: str, *, strip_style: bool = False) -> tuple[str, int, li
 
 
 _TAG = re.compile(r"(<[^>]*>)")
-_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?%?")
+# R526：提交哈希/标识符里的数字不是「数字」——前后贴 ASCII 字母或数字就不算（0x1F、x86 同理）
+_NUM = re.compile(r"(?<![0-9A-Za-z])\d[\d,]*(?:\.\d+)?%?(?![0-9A-Za-z])")
 _MARK = re.compile(r"<mark\b([^>]*)>", re.I)
 _CLASS = re.compile(r"""\bclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))""", re.I)
 

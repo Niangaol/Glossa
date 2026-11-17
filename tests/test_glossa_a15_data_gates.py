@@ -12,7 +12,7 @@ import shutil
 import pytest
 
 from glossa import facts as facts_mod
-from glossa.explain import ai_pipeline, fake_llm, gates
+from glossa.explain import ai_pipeline, fake_llm, gates, guard
 from tests._tmp import scratch_dir
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "repos"
@@ -105,3 +105,16 @@ def test_pipeline_discloses_a_fabricated_bar_value(doc, repo):
     result = ai_pipeline.run_ai(doc, BarsLLM([fig]), "magazine", root=repo)
     assert "99999" not in result["html"]
     assert any("柱状图" in note for note in result["notes"]), result["notes"]
+
+# R526：提交哈希不是数字——真跑 SafeTrace 时模型把 commit 写进正文，旧正则把
+# 9ca2b4f9a17f3cf… 撕成 9/2/4/9/190/604/… 一串假黄标（误报 11 处）
+def test_a_commit_hash_is_not_shredded_into_untraced_numbers():
+    html = guard.mark_untraced(
+        "<p>本节基于 commit 9ca2b4f9a17f3cf190f3b604c1dff779198c25a4 的扫描结果</p>", {"13"})
+    assert "untraced" not in html
+    assert gates.count_plain_numbers(["commit 9ca2b4f9a17f3cf190f3b6"], {"13"}) == 0
+
+
+def test_a_plain_number_next_to_chinese_text_is_still_counted():
+    assert gates.count_plain_numbers(["共 13 个文件"], set()) == 1
+    assert gates.count_plain_numbers(["共 13 个文件"], {"13"}) == 0

@@ -247,6 +247,6 @@ def test_chat_adapter_gives_up_after_the_second_empty_answer():
             return ChatResult("   ", "m", "openai")
 
     wrapper = ai_pipeline.ChatAdapter(Blank())
-    with pytest.raises(BuildError, match="空文本"):
+    with pytest.raises(BuildError, match="GLOSSA_LLM_MAX_TOKENS"):
         wrapper.complete("问")
     assert wrapper.backend.calls == 2
