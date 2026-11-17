@@ -18,7 +18,9 @@ _DESC = {
     "explain_outline": "返回七块骨架（标题、可用组件、每块的真 fact id）。"
                        "决定讲解结构时用它，facts 列表里的 id 就是你能引用的全部。",
     "render_explain": "校验 blocks 并写单文件离线 explain.html，返回未溯源数字处数与字节数。"
-                      "讲解的最后一步；假 fact id、未知组件、越界行区间都会被响亮拒绝。",
+                      "讲解的最后一步；假 fact id、未知组件、越界行区间都会被响亮拒绝。"
+                      "mode=ai 时不需要 blocks：由模型（或离线桩 llm=fake）分节撰写整页；"
+                      "llm=fake 不联网、页头会标注「本页由离线桩生成」，适合没有 key 时先看形状。",
 }
 _STR = {"type": "string"}
 _INT = {"type": "integer"}
@@ -55,10 +57,14 @@ TOOLS = [
     }, ("repo",))},
     {"name": "render_explain", "description": _DESC["render_explain"], "inputSchema": _schema({
         "repo": {**_STR, "description": "仓库根目录"},
-        "blocks": {"type": "array", "description": "组件块数组；每块只许 component/params/cites/section/title/notes 六个键",
+        "blocks": {"type": "array", "description": "组件块数组；每块只许 component/params/cites/section/title/notes 六个键。"
+                                                 "mode=ai 时不需要",
                    "items": {"type": "object"}},
         "out": {**_STR, "description": "explain.html 的落地目录；省略时写 output/mcp-cache/<repo>-<hash>/"},
-        "mode": {**_STR, "description": "program（程序版，默认）或 model（模型版，页头带模型名）"},
+        "mode": {**_STR, "description": "program（程序版，默认）、model（模型版，页头带模型名）"
+                                       "或 ai（模型分节撰写整页，需 blocks 以外的后端）"},
         "model_name": {**_STR, "description": "mode=model 时页头显示的模型名"},
-    }, ("repo", "blocks"))},
+        "llm": {**_STR, "description": "mode=ai 用哪个后端：fake 是离线桩（不联网、页头标注）；"
+                                       "省略则走真后端，未配置时 isError 并说明怎么改"},
+    }, ("repo",))},
 ]

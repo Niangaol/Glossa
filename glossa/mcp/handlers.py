@@ -14,7 +14,7 @@ import pathlib
 
 from glossa import exclude, facts as facts_mod, schema_repo
 from glossa.cli_facts import KINDS
-from glossa.explain import components, outline, render
+from glossa.explain import ai_pipeline, components, outline, render
 from glossa.mcp.state import (cache_meta, default_dir, ensure, fail, int_arg, ok,
                               repo_root, store)
 from papertrace.exceptions import BuildError
@@ -128,9 +128,30 @@ def explain_outline(args, state):
     return {"repo": str(root), "blocks": outline.build_outline(entry["doc"]), **cache_meta(entry)}
 
 
+def _render_ai(args, root, entry):
+    """A6：mode=ai——分节撰写 + 四道闸 + 组装；没有真后端时用 llm="fake" 离线跑通。"""
+    given = args.get("llm")
+    if given not in (None, "fake"):
+        raise BuildError('llm 只接受 "fake"（离线桩）；接真模型请走 CLI 的 --ai --llm openai，'
+                         "收到 %r" % (given,))
+    llm = ai_pipeline.build_llm("fake" if given == "fake" else "openai")
+    result = ai_pipeline.run_ai(entry["doc"], llm, "magazine", root=root)
+    out = pathlib.Path(str(args["out"])) if args.get("out") else default_dir(root)
+    path = ai_pipeline.write_page(result["html"], out)
+    return {"repo": str(root), "out": str(path), "mode": result["mode"],
+            "untraced": result["untraced"], "sections": len(result["sections"]),
+            "notes": result["notes"], "deviation": result["deviation"],
+            "bytes": len(result["html"].encode("utf-8")), **cache_meta(entry)}
+
+
 def render_explain(args, state):
-    """校验 blocks 后写 explain.html；假 fact id / 未知组件 / 越界区间都响亮拒绝。"""
+    """校验 blocks 后写 explain.html；假 fact id / 未知组件 / 越界区间都响亮拒绝。
+
+    A6：mode="ai" 时 blocks 不看，改走 AI 编排（llm="fake" 为离线桩，页头会标注）。
+    """
     root, entry = ensure(args, state)
+    if (args.get("mode") or "program") == "ai":
+        return _render_ai(args, root, entry)
     blocks = args.get("blocks")
     if not isinstance(blocks, list) or not blocks:
         raise BuildError("blocks 必须是「非空的 JSON 数组」，收到 %r" % (blocks,))

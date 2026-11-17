@@ -11,17 +11,18 @@ A1：AI 配置集中在 glossa/explain/llm_config.py（显式入参 > GLOSSA_* >
 配了 openai 但调不通仍然是 4——绝不静默退回事实版。
 serve 是 T11 的 MCP 入口（R327：换行分隔 JSON-RPC 2.0 over stdio，stdout 只写协议流）。
 facts 子命令与「--repo → doc」闸门在 glossa/cli_facts.py（R452：本文件守住 200 行上限）。
+A6：--ai / --llm fake|openai / --style 与整条 AI 编排在 glossa/cli_explain.py（同一条 200 行尺），
+这里只做一次分派；裸 --llm 的旧路径与输出逐字不变。
 """
 from __future__ import annotations
 
 import argparse
-import os
 import pathlib
 import sys
 
-from glossa import cli_facts, schema_repo
+from glossa import cli_explain, cli_facts, schema_repo
 from glossa.cli_facts import KINDS, doc_or_exit, fail
-from glossa.explain import llm_config, narrate, render
+from glossa.explain import ai_pipeline, llm_config, narrate, render
 from papertrace.exceptions import BuildError, LLMUnavailable, TraceSchemaError
 from papertrace.exit_codes import MISSING_RUNTIME
 from papertrace.schema_validate import dump_trace
@@ -32,28 +33,6 @@ BUILD_FAIL = cli_facts.BUILD_FAIL          # 2：渲染失败（BuildError）
 OCCUPIED = 3                               # 输出已存在且没有 --force
 NO_RUNTIME = MISSING_RUNTIME               # 4：缺运行时 / --llm 后端不可用
 NO_REPO = cli_facts.NO_REPO                # 5：--repo 不存在或不是目录
-
-
-def _backend():
-    """把 GLOSSA_* 四项临时映射成 papertrace 认的变量，问完立刻恢复原样。
-
-    「读哪一层、配齐了没有」由 llm_config 决定；这里只保证真后端读到同一份值，
-    否则 GLOSSA_OPENAI_API_KEY 配齐了、后端却回头去点名 PAPERTRACE_OPENAI_API_KEY。
-    """
-    saved = {}
-    for glossa_name, paper_name in llm_config.ENV_PAIRS:
-        value = (os.environ.get(glossa_name) or "").strip()
-        if value:
-            saved[paper_name] = os.environ.get(paper_name)
-            os.environ[paper_name] = value
-    try:
-        return narrate.get_llm()
-    finally:
-        for name, previous in saved.items():
-            if previous is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = previous
 
 
 def print_summary(doc):
@@ -100,6 +79,8 @@ def _cmd_explain(args):
             _save_ledger(doc, args.out)
         except TraceSchemaError as exc:
             return fail(SCHEMA_FAIL, "glossa explain：生成的 repo.json 不合法：\n%s" % exc)
+    if cli_explain.wanted(args):                              # A6：--ai / --llm fake|openai
+        return cli_explain.run(args, doc)
     try:
         cfg = llm_config.resolve()                            # A1：配置只读这一处
     except ValueError as exc:                                 # backend 写错：报原文，不吞成 traceback
@@ -110,7 +91,7 @@ def _cmd_explain(args):
             print("未配置模型后端，本页由程序生成")
         else:
             try:
-                blocks, name = narrate.ask(doc, backend=_backend())
+                blocks, name = narrate.ask(doc, backend=ai_pipeline.backend())
             except LLMUnavailable as exc:
                 return fail(NO_RUNTIME, "glossa explain：模型后端不可用：%s" % exc)
             except BuildError as exc:
@@ -146,8 +127,7 @@ def build_parser():
     sub = parser.add_subparsers(dest="command", required=True)
     _common(sub.add_parser("analyze", help="扫一遍仓库，写 repo.json（11 个顶层键的事实台账）"))
     explain = _common(sub.add_parser("explain", help="生成单文件离线讲解页 explain.html"))
-    explain.add_argument("--llm", action="store_true",
-                         help="用模型写讲解；后端不可用时 exit 4，绝不静默降级")
+    cli_explain.add_options(explain)                          # A6：--ai / --llm / --style
     facts_cmd = sub.add_parser("facts", help="按 kind 打印事实台账（可分页）")
     facts_cmd.add_argument("--repo", required=True, help="仓库根目录")
     facts_cmd.add_argument("--kind", choices=KINDS, help="只显示这一类 fact")
