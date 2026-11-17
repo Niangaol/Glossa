@@ -22,6 +22,8 @@ p.removed { font-size:13px; color:#a1222e; background:#fde8e8; border-radius:4px
 .badge { display:inline-block; padding:2px 10px; border-radius:999px; font-size:13px;
   background:#e8f0fe; color:#1a4d8f; }
 .badge.model { background:#fde8e8; color:#a1222e; }
+p.fallback { background:#fde8e8; color:#8a1c26; border:1px solid #f0b4bb; border-left:5px solid #a1222e;
+  border-radius:5px; padding:9px 12px; font-size:14px; line-height:1.7; font-weight:600; }
 .untraced-count { font-size:13px; color:var(--muted); margin-left:8px; }
 .untraced-count.warn { color:#8a5a00; background:var(--warn); border-radius:4px; padding:2px 8px; }
 .untraced-count.ok { color:#2f7d32; }
@@ -55,6 +57,9 @@ footer.page { margin-top:44px; padding-top:14px; border-top:1px solid var(--line
 <body>
 <header class="page">
   <h1>{{ title }}</h1>
+{%- if fallback %}
+  <p class="fallback">本页未使用 AI（仅事实底稿）：只列台账事实，没有讲解。设置 GLOSSA_LLM_BACKEND=openai 与 GLOSSA_OPENAI_BASE_URL / GLOSSA_OPENAI_API_KEY / GLOSSA_LLM 后重跑可得到人话讲解。</p>
+{%- endif %}
   <p><span class="badge {{ mode }}">{{ badge }}</span>
     <span class="untraced-count {{ 'ok' if untraced == 0 else 'warn' }}">本页有 {{ untraced }} 处数字未溯源</span></p>
   <p class="src">仓库 {{ repo_url }} · commit {{ commit }} · 主语言 {{ language }} · 生成于 {{ created_at }} · 由 {{ tool_name }} {{ tool_version }} 生成</p>

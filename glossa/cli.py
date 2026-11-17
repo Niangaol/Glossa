@@ -6,6 +6,9 @@ analyze 写 repo.json（过 schema，1 失败 0 成功）；explain 写 explain.
 R487：explain 默认复用 --out/repo.json（缺失才重扫并在页脚注明，--force 重扫并覆盖台账）；
 台账读不进来是 1（stderr 原文，绝不静默回落重扫）。
 参数错误由 argparse 以 2 退出，与构建失败同码、靠 stderr 区分。
+A1：AI 配置集中在 glossa/explain/llm_config.py（显式入参 > GLOSSA_* > PAPERTRACE_*）；
+没配后端时照旧出程序版事实页，只是页头多一条红条说清「本页没用人话讲解」，
+配了 openai 但调不通仍然是 4——绝不静默退回事实版。
 serve 是 T11 的 MCP 入口（R327：换行分隔 JSON-RPC 2.0 over stdio，stdout 只写协议流）。
 facts 子命令与「--repo → doc」闸门在 glossa/cli_facts.py（R452：本文件守住 200 行上限）。
 """
@@ -18,7 +21,7 @@ import sys
 
 from glossa import cli_facts, schema_repo
 from glossa.cli_facts import KINDS, doc_or_exit, fail
-from glossa.explain import narrate, render
+from glossa.explain import llm_config, narrate, render
 from papertrace.exceptions import BuildError, LLMUnavailable, TraceSchemaError
 from papertrace.exit_codes import MISSING_RUNTIME
 from papertrace.schema_validate import dump_trace
@@ -31,29 +34,26 @@ NO_RUNTIME = MISSING_RUNTIME               # 4：缺运行时 / --llm 后端不�
 NO_REPO = cli_facts.NO_REPO                # 5：--repo 不存在或不是目录
 
 
-def _configured():
-    """R323 ①：两个环境变量都没配（或都是 offline）→ 程序版，不算错误。"""
-    for name in (narrate.ENV_GLOSSA_BACKEND, narrate.ENV_PAPER_BACKEND):
-        value = (os.environ.get(name) or "").strip()
-        if value and value.lower().split(":", 1)[0] != "offline":
-            return True
-    return False
-
-
 def _backend():
-    """GLOSSA_LLM_BACKEND 优先：临时映射成 papertrace 的变量，问完立刻恢复。"""
-    chosen = (os.environ.get(narrate.ENV_GLOSSA_BACKEND) or "").strip()
-    if not chosen:
-        return narrate.get_llm()
-    previous = os.environ.get(narrate.ENV_PAPER_BACKEND)
-    os.environ[narrate.ENV_PAPER_BACKEND] = chosen
+    """把 GLOSSA_* 四项临时映射成 papertrace 认的变量，问完立刻恢复原样。
+
+    「读哪一层、配齐了没有」由 llm_config 决定；这里只保证真后端读到同一份值，
+    否则 GLOSSA_OPENAI_API_KEY 配齐了、后端却回头去点名 PAPERTRACE_OPENAI_API_KEY。
+    """
+    saved = {}
+    for glossa_name, paper_name in llm_config.ENV_PAIRS:
+        value = (os.environ.get(glossa_name) or "").strip()
+        if value:
+            saved[paper_name] = os.environ.get(paper_name)
+            os.environ[paper_name] = value
     try:
         return narrate.get_llm()
     finally:
-        if previous is None:
-            os.environ.pop(narrate.ENV_PAPER_BACKEND, None)
-        else:
-            os.environ[narrate.ENV_PAPER_BACKEND] = previous
+        for name, previous in saved.items():
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
 
 
 def print_summary(doc):
@@ -100,9 +100,13 @@ def _cmd_explain(args):
             _save_ledger(doc, args.out)
         except TraceSchemaError as exc:
             return fail(SCHEMA_FAIL, "glossa explain：生成的 repo.json 不合法：\n%s" % exc)
+    try:
+        cfg = llm_config.resolve()                            # A1：配置只读这一处
+    except ValueError as exc:                                 # backend 写错：报原文，不吞成 traceback
+        return fail(NO_RUNTIME, "glossa explain：AI 配置不合法：%s" % exc)
     mode, name, blocks = "program", None, None
     if args.llm:
-        if not _configured():
+        if cfg.backend == "offline":
             print("未配置模型后端，本页由程序生成")
         else:
             try:
@@ -112,15 +116,16 @@ def _cmd_explain(args):
             except BuildError as exc:
                 return fail(BUILD_FAIL, "glossa explain：模型给的 blocks 不合法：%s" % exc)
             mode = "model"
+    fallback = mode == "program" and not llm_config.ready(cfg)   # A1：红条 = 这页没有 AI
     if blocks is None:
         blocks = narrate.program(doc)
     try:
         path = render.write_explain(doc, blocks, args.out, mode=mode, model_name=name,
-                                    rescanned=rescanned)
+                                    rescanned=rescanned, fallback=fallback)
     except BuildError as exc:
         return fail(BUILD_FAIL, "glossa explain：解释页渲染失败：%s" % exc)
     report = render.render_explain(doc, blocks, mode=mode, model_name=name,
-                                   rescanned=rescanned)[1]
+                                   rescanned=rescanned, fallback=fallback)[1]
     print("讲解页：%s · %d 块 · 未溯源 %d 处%s" % (path, report["blocks"], report["untraced"],
                                             " · 模型 %s" % name if name else ""))
     return OK

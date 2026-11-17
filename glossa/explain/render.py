@@ -7,6 +7,9 @@ R319：同一 doc + 同一 blocks 渲染两次逐字节相同：时间只取 doc
 当前时间，组件内部按 id / path 排序，不遍历无序集合。
 R412：每块一个 <section>（空串块不生成）；第一个 file_card 的 section 顶部写「共 N 个可讲解
 文件，本页逐个讲了 M 个」+ 挑选规则；页脚两句固定披露在模板里。
+A1：fallback=True 时页头多渲染一条红条「本页未使用 AI（仅事实底稿）…」；model 模式
+的页面永远不带这条红条（模型页声称「没用 AI」是自相矛盾），条件写在模板里，不做
+渲染后拼接。
 
 report 的两个数字与页面同源：untraced 数页面上的黄标，removed 读自定义块顶部的 data-removed。
 """
@@ -69,11 +72,18 @@ def _badge(mode, model_name):
         return "本页由程序生成，未使用模型"
     raise BuildError("mode 只能是 program 或 model，收到 %r" % (mode,))
 
-def render_explain(doc, blocks, *, mode="program", model_name=None, rescanned=False):
+def _fallback(mode, fallback):
+    """A1：红条只属于程序版页面——模型写的页面说「未使用 AI」是自相矛盾，开关一律无效。"""
+    return bool(fallback) and mode != "model"
+
+
+def render_explain(doc, blocks, *, mode="program", model_name=None, rescanned=False,
+                   fallback=False):
     """渲染整页，返回 (html, report)；report 键：untraced / removed / notes / bytes / blocks。
 
     R487/R496：rescanned=True 时模板在页脚多渲染一句「本页数据来自本次重扫」（条件在模板里，
     不做渲染后拼接）；只这一句随参数变，其余字节不受影响。
+    A1：fallback=True 给程序版事实页加页头红条；model 模式一律不认这个开关（见 _fallback）。
     """
     blocks = list(blocks or [])
     components.validate_blocks(doc, blocks)
@@ -88,7 +98,8 @@ def render_explain(doc, blocks, *, mode="program", model_name=None, rescanned=Fa
         mode=mode, untraced=untraced, sections=sections, repo_url=repo.get("url") or "未登记",
         commit=repo.get("commit") or "unknown", language=repo.get("language") or "未识别",
         created_at=meta.get("created_at") or "未登记", tool_name=tool.get("name") or "glossa",
-        tool_version=tool.get("version") or "", rescanned=bool(rescanned))
+        tool_version=tool.get("version") or "", rescanned=bool(rescanned),
+        fallback=_fallback(mode, fallback))
     size = len(html.encode("utf-8"))
     if size > HTML_MAX_BYTES:      # 运行时读模块全局：rmod.HTML_MAX_BYTES 的 monkeypatch 才生效
         raise BuildError("解释页 %d 字节，超过单文件上限 %d 字节（R317：不截断，也不删旧页）"
@@ -102,10 +113,11 @@ def render_explain(doc, blocks, *, mode="program", model_name=None, rescanned=Fa
               "blocks": len(sections)}
     return html, report
 
-def write_explain(doc, blocks, out_dir, *, mode="program", model_name=None, rescanned=False):
+def write_explain(doc, blocks, out_dir, *, mode="program", model_name=None, rescanned=False,
+                  fallback=False):
     """写 <out_dir>/explain.html，每次覆盖（R74 同尺，不受 --force 约束）。"""
     html, _report = render_explain(doc, blocks, mode=mode, model_name=model_name,
-                                   rescanned=rescanned)
+                                   rescanned=rescanned, fallback=fallback)
     target = pathlib.Path(out_dir)
     target.mkdir(parents=True, exist_ok=True)
     path = target / "explain.html"
