@@ -1,9 +1,10 @@
-"""A6：AI 讲解编排（ai_pipeline.py）——两次调用、四道闸、一次组装。
+"""A6：AI 讲解编排（ai_pipeline.py）——两次调用、五道内容闸、一次组装。
 
 顺序固定（派发书 §2）：pack_for_plan → build_plan_prompt → complete → parse_plan →
 每节 build_pack → build_section_prompt → complete → parse_section → gate_html（strip_style=True，
 R506）→ gate_numbers（这一节素材包里的 numbers，空集不放行，R507）→ gate_edges（这一节素材包
-里的边）→ gate_labels（节点 label 必须查得到，R508）→ assemble.build_page（页头恒写未溯源/
+里的边）→ gate_labels（节点/柱状/卡片 label 必须查得到，R508/R515）→ gate_values（柱状值必须
+核得上素材 numbers，R516）→ assemble.build_page（页头恒写未溯源/
 失败计数，R509）。
 
 两条不许商量的口径：
@@ -98,7 +99,10 @@ def _section(doc, item, pos, llm, root):
     figures, allowed = [], _pairs(pack)
     for fig in data["figures"]:
         clean, dropped = gates.gate_edges(fig, allowed)
-        clean, kept = gates.gate_labels(clean, pack)        # R508：label 查不到就整张丢弃
+        clean, kept = gates.gate_labels(clean, pack)        # R508/R515：label 查不到就整张丢弃
+        if clean is not None:                                # R516：编出来的条形值一条都不印
+            clean, valued = gates.gate_values(clean, _numbers(pack))
+            kept = kept + valued
         notes += dropped + kept
         if clean is not None:
             figures.append(clean)

@@ -166,3 +166,11 @@ AI 每段返回**严格 JSON**（不含 HTML，不含 CSS）：
 **R503（批准）**：MCP `render_explain` 的 required 从 `("repo","blocks")` 改为 `("repo",)`。理由：ai 模式根本没有 blocks；program 模式缺 blocks 仍走同一句 BuildError → isError，既有 32602 测试用的是 `analyze_repo`，不受影响。
 
 **R504（A2b 排队，仍不修）**：`bars` / `cards` 数据数组尚未放行（见 R500）。等 A7 出页后单开一片，值与边一起过闸。
+
+## 15. 裁决：图数据的出处（A10 收尾，2026-11-17）
+
+**R515（必修）**：`gates.gate_labels` 只看 `fig["nodes"]`，而 bars/cards 图的 `nodes` 是空的 → R508 对这两种图**完全失效**，模型写一个 `label="fact:languages"` 的条形照样印上页。裁定：一张图的 label 源 = 节点 label + `bars[].label` + `cards[].label`，任一条查不到出处就整张图丢弃（披露里不回声模型原话）。核对口径：整串出现在本节素材原文里，**或它每个词都出现过**——只看整串会把「json 文件」这种由素材里两个词拼出来的正常名字全判死（素材原文是「json 78 个文件」），图就白丢了。
+
+**R516（必修）**：柱状图的值会以文本形式印进 SVG，而数字溯源闸只扫 html、扫不到图数据 → 模型编一个 99999，页面上就多一个零出处的数字，页头还写着「未溯源 0 处」。裁定：新增 `gates.gate_values`，柱状值必须能在本节素材 `facts[].numbers` 里核上（复用 `_numeric` 的归一化，认 `29,856` / `50%` 这类写法）；编的那一条丢掉、其余照画并披露，一条都核不上就整张图丢弃。内容闸因此是五道：`gate_html → gate_numbers → gate_edges → gate_labels → gate_values`。
+
+**错的代价**：不修时页面能通过当时全部测试、页头自称「未溯源 0 处」，却在 SVG 里印着模型编的名字和数字——这是这个设计里最不该发生的一类错误（静默的错误事实），比缺一段正文严重得多。

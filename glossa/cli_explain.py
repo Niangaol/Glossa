@@ -26,7 +26,7 @@ NO_RUNTIME = MISSING_RUNTIME           # 4：没有可用后端 / 配了但连�
 def add_options(parser):
     """三个新选项。--llm 用 nargs="?"：裸 --llm 仍是 True，旧路径一个字都不用改。"""
     parser.add_argument("--ai", action="store_true",
-                        help="用 AI 分节撰写整页（每节过四道闸；没有后端时 exit 4）")
+                        help="用 AI 分节撰写整页（每节过五道内容闸；没有后端时 exit 4）")
     parser.add_argument("--llm", nargs="?", const=True, default=None, choices=CHOICES,
                         metavar="fake|openai|ollama|offline",
                         help="模型后端：fake 是离线桩（不联网，页头标注）；ollama 尚未实现；"

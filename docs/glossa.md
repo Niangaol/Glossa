@@ -78,7 +78,7 @@ python -m glossa facts --repo D:\path\to\repo --kind file --limit 20
 
 ## AI 讲解模式（`--ai`）
 
-程序版（不带 `--ai`）仍是上面那套七块骨架 + 组件库，两种模式**并存**、互不改写：`--ai` 只把「写正文」这一步交给模型，台账、四道闸、组装、CSS 全部走同一份实现，产物同样是单文件、离线、无脚本的 `explain.html`。
+程序版（不带 `--ai`）仍是上面那套七块骨架 + 组件库，两种模式**并存**、互不改写：`--ai` 只把「写正文」这一步交给模型，台账、五道内容闸、组装、CSS 全部走同一份实现，产物同样是单文件、离线、无脚本的 `explain.html`。
 
 ### 命令
 
@@ -107,17 +107,18 @@ python -m glossa explain --repo D:\path\to\repo --ai --llm openai --style cards 
 
 换风格只换 CSS 与图配色，`<main>` 里的 section / id / 序号 / class **逐字节不变**：实测同一仓的 magazine / report / cards 三页，把颜色值统一替换后 `<main>` 逐字节相同（PaperTrace 11,388 字符、SafeTrace 11,744 字符），`<style>` 三份互不相同。`--style` 写错值由 argparse 以 **2** 退出（实测 `--style bogus` → 2），不猜、也不悄悄回退默认。
 
-### 四道内容闸 + 体积上限：模型写的东西怎么才准上页
+### 五道内容闸 + 体积上限：模型写的东西怎么才准上页
 
-一节的 html 与图依次过 `gate_html → gate_numbers → gate_edges → gate_labels`（四道**内容**闸）；任何一关判死就丢掉那一样东西，并在本节留一句披露——**页面上不假装成功**。体积闸不判内容，只在写盘之前卡整页字节数（下面第 5 行）。
+一节的 html 与图依次过 `gate_html → gate_numbers → gate_edges → gate_labels → gate_values`（五道**内容**闸）；任何一关判死就丢掉那一样东西，并在本节留一句披露——**页面上不假装成功**。体积闸不判内容，只在写盘之前卡整页字节数（下面第 6 行）。
 
 | 闸 | 实现 | 拦什么 |
 | -- | ---- | ---- |
-| 安全闸 | `gates.gate_html`（gates.py:25） | `<script>/<style>/<iframe>/<object>/<embed>/<form>/<link>/<meta>/<base>` 删除、`on*` 事件属性删除、`<a href>` 的危险 scheme 只去 href；**AI 模式连内联 `style` 属性一起剥掉**（R506），程序版保留；`<img>` 只认干净的 `data:image/...`（R505），外链图片整张丢弃 |
-| 溯源闸 | `gates.gate_numbers`（gates.py:55） | 这一节素材包 `facts[].numbers` 之外的数字全部 `<mark class="untraced">` 黄标并计入页头；**空集不放行**（R507）：一个数字都不可溯源时全标，不是全放 |
-| 连线闸 | `gates.gate_edges`（gates.py:98） | 图里每条边必须是本节素材 `facts[].edges` 里真有的 `(from, to)`，复用 `patterns.validate_figure`；编的边丢弃并逐个披露 |
-| 标签闸 | `gates.gate_labels`（gates.py:81） | 图节点 label 必须是**人话**且能在本节素材原文里查到（R508）：`fact:` 开头或查不到的，整张图丢弃并披露（披露里不回声模型编的 label） |
-| 体积闸 | `gates.gate_size`（gates.py:120） | 全页只有一个上限：`gates.MAX_PAGE_BYTES = HTML_MAX_BYTES = 8,000,000` 字节（R499 唯一真源）；超了由 `assemble.build_page` 在**写盘之前**抛 `BuildError`（exit 2），不截断、不删旧页、不出半张页 |
+| 安全闸 | `gates.gate_html` | `<script>/<style>/<iframe>/<object>/<embed>/<form>/<link>/<meta>/<base>` 删除、`on*` 事件属性删除、`<a href>` 的危险 scheme 只去 href；**AI 模式连内联 `style` 属性一起剥掉**（R506），程序版保留；`<img>` 只认干净的 `data:image/...`（R505），外链图片整张丢弃 |
+| 溯源闸 | `gates.gate_numbers` | 这一节素材包 `facts[].numbers` 之外的数字全部 `<mark class="untraced">` 黄标并计入页头；**空集不放行**（R507）：一个数字都不可溯源时全标，不是全放 |
+| 连线闸 | `gates.gate_edges` | 图里每条边必须是本节素材 `facts[].edges` 里真有的 `(from, to)`，复用 `patterns.validate_figure`；编的边丢弃并逐个披露 |
+| 标签闸 | `gates.gate_labels` | 图上的 label 必须是**人话**且能在本节素材原文里查到（R508）：`fact:` 开头或整串/每个词都查不到的，整张图丢弃并披露（披露里不回声模型编的 label）。**节点、柱状、卡片三种数据一起查**（R515）——bars/cards 图的 `nodes` 是空的，只看 nodes 等于对它们完全失效 |
+| 数值闸 | `gates.gate_values` | 柱状图的值必须能在本节素材的 `numbers` 里核上（R516）：数值以文本印进 SVG，数字溯源闸只扫 html 扫不到图数据；编的那一条丢掉、其余照画，一条都核不上就整张图丢弃 |
+| 体积闸 | `gates.gate_size` | 全页只有一个上限：`gates.MAX_PAGE_BYTES = HTML_MAX_BYTES = 8,000,000` 字节（R499 唯一真源）；超了由 `assemble.build_page` 在**写盘之前**抛 `BuildError`（exit 2），不截断、不删旧页、不出半张页 |
 
 桩自己的图也守同一条规矩：该节素材凑够 **3 组以上「人话标签 + 真数字」**（语言文件数、各包/各节计数）时，第 1 张图画 `pattern="bars"`（最多 6 条，按值降序，值只取 `facts[].numbers`、标签写「json 文件」这种人话，绝不印 `fact:`）；凑不够就退回 layered / cards，页面照出、不崩（R513）。
 
