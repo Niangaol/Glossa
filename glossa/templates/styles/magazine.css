@@ -32,16 +32,16 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zhu); outline-
 header.page { border-bottom: 2px solid var(--ink); padding-bottom: 18px; }
 h1 { font-family: var(--serif); font-size: 38px; line-height: 1.24; letter-spacing: -0.5px; margin: 0 0 10px; }
 p.src, p.muted { color: var(--muted); font-size: 13px; font-family: var(--mono); }
-main { counter-reset: section; padding-top: 8px; }
+main { padding-top: 8px; }
 h2 {
   font-family: var(--serif); font-size: 26px; line-height: 1.4; letter-spacing: -0.5px;
-  margin: 46px 0 12px; counter-increment: section;
+  margin: 46px 0 12px;
 }
-h2::before {
-  content: counter(section, decimal-leading-zero) " / ";
+h2 .no {
   color: var(--zhu); font-family: var(--mono); font-size: 13px; letter-spacing: 0.08em;
-  vertical-align: 6px; margin-right: 4px;
+  vertical-align: 6px; margin-right: 6px;
 }
+h2 .no::after { content: " /"; }
 h3 { font-family: var(--serif); font-size: 18px; line-height: 1.6; margin: 30px 0 8px; }
 .lead {
   font-family: var(--serif); font-size: 19px; line-height: 1.8; color: var(--ink-soft);

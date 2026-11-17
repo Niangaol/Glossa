@@ -152,3 +152,17 @@ def test_layout_has_the_three_keys_with_typed_values():
     first = styles.layout("magazine")
     first["max_width"] = 1
     assert styles.layout("magazine")["max_width"] != 1
+
+def test_h2_numbers_come_from_markup_not_css_counters():
+    """A5 把章节序号写进正文（<span class="no">01</span>）。
+
+    CSS 若再自带 counter 编号，真页会出现「01 / 01 标题」的双序号（A5 报告 §3.1 A5-③）。
+    结构类名也统一成 section.sec，不许留下 A2 草案里的 section.blk。
+    """
+    for name in NAMES:
+        css = _css(name)
+        assert "counter-increment: section" not in css, name
+        assert "h2::before" not in css, name
+        assert "section.blk" not in css, name
+    for name in ("magazine", "cards"):
+        assert "h2 .no" in _css(name), name

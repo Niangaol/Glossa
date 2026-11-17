@@ -13,9 +13,10 @@ gate_edges 把「允许的 (from, to) 对」包成一条合成事实再交给 va
 
 from __future__ import annotations
 
+from papertrace.constants import HTML_MAX_BYTES
 from glossa.explain import guard, patterns
 
-MAX_PAGE_BYTES = 2_000_000
+MAX_PAGE_BYTES = HTML_MAX_BYTES
 _ALLOWED = "fact:gates:allowed"
 
 

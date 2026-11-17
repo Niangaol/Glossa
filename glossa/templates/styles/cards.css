@@ -31,17 +31,17 @@ a:focus-visible, summary:focus-visible { outline: 2px solid var(--zhu); outline-
 header.page { border-bottom: 4px solid var(--ink); padding-bottom: 16px; }
 h1 { font-family: var(--serif); font-size: 36px; line-height: 1.26; letter-spacing: -0.4px; margin: 0 0 10px; }
 p.src, p.muted { color: var(--muted); font-size: 13px; font-family: var(--mono); }
-main { counter-reset: section; padding-top: 6px; }
+main { padding-top: 6px; }
 h2 {
   font-family: var(--serif); font-size: 25px; line-height: 1.4; letter-spacing: -0.3px;
-  margin: 42px 0 14px; counter-increment: section; display: flex; align-items: baseline; gap: 10px;
+  margin: 42px 0 14px; display: flex; align-items: baseline; gap: 10px;
 }
-h2::before {
-  content: counter(section, decimal-leading-zero); color: var(--zhu);
+h2 .no {
+  color: var(--zhu);
   font-family: var(--mono); font-size: 13px; letter-spacing: 0.06em;
   border: 1px solid var(--frame); padding: 0 6px; line-height: 1.7;
 }
-section.blk + section.blk { margin-top: 8px; padding-top: 4px; border-top: 1px dashed var(--frame); }
+section.sec + section.sec { margin-top: 8px; padding-top: 4px; border-top: 1px dashed var(--frame); }
 h3 { font-family: var(--serif); font-size: 18px; font-weight: 600; margin: 28px 0 8px; }
 .lead { font-family: var(--serif); font-size: 18px; line-height: 1.8; color: var(--ink-soft);
   margin: 18px 0 22px; }
