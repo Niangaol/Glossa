@@ -6,7 +6,8 @@ AI 只选范式 + 填内容；节点、连线、分组是它的输入，画线�
 规则（派发书 §3，逐条有测试）：未知 pattern 抛 BuildError 并列出六种；节点缺 id / 重复 id 抛
 BuildError；节点超过 60 截断到 60 并写「另有 N 个节点未画」；边的 fact 不在 doc["facts"] 丢边并
 计数；fact 在但核不上（或没有可核对的边）同样丢边、计数、点名；返回的 clean_fig 只留
-pattern/caption/nodes/edges/groups。口径是「宁缺不编」：核不上就当没说，绝不画查不到出处的线。
+pattern/caption/nodes/edges/groups（R512 另加 bars/cards 数据数组，没有这个键就不加）。
+口径是「宁缺不编」：核不上就当没说，绝不画查不到出处的线。
 """
 
 from __future__ import annotations
@@ -14,6 +15,9 @@ from __future__ import annotations
 from papertrace.exceptions import BuildError
 
 MAX_NODES = 60
+MAX_BARS, MAX_CARDS = 12, 8      # R512：AI 给的柱状/卡片数据也有上限，超了截断并记一句
+_DATA = {"bars": (MAX_BARS, ("label",), ("value",), "柱状数据", "条"),
+         "cards": (MAX_CARDS, ("label", "path", "id"), ("text", "summary"), "卡片", "张")}
 _A = {"id": "a.ts", "label": "a.ts", "fact": "fact:file:a.ts"}
 _B = {"id": "b.ts", "label": "b.ts", "fact": "fact:file:b.ts"}
 _EDGE = {"from": "a.ts", "to": "b.ts", "label": "import", "fact": "fact:file:a.ts"}
@@ -113,6 +117,38 @@ def _edge_verdict(facts: dict, index: dict, edge: dict) -> str:
     return ""
 
 
+def _clean_rows(fig: dict, key: str, notes: list[str]) -> list[dict] | None:
+    """R512：bars=[{label,value}]（≤12 条）、cards=[{label,text}]（≤8 张）。
+
+    没有这个键就返回 None（clean_fig 不加空数组，五键契约原样成立）；坏的那一条丢并记一句，
+    超限截断也记一句——数据是 AI 给的，宁可少画一条，也不替它编。
+    """
+    if key not in fig:
+        return None
+    limit, label_keys, other_keys, name, unit = _DATA[key]
+    kept: list[dict] = []
+    for pos, row in enumerate(_list_field(fig, key), 1):
+        row = row if isinstance(row, dict) else {}
+        label = next((row[field] for field in label_keys
+                      if isinstance(row.get(field), str) and row[field].strip()), "")
+        other = next((row.get(field) for field in other_keys
+                      if row.get(field) is not None and row.get(field) != ""), None)
+        if not label:
+            notes.append("%s第 %d 项没有名字（%s），已丢弃" % (name, pos, "/".join(label_keys)))
+        elif key == "bars" and (isinstance(other, bool) or not isinstance(other, (int, float))):
+            notes.append("柱状数据「%s」的 value 不是数字（%r），已丢弃" % (label, other))
+        elif key == "cards" and (not isinstance(other, str) or not other.strip()):
+            notes.append("卡片「%s」没有 text，已丢弃" % (label,))
+        else:
+            kept.append({"label": label, "value": other} if key == "bars"
+                        else {"label": label, "text": other.strip()})
+    if len(kept) > limit:
+        notes.append("%s共 %d %s，只画前 %d %s：另有 %d %s未画"
+                     % (name, len(kept), unit, limit, unit, len(kept) - limit, unit))
+        kept = kept[:limit]
+    return kept
+
+
 def validate_figure(doc: dict, fig: dict) -> tuple[dict, int, list[str]]:
     """校验并清洗一张图，返回 (clean_fig, dropped_edges, notes)。"""
     if not isinstance(fig, dict):
@@ -157,4 +193,8 @@ def validate_figure(doc: dict, fig: dict) -> tuple[dict, int, list[str]]:
         "edges": clean_edges,
         "groups": [dict(group) for group in _list_field(fig, "groups") if isinstance(group, dict)],
     }
+    for key in ("bars", "cards"):               # R512：柱状/卡片数据放行（没有就不加键）
+        rows = _clean_rows(fig, key, notes)
+        if rows is not None:
+            clean[key] = rows
     return clean, dropped, notes

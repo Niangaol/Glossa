@@ -1,19 +1,21 @@
-"""A3：段素材包（pack.py）——把 repo.json 剪成「一节够用」的小包。
+"""A3/R511：段素材包（pack.py）——把 repo.json 剪成「一节够用」的小包。
 
-模型只看得见包里的东西：repo 摘要、这一节的题目与目标、点名的若干条事实、六张图的字段契约、几个文件的原文片段——包外的一律看不见，也就编不出来。
+模型只看得见包里的东西：repo 摘要、这一节的题目与目标、点名的若干条事实、六张图的字段
+契约、几个文件的原文片段——包外的一律看不见，也就编不出来。
 
-口径（派发书 §1）：sources 只读 doc["files"] 里真存在的路径（别处一个字节都不碰，secrets_seen
-即便混进 files 也绝不读）；单段最多 MAX_SOURCES 个片段、每段 MAX_SOURCE_LINES 行；包超过
-MAX_PACK_BYTES 就先砍 sources、再缩图事实的边、最后砍 facts，并置 truncated（悄悄缩水比明说
-截断更糟）。pack_for_plan 是「分几节」那次的包：三样摘要 + 按种类抽样的事实（R501：每组至少
-1 条、逐层轮转补到 60 条或 8000 字节，fact:graph 带 edges 与 has_edges），不读原文。
+口径：sources 只读 doc["files"] 里真存在的路径（别处一个字节都不碰，secrets_seen 即便混进
+files 也绝不读）；单段最多 MAX_SOURCES 个片段、每段 MAX_SOURCE_LINES 行；sources 另有份额
+预算（最多占包 40% = 3200 字节，正常取舍不写 truncated），裁剪在 pack_trim.py；只有真到
+8000 字节上限、得动 facts 时才置 truncated 并写一句应急说明（R511）。
+pack_for_plan 是「分几节」那次的包：三样摘要 + 按种类抽样的事实（R501：每组至少 1 条、
+逐层轮转补到 60 条或 8000 字节，fact:graph 带 edges 与 has_edges），不读原文。
 """
 
 from __future__ import annotations
 
-import json
 import pathlib
 
+from glossa.explain import pack_trim
 from glossa.explain.patterns import PATTERNS
 
 MAX_PACK_BYTES = 8000
@@ -25,7 +27,6 @@ MAX_EDGES = 40          # 段包里图事实附带的边：够模型选点，不
 MAX_PLAN_EDGES = 8      # 分节那次只带这么多条边：40 条边就能吃掉整个 8000 字节预算（R501）
 _KINDS = ("totals", "files", "graph", "pkg", "project", "entry", "degraded", "file",
           "symbol", "source", "bonus", "import", "namespace", "excluded")
-_TRUNC_NOTE = "素材包超过 %d 字节，已先砍 sources、再缩图事实的边、最后砍 facts" % MAX_PACK_BYTES
 
 
 def _repo(doc: dict) -> dict:
@@ -120,30 +121,12 @@ def _sources(doc: dict, section: dict, root, notes: list[str]) -> list[dict]:
     return out
 
 
-def _size(pack: dict) -> int:
-    """按 UTF-8 实际字节算——中文一字三字节，按字符数算会把上限算松。"""
-    return len(json.dumps(pack, ensure_ascii=False).encode("utf-8"))
-
-
-def _trim(pack: dict) -> bool:
-    """超限就先砍 sources、再缩图事实的边（单项最大）、最后砍 facts。砍过返回 True。"""
-    dropped = False
-    while _size(pack) > MAX_PACK_BYTES and pack["sources"]:
-        pack["sources"].pop()
-        dropped = True
-    while _size(pack) > MAX_PACK_BYTES and any(len(row.get("edges") or ()) > 1 for row in pack["facts"]):
-        row = next(row for row in pack["facts"] if len(row.get("edges") or ()) > 1)
-        row["edges"] = row["edges"][:len(row["edges"]) // 2]   # 每次砍半：别为字节把图事实丢掉
-        dropped = True
-    while _size(pack) > MAX_PACK_BYTES and pack["facts"]:
-        pack["facts"].pop()
-        dropped = True
-    return dropped
-
-
 def build_pack(doc: dict, section: dict, root, *, extra=None) -> dict:
     """装配一节的素材包；extra 原样并入（例如数据闸的提示），同样计入字节上限。"""
     notes: list[str] = []
+    sources, cut = pack_trim.budget_sources(_sources(doc, section, root, notes))
+    if cut:                                     # 份额内截断是正常取舍：一句说明，不算截断
+        notes.append(pack_trim.share_note(len(sources)))
     pack = {
         "repo": _repo(doc),
         "section": {"index": int(section.get("index") or 0),
@@ -153,15 +136,22 @@ def build_pack(doc: dict, section: dict, root, *, extra=None) -> dict:
         "patterns": [{"name": name, "fields": list(row.get("fields") or []),
                       "summary": str(row.get("summary") or "")}
                      for name, row in PATTERNS.items()],
-        "sources": _sources(doc, section, root, notes),
+        "sources": sources,
     }
     if extra:
         pack.update(extra)
-    truncated = _trim(pack)
-    pack["truncated"] = truncated
-    pack["notes"] = notes + ([_TRUNC_NOTE] if truncated else [])
-    if _size(pack) > MAX_PACK_BYTES:      # 说明与标志也要算进上限：包本身绝不能超
-        _trim(pack)
+    edges = pack_trim.trim_edges(pack, MAX_PACK_BYTES)   # 边是「够选点」的信息：先砍半
+    if edges:
+        notes.append(pack_trim.edge_note(*edges))
+    dropped = pack_trim.trim(pack, MAX_PACK_BYTES)
+    for _round in range(4):                     # 说明自己也占字节：加进去之后再量一次
+        cut_facts = any(dropped.values())
+        pack["truncated"] = cut_facts           # 只有真要动 facts 才算截断（R511）
+        pack["notes"] = notes + ([pack_trim.emergency_note(dropped, MAX_PACK_BYTES)] if cut_facts else [])
+        if pack_trim.size(pack) <= MAX_PACK_BYTES:
+            break
+        again = pack_trim.trim(pack, MAX_PACK_BYTES)
+        dropped = {key: dropped[key] + again[key] for key in dropped}
     return pack
 
 
@@ -193,7 +183,7 @@ def pack_for_plan(doc: dict) -> dict:
     pack = {"repo": _repo(doc), "totals": dict(doc.get("totals") or {}),
             "graph": _graph_summary(doc), "has_edges": bool(edges),
             "facts": [_fact(rows, fact_id, edges) for fact_id in _sampled(rows)], "truncated": False}
-    while _size(pack) > MAX_PACK_BYTES and pack["facts"]:   # 先到者为准：60 条或 8000 字节
+    while pack_trim.size(pack) > MAX_PACK_BYTES and pack["facts"]:   # 先到者为准：60 条或 8000 字节
         pack["facts"].pop()
         pack["truncated"] = True
     return pack

@@ -28,6 +28,8 @@ _RULES = (
     "4. 数字只能使用 facts[].numbers 里出现过的。",
     "5. 每条连线必须带 fact，且必须是 facts 里给出的边。",
     "6. 输出严格 JSON，不要 markdown 围栏外的解释。",
+    "7. bars 的数据写在 bars: [{label, value}]（≤12 条，value 必须数字）；"
+    "cards 写在 cards: [{label, text}]（≤8 条，两项都要非空）。",
 )
 SYSTEM = "你是给代码仓库写讲解页的作者：只讲查得到的事，讲清楚。\n约束：\n" + "\n".join(_RULES)
 

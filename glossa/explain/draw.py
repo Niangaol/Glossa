@@ -2,8 +2,9 @@
 
 输入是 A2 的 clean_fig（validate_figure 洗过：pattern/caption/nodes/edges/groups），
 这里只管坐标、箭头、颜色与标签截断——AI 不写一个坐标。六种范式与 patterns.PATTERNS
-同名：layered 按 groups 横向分层、flow 从左到右逐步、matrix 两列网格、tree 自顶向下、
-bars 单列条形清单、cards 两列卡片。（派发书里的 layers/chain/radial 在 A2 契约里不存在。）
+同名：layered 按 groups 横向分层、flow 从左到右逐步、matrix 两列网格、tree 自顶向下；
+bars 与 cards 有数据数组时按 R512 画真条形/两列卡片（draw_bars.py），没数据就退回清单形态。
+（派发书里的 layers/chain/radial 在 A2 契约里不存在。）
 
 配色不写死：STYLES 只带版式参数，颜色是 CSS :root 的令牌，所以解析
 styles.load_css(style) 的墨/纸/主色/次色再落到 SVG，代码里没有 hex。同一输入两次输出
@@ -13,10 +14,10 @@ styles.load_css(style) 的墨/纸/主色/次色再落到 SVG，代码里没有 h
 
 from __future__ import annotations
 
-import html
 import re
 
 from glossa.explain import styles
+from glossa.explain.draw_bars import bars_svg, cards_svg, clip as _clip, esc as _esc, text as _text
 from glossa.explain.patterns import PATTERNS
 
 PAD, GAP, BOX_H, STEP, MIN_BOX = 16, 18, 30, 40, 40
@@ -25,10 +26,6 @@ _TOKEN = re.compile(r"(--[a-z0-9-]+)\s*:\s*(#[0-9a-fA-F]{3,8})\s*;")
 _ALIASES = {"ink": ("--ink",), "paper": ("--paper", "--bg"),
             "accent": ("--zhu", "--accent", "--tone"),
             "secondary": ("--dai", "--accent2", "--song")}
-
-
-def _esc(text) -> str:
-    return html.escape(str(text), quote=True)
 
 
 def palette(style: str) -> dict:
@@ -40,17 +37,6 @@ def palette(style: str) -> dict:
     if not all(out.values()):
         raise ValueError("风格 %r 的 CSS 缺少墨/纸/主色/次色之一" % (style,))
     return out
-
-
-def _clip(text: str, limit: int) -> str:
-    """按显示宽度截断并加省略号：汉字/全角算 2 宽、其它算 1（limit 是宽度单位）。"""
-    text, kept, used = str(text), [], 0
-    for char in text:
-        used += 2 if ord(char) > 0x2E7F else 1
-        if used > limit:
-            return "".join(kept) + "…"
-        kept.append(char)
-    return text
 
 
 def _chunks(items: list, size: int) -> list:
@@ -139,11 +125,6 @@ def _anchors(src: dict, dst: dict) -> tuple:
             (tx, dst["y"] if ty > sy else dst["y"] + dst["h"]))
 
 
-def _text(x: int, y: int, size: int, text: str, color: str) -> str:
-    return ('<text x="%d" y="%d" font-size="%d" fill="%s" text-anchor="middle">%s</text>'
-            % (x, y, size, color, _esc(text)))
-
-
 def _svg(pattern: str, width: int, height: int, boxes: list, edges: list, pal: dict,
          aria: str) -> str:
     """画布：marker 定义 + 边 + 方框 + 文字；除了 xmlns 不引任何外链（GC23）。"""
@@ -181,8 +162,13 @@ def draw_figure(fig: dict, style: str, *, width: int = 720) -> str:
         raise ValueError("不认识的图表范式 %r；只有六种：%s" % (pattern, "、".join(PATTERNS)))
     if int(width) < 200:
         raise ValueError("图表宽度至少 200px，收到 %r" % (width,))
-    canvas_w, height, boxes = _layout(fig, pattern, int(width))
     caption = str(fig.get("caption") or "")
+    aria = caption or "图表：%s" % pattern
+    data = fig.get("bars") if pattern == "bars" else fig.get("cards")
+    if data and pattern in ("bars", "cards"):    # R512：有数据就画真条形/真卡片
+        svg = (bars_svg if pattern == "bars" else cards_svg)(data, int(width), palette(style), aria)
+    else:                                        # 缺数据退回清单形态，不许崩
+        canvas_w, height, boxes = _layout(fig, pattern, int(width))
+        svg = _svg(pattern, canvas_w, height, boxes, fig.get("edges") or [], palette(style), aria)
     return ('<figure class="fig" data-pattern="%s">%s<figcaption>%s</figcaption></figure>'
-            % (pattern, _svg(pattern, canvas_w, height, boxes, fig.get("edges") or [],
-                             palette(style), caption or "图表：%s" % pattern), _esc(caption)))
+            % (pattern, svg, _esc(caption)))

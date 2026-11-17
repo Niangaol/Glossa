@@ -101,12 +101,13 @@ def test_oversize_pack_is_truncated_under_the_byte_cap(work):
         doc, {"index": 1, "title": "t", "goal": "", "sources": paths}, work)
     assert out["truncated"] is True
     assert len(json.dumps(out, ensure_ascii=False).encode("utf-8")) <= pack_mod.MAX_PACK_BYTES
-    assert len(out["sources"]) < len(paths)                     # 先砍 sources 尾部
-    assert len(out["facts"]) == len(facts) or len(out["sources"]) == 0
+    assert len(out["sources"]) < len(paths)                     # sources 按份额截断
+    assert len(out["facts"]) < len(facts)                       # 份额之后仍超限：砍事实并置 truncated
     assert any("字节" in note for note in out["notes"])
 
 
-def test_facts_are_dropped_after_sources_are_gone(work):
+def test_facts_are_dropped_once_the_sources_have_paid_their_share(work):
+    """R511 改了顺序：源码先按 40% 份额留好，超限时砍的是事实，不是把源码全弃掉。"""
     paths = ["g%d.py" % i for i in range(6)]
     for path in paths:
         _write(work, path, ["行 %d" % i for i in range(40)])
@@ -114,8 +115,9 @@ def test_facts_are_dropped_after_sources_are_gone(work):
              for i in range(12)}
     doc = _doc(paths, facts=facts)
     out = pack_mod.build_pack(doc, {"index": 1, "title": "t", "goal": "", "sources": paths}, work)
-    assert out["truncated"] is True and out["sources"] == []
+    assert out["truncated"] is True
     assert 0 < len(out["facts"]) < len(facts)
+    assert len(out["sources"]) > 0, "源码已按份额留好，砍的该是事实"
     assert len(json.dumps(out, ensure_ascii=False).encode("utf-8")) <= pack_mod.MAX_PACK_BYTES
 
 
@@ -173,7 +175,7 @@ def test_pack_for_plan_carries_summaries_and_sampled_facts(work):
     assert plan["graph"] == {"level": "file", "nodes": 2, "edges": 1, "project_edges": 0,
                              "cycles": 0, "layers": 2, "unreachable": 0, "truncated": False}
 def test_graph_fact_keeps_edges_when_the_pack_is_over_budget(work):
-    """PokemonData 的真形：边很长，整条图事实单体就超 8KB——砍边，别丢事实。"""
+    """PokemonData 的真形：边很长，整条图事实单体就超 8KB——砍边，别丢事实（R511：这算预算）。"""
     paths = ["h%d.py" % i for i in range(6)]
     for path in paths:
         _write(work, path, ["第 %02d 行：%s" % (i, "内容" * 16) for i in range(1, 41)])
@@ -184,9 +186,10 @@ def test_graph_fact_keeps_edges_when_the_pack_is_over_budget(work):
                edges=edges)
     out = pack_mod.build_pack(
         doc, {"index": 1, "title": "t", "goal": "", "facts": ["fact:graph"], "sources": paths}, work)
-    assert out["truncated"] is True and out["sources"] == []       # sources 先走
+    assert out["truncated"] is False, "砍边是预算内的取舍，事实一条没少（R511）"
     assert [row["id"] for row in out["facts"]] == ["fact:graph"]   # 图事实不许被整条丢掉
     assert 0 < len(out["facts"][0]["edges"]) < pack_mod.MAX_EDGES  # 边被砍半到装得下
     assert out["facts"][0]["has_edges"] is True
+    assert any("图边" in note or "图的边" in note for note in out["notes"]), out["notes"]
     assert len(json.dumps(out, ensure_ascii=False).encode("utf-8")) <= pack_mod.MAX_PACK_BYTES
 
