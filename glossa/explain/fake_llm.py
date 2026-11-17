@@ -7,6 +7,9 @@ facts[].edges。所以桩跑出来的页面天然 0 处未溯源：四道闸在�
 
 R508：图节点的 label 必须是读者看得懂的人话（成员名 / 文件名），且必须是这一节素材里
 真能查到的原文子串——桩绝不把 fact:… 印到图上，A4 的标签闸会整张图丢弃。
+R513：页面的第一张图（桩从第 1 节的图开始算）在那节素材凑够三组「人话标签 + 真数字」时
+改画条形图：数字取自 facts[].numbers，标签是语言名/量词这类人话，一个 fact: 都不印；
+凑不够三组就原样退回 layered / cards。
 
 桩永不进生产默认路径：只有 --llm fake（或测试显式注入）才会用到，页头因此必须标注
 「本页由离线桩生成，未调用真实模型」——那句 note 由 ai_pipeline.deviation 给出。
@@ -39,6 +42,11 @@ _GROUPS = (   # (id 匹配, 节标题)：同类归一节，绝不凭空造 id
     (("fact:excluded", "fact:degraded", "fact:bonus"), "没看清的地方"),
 )
 _EXTRA = ("还有什么", "再补一点", "剩下的素材")
+_BAR_MIN, MAX_BAR = 3, 6        # R513：凑够三组数字才画条形；一张图最多六条
+_LANG = re.compile(r"个文件（([^）]*)）")          # totals 里的语言明细：json 3、typescript 9
+_LANG_ROW = re.compile(r"([A-Za-z][\w+#.-]*)\s+([0-9]+)")
+_UNIT = re.compile(r"([0-9]+)\s*(?:个|条|张|名)?\s*(开发依赖|不可达文件|超限文件|字节|文件|符号|"
+                   r"依赖|脚本|项目|入口|节点|包|边|环|层|行|import)")
 
 
 def _esc(text) -> str:
@@ -98,8 +106,28 @@ def _label(raw) -> str:
     return text.rstrip("/").rsplit("/", 1)[-1] or str(raw or "").strip()
 
 
-def _figure(facts: list) -> dict:
-    """一张图：有事实边就画分层图（每条边都来自 facts[].edges），没边就画事实卡片。"""
+def _bar_rows(facts: list) -> list:
+    """R513：语言文件数优先，其次通用计数；同一档凑够三组才作数，最多六条。"""
+    tiers = [[], []]
+    for row in facts:                     # 值只许是这条事实 numbers 里的数，台账没记的不画
+        nums, text = row.get("numbers") or (), str(row.get("text") or "")
+        detail = "".join(_LANG.findall(text))          # totals 里的「json 3、typescript 9」
+        tiers[0] += [{"label": name + " 文件", "value": int(num)}
+                     for name, num in _LANG_ROW.findall(detail) if int(num) in nums]
+        tiers[1] += [{"label": unit, "value": int(num)}
+                     for num, unit in _UNIT.findall(text) if int(num) in nums]
+    for rows in tiers:                    # 先出现的档先试；标签去重、0 与负数不占一行
+        kept = list({row["label"]: row for row in rows if row["value"] > 0}.values())
+        kept.sort(key=lambda row: -row["value"])   # 大的在前：要砍也只砍最小的那几条
+        if len(kept) >= _BAR_MIN:
+            return kept[:MAX_BAR]
+    return []
+
+
+def _figure(facts: list, bars=None) -> dict:
+    """一张图：给条形数据就画 bars（R513）；否则有事实边画分层图、没边画事实卡片。"""
+    if bars:
+        return {"pattern": "bars", "nodes": [], "bars": list(bars), "caption": "这一节的数字并排比大小"}
     found = [(str(e.get("from") or ""), str(e.get("to") or ""), row.get("id"))
              for row in facts for e in (row.get("edges") or ()) if isinstance(e, dict)]
     edges, seen = [], set()
@@ -159,11 +187,12 @@ class FakeLLM:
             if self.bad_json and self.sections == 1:
                 return '{"title": "坏掉的一节", "html": "<p class=\\"lead\\">这不是 JSON'
             pack = _load(text)
-            figures = _figure(_safe(pack))
+            facts = _safe(pack)
+            figures = _figure(facts, _bar_rows(facts) if self.sections == 1 else [])
             return json.dumps({
                 "title": str((pack.get("section") or {}).get("title") or ""),
                 "html": _body(pack, self.sections, self.untraced),
-                "figures": [figures] if figures.get("nodes") else [],
+                "figures": [figures] if figures.get("nodes") or figures.get("bars") else [],
                 "notes": [],
             }, ensure_ascii=False)
         raise BuildError("离线桩只认两种提示词（分节 / 写一节）；收到开头：%r" % text[:80])
