@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ title }}</title>
+<style>{{ css | safe }}</style>
+</head>
+<body>
+<div class="page">
+<header class="page-hd page">
+  <h1>{{ title }}</h1>
+  <p><span class="badge {{ mode }}">{{ mode_text }}</span> {{ badge }}</p>
+{%- if note %}
+  <p class="src">{{ note }}</p>
+{%- endif %}
+</header>
+{%- if toc %}
+<nav class="toc" aria-label="本页目录">
+{{ toc | safe }}
+</nav>
+{%- endif %}
+<main>
+{{ body | safe }}
+</main>
+<footer class="page src">
+{%- for line in disclosures %}
+  <p>{{ line }}</p>
+{%- endfor %}
+</footer>
+</div>
+</body>
+</html>
