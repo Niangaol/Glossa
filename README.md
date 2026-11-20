@@ -133,7 +133,7 @@ set PAPERTRACE_LLM=deepseek-chat
 结构同构不命中，走每项一条的回退口径）——**空清单就是诚实的答案**，不是 bug，也不该为了
 「好看」把线连上。
 
-分档公式写死在代码里（`papertrace/spine.py`）：`a = 0.30·s_retr + 0.50·s_judge + 0.20·s_struct`，
+分档公式写死在代码里（`papertrace/spine/spine.py`）：`a = 0.30·s_retr + 0.50·s_judge + 0.20·s_struct`，
 `c = sigmoid(4·(a−0.5))`；`c≥0.75` 绿实线、`0.45≤c<0.75` 黄虚线、`c<0.45` 不连线；
 **U1 门：绿线还要求 `s_struct ≥ 0.5`**。
 
@@ -346,7 +346,7 @@ set PAPERTRACE_LLM=deepseek-chat
   （逐层展开，R161：结构路径下每个同构组各出一条，回退路径每项一条）。
   `code_expr_range` 记的是 **trace 节点 id 区间**（单个 `root/@037`，多个 `root/@037..root/@045`，
   按结构信号 `pairs` 的 node_id 首尾），**仍是纯节点 id 区间、不换成 `file:line`**：换格式会让
-  `index.html` 的彩线全部静默消失（`render_html.py:98` 拿它当节点 id 用），真实行号在
+  `index.html` 的彩线全部静默消失（`render/html.py:98` 拿它当节点 id 用），真实行号在
   `nodes[].loc` 上——**算子节点的 `loc` 现在是真实 `file:line`**（M1b 已落地）；M1a 时它全是
   `model.GPT` 这类模块路径（编行号就是造假）。HTML 的算子行显示 `basename:line`，完整路径在
   `title` 里。**路径已相对化**：算子 `loc` 写出时转成相对构建时工作目录的路径（分隔符统一 `/`，
@@ -372,7 +372,7 @@ set PAPERTRACE_LLM=deepseek-chat
   可选 `code_group`（组 id，形如 `root/transformer.h.0.attn`，即「顶层模块前缀 + 点式单段
   路径」；回退路径不写这个键，schema 里声明但不进 required）。代价如实说，judge 调用数要分
   两条路径算（R178）：结构同构命中时，每个「公式项 × 同构组」的候选只有 1 个节点，
-  `judge_first_yes`（`papertrace/spine_claims.py:36`）恰好问 1 次——夹具 `n_layer=2` 时
+  `judge_first_yes`（`papertrace/spine/claims.py:36`）恰好问 1 次——夹具 `n_layer=2` 时
   4 项 × 2 组 = 8 anchor 即 8 次；结构不命中走回退路径时，候选由
   `papertrace/align/candidates.py` 产出（每项至多 `per_term_limit=3`、全局至多
   `total_limit=12`），每项 1..3 次、全局最多 12 次，问到第一个 yes 就停。anchor 数与
@@ -407,7 +407,7 @@ anchor 是「归属」断言——这个公式项的工作由哪个算子节点�
   同时是两个公式项的实现，那是错的，不是「保留可能性」。
 - **跨公式单元允许共享**：不同单元的公式本来就是不同的事，同一个算子被两个单元各自认领没有矛盾。
 - 候选生成器（`papertrace/align/candidates.py`）**仍然不去重**——它是纯函数、不知道谁被认领；
-  唯一性由 `papertrace/spine_claims.py` 在编排层执行。
+  唯一性由 `papertrace/spine/claims.py` 在编排层执行。
 - 候选被前面项占尽的项会落进 `unresolved`，原因写「被同一公式单元里更早的公式项认领」——
   与「根本没有候选」是**两种不同**的文案，用户分得清是哪种。
 
@@ -476,14 +476,14 @@ python -m papertrace build --repo path\to\repo --entry model:build_model --paper
 
 - **符号台账**（`symbols.code`，5 条）：`B`/`T`/`D`/`H`/`Dh` 五个冻结符号名。**`value` 是
   实例值、`defined_at` 指类默认值所在行**，两者本来就不是一回事（同「字段约定」里的
-  `symbols` 条）：`B=2`（`papertrace/build_trace.py:20` 的 `DEFAULT_BATCH = 2`）、
+  `symbols` 条）：`B=2`（`papertrace/build/trace.py:20` 的 `DEFAULT_BATCH = 2`）、
   `T=16`（`defined_at` 指 `tests/fixtures/nanogpt/model.py:20` 那行的类默认 1024，
   值取 `build_model()` 实际传的 16）、`D=32`（`model.py:24`，类默认 768，值取 32）、
   `H=4`（`model.py:23`，类默认 12，值取 4）、`Dh=8`（派生量 `D // H`，算式行
   `model.py:65` 的 `C // self.n_head`）。它记的是**配置超参**，运行时形状仍只看
   `nodes[].shapes` 与 `meta.runtime`；HTML 第 ⑤ 块会把这张表画出来。
 - **模块角色表**（`analysis.modules`，34 条）：每个模块一个角色 + 一条**点名判据**的
-  `evidence`。角色是冻结的**十种**枚举（`papertrace/analyze_roles.py` 的 `ROLES`，
+  `evidence`。角色是冻结的**十种**枚举（`papertrace/analyze/roles.py` 的 `ROLES`，
   顺序是 schema enum 的固定写法，**不是**判据优先级；判据优先级见下文）：
   `attention` / `mlp` / `layernorm` / `embedding` / `linear` /
   `activation` / `dropout` / `residual` / `stage` / `unknown`。判据只认**直接子节点里
@@ -522,7 +522,7 @@ python -m papertrace build --repo tests/fixtures/nanogpt --out output/demo/code-
   计数与注册 buffer**（fx 层把 BUFFER 也标成 param），与 torch 的
   `unique named_parameters` 口径不同——同一份共享权重挂在多个模块下会被计多次，
   所以它**可能偏大**，是「按节点数」不是「按唯一权重数」。`trace.json` 的
-  `analysis.method` 就是这段口径的原文（与 `papertrace/analyze_metrics.py` 的
+  `analysis.method` 就是这段口径的原文（与 `papertrace/analyze/metrics.py` 的
   `METHOD_TEXT` 一致）。
 - **FLOPs 是粗估**：只对 `matmul`/`linear` 估算，公式 `2 × 输出元素数 × 输入最后一维`，
   未考虑转置语义与逐元素算子；随 batch / 序列长度**线性**变化，不是常数，别当精确值用。
@@ -557,7 +557,7 @@ python -m papertrace build --repo tests/fixtures/nanogpt --out output/demo/code-
   单下标形式。
 - **`_read_title` 是启发式**：从 .tex 里猜论文标题，猜不到就留空，不联网查、不编一个。
 - **角色是结构识别，自定义算子名会落 `unknown`**：判据只认冻结名单里的算子名
-  （`papertrace/analyze_roles.py` 的 `ROLES` 十种），自研算子、融合算子、改名算子都不在
+  （`papertrace/analyze/roles.py` 的 `ROLES` 十种），自研算子、融合算子、改名算子都不在
   名单里，一律记 `unknown` 并在 `evidence` 里写明「不在冻结名单里，按约定不猜」；
   `unknown` 不过滤、不补 0——它是诚实的答案，不是漏判。
 - **`est_flops` 是粗估**：只对 `matmul`/`linear` 按 `2 × 输出元素数 × 输入最后一维`

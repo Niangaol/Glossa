@@ -5,11 +5,11 @@
 symbols.code 与 analysis）→ `--paper` 不是 none 再接着接论文脊柱
 （attach_paper，复用同一个 model）→ 相对化 + schema 校验 → 落 trace.json →
 打印摘要 → 写单文件离线 HTML。本文件只负责把参数变成调用、把结果变成退出码；
-可读输出的排版都在 papertrace/report.py（本文件 ≤200 行的约束）。
+可读输出的排版都在 papertrace/render/report.py（本文件 ≤200 行的约束）。
 
-S9 的取舍（R79，与 papertrace/spine.py 记同一段）：论文脊柱要**模块实例**
+S9 的取舍（R79，与 papertrace/spine/spine.py 记同一段）：论文脊柱要**模块实例**
 （符号表要 mod.config 与定义点定位，结构信号要 config 的四个超参名），而
-`build_trace()` 只返回 trace dict、且 build_trace.py 一行不许改。所以
+`build_trace()` 只返回 trace dict、且 build/trace.py 一行不许改。所以
 build_trace 成功后用 `load_entry(args.repo, args.entry)` **再取一次**模块实例
 （实测 0.003s，相对 build_trace 的 2.760s 可忽略）——nodes/edges 仍来自第一次
 追踪，绝不为了拿模块而重新追踪，GC8 逐项不变；load_entry 抛异常按 BuildError
@@ -25,22 +25,22 @@ from pathlib import Path
 
 import jinja2
 
-from papertrace.build_trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
-from papertrace.code_analysis import analyze_code, empty_analysis
+from papertrace.build.trace import BuildError, build_trace, load_entry, repo_commit, skeleton_trace
+from papertrace.build.analysis import analyze_code, empty_analysis
 from papertrace.exceptions import RuntimeUnavailable, TraceSchemaError, TraceUnsupported
 from papertrace.exit_codes import MISSING_RUNTIME, UNIMPLEMENTED, UNTRACEABLE
 from papertrace.paths import leaked_absolute, relativize_doc
-from papertrace.render_html import write_html
-from papertrace.report import (
+from papertrace.render.html import write_html
+from papertrace.render.report import (
     print_build_summary,
     print_edges,
     print_fusion_warning,
     print_ops,
     print_overview,
 )
-from papertrace.report_dump import run_dump
-from papertrace.schema_validate import dump_trace, validate_trace
-from papertrace.spine import attach_paper
+from papertrace.render.dump import run_dump
+from papertrace.schema.validate import dump_trace, validate_trace
+from papertrace.spine.spine import attach_paper
 
 
 def build_parser() -> argparse.ArgumentParser:

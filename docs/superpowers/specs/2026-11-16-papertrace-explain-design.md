@@ -75,7 +75,7 @@
 - 为了「看起来讲全了」而放宽角色判据、隐藏 unknown、或把估算说成实测。
 - 讲解页引了外部 CSS/JS/字体/图片（离线打不开）。
 - 没配 key 时静默产出一版「看起来像模型写的」页面。
-- 动 `spine.html.j2` / `render_html.py` / `render_analysis.py` / `analyze_*.py` / `schema/trace.json`。
+- 动 `spine.html.j2` / `render/html.py` / `render/analysis.py` / `analyze_*.py` / `schema/trace.json`。
 
 ## 5. 架构
 
@@ -302,9 +302,9 @@ papertrace/cli_explain.py           explain 子命令 parser + run（~120）
 papertrace/cli.py                   +import +2 行分派（182 → ~190）
 docs/explain-agent.md               讲解技能包（给模型的操作手册）
 ```
-**禁改**：`render_html.py` / `render_analysis.py` / `render_symbols.py` / `render_terms.py` /
-`spine.html.j2` / `analyze_roles.py` / `analyze_metrics.py` / `code_analysis.py` / `schema/trace.json` /
-`build_trace.py` / `spine*.py` / `align/*` / `parse_*/*`。
+**禁改**：`render/html.py` / `render/analysis.py` / `render/symbols.py` / `render/terms.py` /
+`spine.html.j2` / `analyze/roles.py` / `analyze/metrics.py` / `build/analysis.py` / `schema/trace.json` /
+`build/trace.py` / `spine*.py` / `align/*` / `parse_*/*`。
 `ops_graph` 复用 `render_html._groups`：**只 import 调用，不改它**（它是私有函数，
 在 `comp_graph.py` 里 import 使用，不改名不动实现；需要复用口径时抄口径并注明来源）。
 **preflight 实测**：`_groups(doc)` 返回 **30 组布局字典**（键 `parent/width/height/nodes`，

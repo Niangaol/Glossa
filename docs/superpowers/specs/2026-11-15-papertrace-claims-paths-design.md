@@ -40,15 +40,15 @@ t0 与 t3 的候选**逐字相同**（都是三个 matmul）。而结构同构�
 
 - `papertrace/align/candidates.py:16-17` 当时明文写着：**不做跨 term 唯一性约束**，理由是「同一个算子可以同时
   服务两个公式项，去重等于编造唯一归属」。这条理由的成立前提是「共享真的存在」。见 §4 R135 的反驳。
-- `papertrace/spine.py:107-108` 逐项独立处理，term 之间**没有任何共享状态**；
-- `papertrace/spine.py:172-181` 的 `_judge_pairs` 按候选顺序问，第一个 yes 就返回。
+- `papertrace/spine/spine.py:107-108` 逐项独立处理，term 之间**没有任何共享状态**；
+- `papertrace/spine/spine.py:172-181` 的 `_judge_pairs` 按候选顺序问，第一个 yes 就返回。
 
 ### 1.3 路径都出现在哪
 
 | 字段 | 现在 | 来源 |
 |---|---|---|
 | `meta.repo.url` | `D:\AgentPrograms\PaperTrace\tests\fixtures\nanogpt` | `papertrace/cli.py:92` `repo_url=str(args.repo)` |
-| `meta.paper.source` | `.tex` 的本机路径 | `papertrace/spine.py` 的 `meta.paper` |
+| `meta.paper.source` | `.tex` 的本机路径 | `papertrace/spine/spine.py` 的 `meta.paper` |
 | `nodes[*].loc`（op） | `D:\...\model.py:147`（7 种，68 个算子挤在 `:147`） | `loc_from_stack_trace`（M1b） |
 | `nodes[*].loc`（module） | `model.GPT`（模块路径，**不是文件路径**） | `fx_modules.py` |
 | `symbols.code[*].defined_at` | `D:\...\model.py:65` 等 5 条 | `papertrace/symbols/code_table.py` |
@@ -60,8 +60,8 @@ schema 对这四个字段**只要求 `type: string`**（`schema/trace.schema.jso
 
 - 测试里**没有任何 `os.chdir`**（`grep chdir tests/` 零命中）→ pytest 的 cwd 一直是仓库根，相对路径在测试里
   可解析（`tests/test_spine_symbols.py:82-106` 会真的去打开 `defined_at`）。
-- `papertrace/spine.py` 正好 **200 行**（硬上限）→ 加逻辑必须先搬走等量代码。
-- `spine_fallback.py` 66 行、`candidates.py` 110 行有空间；`paths.py`/`spine_claims.py` 是**新文件**，不占名额。
+- `papertrace/spine/spine.py` 正好 **200 行**（硬上限）→ 加逻辑必须先搬走等量代码。
+- `spine/fallback.py` 66 行、`candidates.py` 110 行有空间；`paths.py`/`spine/claims.py` 是**新文件**，不占名额。
 
 ## 2. 设计 A：认领唯一性（S20）
 
@@ -70,7 +70,7 @@ schema 对这四个字段**只要求 `type: string`**（`schema/trace.schema.jso
 
 **做法**：
 
-1. `papertrace/spine_claims.py` 新模块，放四样东西：
+1. `papertrace/spine/claims.py` 新模块，放四样东西：
    - `node_text(node) -> str`：从 spine.py:184-187 搬来（逐字不动）；
    - `unclaimed(node_ids, claimed: set[str]) -> list[str]`：保持顺序，剔掉已认领的；
    - `judge_first_yes(term_text, node_ids, by_id, claimed: set[str]) -> tuple[float, str, str | None]`：
@@ -117,7 +117,7 @@ spine）全部不动——单点、可测、不散落。
 | R140 | 相对基准 = 构建时 cwd；只在 cwd 之下时相对化；分隔符统一 `/` | 分享者按项目根解开即可；POSIX 分隔符跨平台可读 | 从 A 目录构建、到 B 目录打开时相对路径指错（README 写清） |
 | R141 | 不相对化 module loc / unit_id / commit / runtime | 它们不是文件路径，相对化会造出假路径 | 无 |
 | R142 | HTML 的 `title` 显示字段原值（现在变短了），正文仍只显 `basename:line` | 保持 R133 的「正文给人读、title 给细节」 | title 没有绝对路径可看（真需要时 trace.json 里有原始输入） |
-| R143 | 代码落点：新 `spine_claims.py`（spine 搬出 `_judge_pairs`/`_node_text`）+ 新 `paths.py` | spine.py 已 200 行满额；搬出后净增 ≤0 | 新模块多一层 import |
+| R143 | 代码落点：新 `spine/claims.py`（spine 搬出 `_judge_pairs`/`_node_text`）+ 新 `paths.py` | spine.py 已 200 行满额；搬出后净增 ≤0 | 新模块多一层 import |
 
 ## 5. Global Constraints（本片新增 3 条，其余沿用脊柱切片）
 
@@ -163,7 +163,7 @@ spine）全部不动——单点、可测、不散落。
 | R149 | 演示产物**重新生成并覆盖** `output/demo/{code-only,with-paper,fallback-yellow}`；旧产物不留副本（它是 `output/`，gitignored，且新产物本身就是证据） | 旧产物里两项指 `@037` 正是要被修掉的缺陷，留副本只会让下一个人以为缺陷还在 | 失去「修复前后对比」的实物；设计 §7.3 的对比改写进交付说明（文字 + 新产物数值） |
 | R150 | CLI 端到端新测试必须**显式 pin cwd = 仓库根**（`subprocess.run(..., cwd=REPO)`） | GC14 的相对基准是 cwd；从别的目录跑 pytest 期望值全漂 | 测试多一点样板 |
 | R151 | 黄线的 `alternatives` 也**过滤 `claimed`** | 否则 HTML 会出现「备选指向已被别的项归属的节点」，与 R135 自相矛盾 | 备选有时为空（允许，schema 里 alternatives 非必填） |
-| R152 | `papertrace/spine_fallback.py:11` docstring 里「由 `spine._judge_pairs` 返回」改成指向 `spine_claims.judge_first_yes` | 搬走后那句成了假地址 | 无 |
+| R152 | `papertrace/spine/fallback.py:11` docstring 里「由 `spine._judge_pairs` 返回」改成指向 `spine_claims.judge_first_yes` | 搬走后那句成了假地址 | 无 |
 | R153 | 设计文档 §1.4 的 `tests/test_spine_symbols.py:82-106` 更正为 `:78-93`；§0 第 1 条的「在 index.html 里可见」改成「在 trace.json 里两条 anchor 都是 `root/@037`（index.html 走渲染通道，grep 不到字面 `@037`）」 | builder-check D1/D2：行号引尾超界、产物级引用不精确 | 无（结论不变） |
 
 另：B2（相对输入也要 `as_posix()` 归一化）已在 Task B 的行为约定第 1 条里写死；B6（测试清单要分「修改既有 / 新增」）

@@ -80,7 +80,7 @@
 | **R66** | S7 | 用 sha256 钉死整段冻结文本，两个常量都要钉；docstring 写明改正文就更新 hash 并升 JUDGE_PROMPT_VERSION；既有断言不许删 | startswith(JUDGE_PROMPT) 按构成为真，正文任何编辑无人看守 | prompt 被改而测试全绿 |
 | **R67** | S9 | anchor.source：s_judge>0 → "model"；否则（只有结构/检索依据）→ "static"；绝不用 "runtime" | anchor 不是实测出来的 | 标 runtime＝造假来源 |
 | **R68** | S9 | code_expr_range 填匹配到的算子节点 id 区间（单个 root/@037，多个 root/@037..root/@045）；绝不编造 file:line；docstring+README 写明逐算子定位属 M1b | M1a 的 op 节点 loc 全是 'model.GPT'，没有逐算子行号，而 schema 必填 string | 编造行号（与 R21/R36 同族） |
-| **R69** | S9 | 三个 signal 必须先算出存局部变量、同一份既喂 confidence() 又写进 anchor.signals，不许分别计算或中途取整 | schema_anchor.py 会自动执法 tier 与 signals 自洽 | S1 的守卫把 S9 自己的输出判成非法 |
+| **R69** | S9 | 三个 signal 必须先算出存局部变量、同一份既喂 confidence() 又写进 anchor.signals，不许分别计算或中途取整 | schema/anchor.py 会自动执法 tier 与 signals 自洽 | S1 的守卫把 S9 自己的输出判成非法 |
 | **R70** | S9 | meta.model.prompt_version 写 JUDGE_PROMPT_VERSION（"judge-v1"）不是默认 "0"；name 写后端真实 name；embed_model 写真实名或 "none" | minimal_trace 播种的是 prompt_version="0"/name="offline" | prompt 版本不可追溯 |
 | **R71** | S10 | shape 格式化成 Python tuple repr (2, 4, 8, 8)（逗号后一个空格）；空 shape_in 渲染 '-' 不是 '(?)' | **注：空列表那半句是控制器写错的，已被 R96 纠正**（'-' 是 inputs 的三态，shape 的 [] 应是 '()'） | 见 R96 |
 | **R72** | S10 | S18 已由用户批准（m03858），本切片确定不引 KaTeX，公式用等宽原始 LaTeX 文本 + 静态 SVG；不许再当待决项、不许自行 vendoring KaTeX/字体 | brief :15-18 仍写「S18 待批」是过期文本 | 偏离用户已批的决定 |
@@ -107,7 +107,7 @@
 | **R93** | S10 | brief Step 6 的「file:// 打开 + 截图」人工验收改由控制器在 S11 做，implementer 只需产出 HTML + 静态自检结论；不许因没法截图而 BLOCKED 或跳过 Step 6 | implementer 没有浏览器工具 | implementer 卡死。**后被 R94 修正：控制器也做不了** |
 | **R94** | S11 | 浏览器目检本机做不了（Tabbit 两个实例都 BROWSER_LAUNCH_FAILED，注册表记录合法、进程也在跑）→ 不做 ACL 手术、不申请提权；验收改为控制器机器验证每条承重性质 + 视觉效果交用户本人打开看；绝不声称做了没做的目检 | recovery.md 明令不许改 OS ACL 绕过沙箱、不许自己启服务或换浏览器后端；为验证性目检提权不成比例 | 声称做了没做的验收＝欺骗用户 |
 | **R95** | S11 | README 数学表一律用可达值（s_struct=0.8），禁止照抄设计文档 §2 的 s_struct=1 理论值（尤其第 4 行「弱检索 0.25→绿线」实际是黄线，档位翻了）；必须写明精确门槛 s_retr ≥ 0.382177 与 DeepSeek 天花板 0.654753 yellow | 本切片 s_struct 上限 0.8（R23），设计文档那张表是理论表 | 文档给出用户永远看不到的数字＝假承诺 |
-| **R96** | S10 | 纠正 R71 的空列表条款（控制器自己写错）：render_html.fmt_shape 必须与 report.fmt_shape 逐输入一致（[]→"()"）；不许 render_html import report（会把 torch 拖进纯渲染器 import 图），用测试钉住；inputs 的三态仍可以是 '-' | report.py:16-22 的 fmt_shape 是 None→"(?)"、[]→"()"；R71 把 inputs 的三态错记成 shape 的三态 | 同一 trace 在 CLI 与 HTML 语义不同，'-' 把「0 维标量」与「没有数据」混为一谈（report docstring 明令禁止） |
+| **R96** | S10 | 纠正 R71 的空列表条款（控制器自己写错）：render_html.fmt_shape 必须与 report.fmt_shape 逐输入一致（[]→"()"）；不许 render_html import report（会把 torch 拖进纯渲染器 import 图），用测试钉住；inputs 的三态仍可以是 '-' | render/report.py:16-22 的 fmt_shape 是 None→"(?)"、[]→"()"；R71 把 inputs 的三态错记成 shape 的三态 | 同一 trace 在 CLI 与 HTML 语义不同，'-' 把「0 维标量」与「没有数据」混为一谈（report docstring 明令禁止） |
 | **R97** | S10 | 模板 :119 的 code_only 改成如实的 paper_only + 说明 code_var 是冻结语义表对应变量非观测 + 加测试断言说明文字与实际 status 一致；不许改 mapping.py | code_only 与 paper_only 含义相反，页面主动告诉用户相反的事实；与 R76 完全同族 | 解释失实（与数据失实同族） |
 | **R98** | S10 | 页眉改 doc.meta.* + Environment 换 undefined=StrictUndefined + 测试证明它对不可解析路径响亮抛 UndefinedError；顺手补 prompt_version 显示 | 模板写 doc.schema_version/doc.created_at 而契约里在 doc.meta. 下，Jinja2 默认 Undefined 静默渲染空串；主交付物每页页眉可见破损且整类笔误无守卫 | 静默省略 + 系统性无守卫 |
 

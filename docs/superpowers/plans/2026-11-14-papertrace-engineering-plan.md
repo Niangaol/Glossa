@@ -109,7 +109,7 @@ papertrace/
   papertrace/
     __init__.py
     cli.py                          # papertrace build|serve|dump
-    schema_validate.py
+    schema/validate.py
     ingest/
       repo.py                       # clone / local copy, record commit
       paper.py                      # tex > marker > fail
@@ -155,7 +155,7 @@ papertrace/
     llm/
       client.py                     # OpenAI-compatible, Ollama
       prompts.py                    # 初次 / 深钻 两套，禁止混用
-    build_trace.py
+    build/trace.py
   frontend/
     package.json
     src/views/{Paper,Flow,Code}.ts
@@ -180,7 +180,7 @@ papertrace/
   output/
 ```
 
-职责边界：`parse_code` 不知道论文；`parse_paper` 不知道代码；`align` 只吃两侧产物；`frontend` 只吃合法 `trace.json`。`build_trace.py` 是唯一编排入口。
+职责边界：`parse_code` 不知道论文；`parse_paper` 不知道代码；`align` 只吃两侧产物；`frontend` 只吃合法 `trace.json`。`build/trace.py` 是唯一编排入口。
 
 ---
 
@@ -276,7 +276,7 @@ git commit -m "chore: M0 env skeleton and nanoGPT fixture with flash off"
 ### Task 1: Schema 校验器（trace.json 产品化的第一天）
 
 **Files:**
-- Create: `papertrace/schema_validate.py`
+- Create: `papertrace/schema/validate.py`
 - Create: `tests/test_schema.py`
 - Modify: `schema/trace.schema.json` 仅当测试证明缺字段（改动必须写进本任务提交说明）
 
@@ -291,11 +291,11 @@ git commit -m "chore: M0 env skeleton and nanoGPT fixture with flash off"
 
 ```python
 def test_minimal_trace_passes():
-    from papertrace.schema_validate import minimal_trace, validate_trace
+    from papertrace.schema.validate import minimal_trace, validate_trace
     validate_trace(minimal_trace())
 
 def test_missing_source_rejected():
-    from papertrace.schema_validate import minimal_trace, validate_trace, TraceSchemaError
+    from papertrace.schema.validate import minimal_trace, validate_trace, TraceSchemaError
     doc = minimal_trace()
     doc["nodes"].append({
         "id": "attn.0.matmul_qk", "level": "op", "op": "aten::matmul",

@@ -70,9 +70,9 @@ PaperTrace/
     __init__.py                  # __version__ = "0.1.0"
     exceptions.py                # TraceSchemaError, LLMUnavailable, IngestError
     cli.py                       # build|dump|serve|eval；本切片 serve/eval 打印未实现
-    schema_validate.py
+    schema/validate.py
     constants.py                 # W_RETR/W_JUDGE/W_STRUCT, JUDGE 权重
-    build_trace.py               # skeleton_trace(repo_meta) -> dict
+    build/trace.py               # skeleton_trace(repo_meta) -> dict
     llm/client.py                # Protocol + OfflineBackend + get_llm()
     llm/prompts.py               # JUDGE_PROMPT / DRILL_PROMPT 常量占位（从规格附录迁标题，不接模型）
     ingest/{__init__,repo,paper,arxiv}.py          # 桩
@@ -152,7 +152,7 @@ Expected: FAIL（无 `papertrace` 包）
 ### Task 1: Schema 校验器
 
 **Files:**
-- Create: `papertrace/schema_validate.py`
+- Create: `papertrace/schema/validate.py`
 - Create: `tests/test_schema.py`
 - Modify: `schema/trace.schema.json` 仅当测试证明缺字段
 
@@ -168,7 +168,7 @@ Expected: FAIL（无 `papertrace` 包）
 
 ```python
 def test_minimal_trace_passes():
-    from papertrace.schema_validate import minimal_trace, validate_trace
+    from papertrace.schema.validate import minimal_trace, validate_trace
     validate_trace(minimal_trace())
 
 def test_missing_source_rejected():
@@ -235,7 +235,7 @@ def get_llm() -> LLMBackend: ...
 ### Task 3: `build --skeleton` / `dump` CLI 契约
 
 **Files:**
-- Modify: `papertrace/cli.py`, `papertrace/build_trace.py`
+- Modify: `papertrace/cli.py`, `papertrace/build/trace.py`
 - Modify: `tests/test_cli.py`
 
 **Interfaces:**

@@ -11,7 +11,7 @@
 **Spec:** docs/superpowers/specs/2026-11-16-papertrace-explain-design.md（逐条实现它；D-A/D-B/D-C 是控制器的默认裁决，用户可推翻）
 
 **Preflight 实测事实**（output/controller-probes/explain_preflight.md，派发前控制器真跑）：
-BASE render_html.py sha256 = 3b8104004c8e242282a3b0e719e8370606960e35e0e096ca3a3e66cd6df4dba6（GC24 比对基准）；
+BASE render/html.py sha256 = 3b8104004c8e242282a3b0e719e8370606960e35e0e096ca3a3e66cd6df4dba6（GC24 比对基准）；
 nodes level 计数 op 94 / module 34，kind 计数 op 75 / param 18 / input 1 / 无 kind 34；唯一 input 节点 id = root/@018；
 图是 DAG（Kahn 覆盖 128/128），最长链 **56 步**，头 placeholder (2, 8) → embedding (2, 8, 32)，尾 linear (2, 8, 64)；
 totals 数值升序去重 = [2, 34, 2048, 29856, 884736]；
@@ -32,7 +32,7 @@ exit_codes 实测 UNIMPLEMENTED=2 / MISSING_RUNTIME=4 / UNTRACEABLE=5（**没有
 - GC8 不变式：nodes=128（op 75 / param 18 / input 1 / module 34）、edges=101、analysis.modules=34、totals.params=29856、totals.degraded=2、totals.est_flops=884736。
 - GC19：估算字段带 est_，方法说明同时出现在 analysis.method 与页面；禁「精确计算量」「实测 FLOPs」。
 - GC23：模板 StrictUndefined 下兜底用 X | default('…', true)，不用 or；{% if %} 裸属性用 and 短路。
-- **GC24**：explain.html 与 index.html 同源同一份 trace；本切片禁改 render_html.py / render_analysis.py / render_symbols.py / render_terms.py / spine.html.j2 / analyze_roles.py / analyze_metrics.py / code_analysis.py / schema/trace.json / build_trace.py / spine*.py / align/* / parse_*/*。验收含「原页字节级不变」。
+- **GC24**：explain.html 与 index.html 同源同一份 trace；本切片禁改 render/html.py / render/analysis.py / render/symbols.py / render/terms.py / spine.html.j2 / analyze/roles.py / analyze/metrics.py / build/analysis.py / schema/trace.json / build/trace.py / spine*.py / align/* / parse_*/*。验收含「原页字节级不变」。
 - **GC25**：MCP server 的 stdout 只许一行一个 JSON-RPC 响应；日志走 stderr。
 - **GC26**：模型文字里的数字未命中 cites 的 fact 数值集合 → 必须打 <mark class="untraced"> 且原样保留数字；禁删改、禁静默通过。
 - **GC27**：custom 块被剥离的构造必须同时在页面与工具返回里可见。
@@ -302,8 +302,8 @@ def test_paper_bonus_renders_when_anchors_exist(real_ctx_with_paper):
 real_ctx_with_paper 用 output/demo/fallback-yellow/trace.json（anchors=4 全 yellow）或真跑一次带 --paper 的 build；**不许手编 anchors**。
 
 - [ ] **Step 2: 跑红** → FAIL
-- [ ] **Step 3: 实现两个模块 + 注册 5 项**（SVG 坐标算法抄 _groups 的口径并注明来源；不要改 render_html.py）
-- [ ] **Step 4: 跑绿** → PASS；全量零回归；**核 render_html.py 的 sha256 与 BASE 全等**
+- [ ] **Step 3: 实现两个模块 + 注册 5 项**（SVG 坐标算法抄 _groups 的口径并注明来源；不要改 render/html.py）
+- [ ] **Step 4: 跑绿** → PASS；全量零回归；**核 render/html.py 的 sha256 与 BASE 全等**
 - [ ] **Step 5: 变异探针**（≥2 条）M1：ops_graph 不过滤 parent（全图都画）→ 只含请求模块的断言必红；M2：code 组件去掉越界检查 → 越界测试必红（并确认它真读到了 repo 外的文件才算探针有效）。记录 + 还原核 sha256。
 - [ ] **Step 6: 提交** git -c core.autocrlf=false commit -m "feat: add graph, callchain, source and paper-bonus explain components"
 

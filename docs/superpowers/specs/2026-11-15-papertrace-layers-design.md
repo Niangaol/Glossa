@@ -22,7 +22,7 @@ S20/S21 交付后剩下的第一条已知局限是「只对齐第一层」：`pa
 | 同构命中 | Vaswani 四项 `matmul→scale→norm→matmul` 在两组的子序列匹配都成立 | 同上 |
 | 当前 pairs | 只由首组产出 4 对 | struct_signal.py:128-135 |
 | 结构路径 anchor 数 | 4（4 项 × 1 层） | tests:321 等 |
-| 满额文件 | spine.py 200 / latex_safe.py 200 / symbols/code_table.py 200 / render_html.py 199 / openai_backend.py 199 | 控制器 census |
+| 满额文件 | spine.py 200 / latex_safe.py 200 / symbols/code_table.py 200 / render/html.py 199 / openai_backend.py 199 | 控制器 census |
 | anchor schema | 7 个 required，`evidence` maxLength 80，**未设 additionalProperties**（可加字段）；顶层 trace 是封闭的 | schema/trace.schema.json |
 
 ## 2. 三个方案与取舍
@@ -87,8 +87,8 @@ R144 的重复守门同样按组跑。
 
 | 文件 | 现状 | 做法 |
 |---|---|---|
-| `papertrace/spine.py` | 200 | 拆出 `papertrace/spine_anchor.py`：`attach_term` + `record_unresolved` + 证据常量；spine.py 只留编排 |
-| `papertrace/render_html.py` | 199 | 拆出 `papertrace/render_terms.py`：公式项行的构造（锚点 → 行 dict） |
+| `papertrace/spine/spine.py` | 200 | 拆出 `papertrace/spine/anchor.py`：`attach_term` + `record_unresolved` + 证据常量；spine.py 只留编排 |
+| `papertrace/render/html.py` | 199 | 拆出 `papertrace/render/terms.py`：公式项行的构造（锚点 → 行 dict） |
 | `latex_safe.py` / `symbols/code_table.py` / `llm/openai_backend.py` | 200/200/199 | **本片不动**（本片不触碰；无价值重构，等真正要改它们的那片再拆） |
 
 ## 4. 裁决
@@ -97,17 +97,17 @@ R144 的重复守门同样按组跑。
 - **R162**（已实现，L3 91dde12）认领唯一性按「单元 × 同构组」隔离；R144 重复守门同样按组。
 - **R163**（已实现，L3 91dde12）anchor 新增可选 `code_group`：结构路径必填、回退路径省略；schema 里声明但不进 required。
 - **R164**（已实现，L3 91dde12）s_retr / s_struct 是单元级、逐层相同；只有 s_judge 逐层。docstring 与 README 如实写（README 字段契约段 + 已知局限段，L5 补）。
-- **R165**（已实现，L1 bc5affe）拆 `spine.py` → `spine_anchor.py`；`tests/test_spine_tier.py:169` 的 `from papertrace.spine import _record_unresolved` 改指新模块（断言一字不改，属重命名不是削弱）。
-- **R166**（已实现，L4 98cfb87）拆 `render_html.py` 的公式项行构造 → `render_terms.py`；公式项表改成一条 anchor 一行，「层」列显示 `code_group` 去掉顶层模块前缀后的组路径（R176：不取末段——嵌套 id 下末段会塌成同一个词，层列信息全丢）。
+- **R165**（已实现，L1 bc5affe）拆 `spine.py` → `spine/anchor.py`；`tests/test_spine_tier.py:169` 的 `from papertrace.spine.spine import _record_unresolved` 改指新模块（断言一字不改，属重命名不是削弱）。
+- **R166**（已实现，L4 98cfb87）拆 `render/html.py` 的公式项行构造 → `render/terms.py`；公式项表改成一条 anchor 一行，「层」列显示 `code_group` 去掉顶层模块前缀后的组路径（R176：不取末段——嵌套 id 下末段会塌成同一个词，层列信息全丢）。
 - **R167**（已实现：三文件一字未动，行数仍 200/200/199）`latex_safe.py` / `symbols/code_table.py` / `llm/openai_backend.py` 本片不动。
 - **R168**（已实现，L3 91dde12）既有测试里「结构路径 4 条 anchor / judge 4 次」的期望按逐层改成 8，逐处列进计划（授权改写，不许删断言）。
 
 **实施期新裁决（L3 / L3b，均已实现并落在测试里）**：
 
-- **R169**（L3 91dde12）结构信号给了 `pairs` 却没给 `groups` → `BuildError` fail-closed，绝不把结构路径静默降级成回退路径（`papertrace/spine.py:103`；测试 `tests/test_spine_end_to_end.py` 的 pairs-无-groups 用例）。产品里 `pairs` 与 `groups` 永远一致，这条守门是给未来的回归留的闸。
+- **R169**（L3 91dde12）结构信号给了 `pairs` 却没给 `groups` → `BuildError` fail-closed，绝不把结构路径静默降级成回退路径（`papertrace/spine/spine.py:103`；测试 `tests/test_spine_end_to_end.py` 的 pairs-无-groups 用例）。产品里 `pairs` 与 `groups` 永远一致，这条守门是给未来的回归留的闸。
 - **R170**（L3 91dde12）测试桩补 `groups`：既有只给 `pairs` 的测试桩按逐层口径补同构组（两组 / 一组两种），回退路径的桩不动；断言值按 R168 改，不减断言。
 - **R171**（L3b 157ea99）`schema_anchor` 的 tier 复核判据从「必须等于重算结果」改成「**不得高于重算结果**」（rank `none`(0) < `yellow`(1) < `green`(2)）：抓升格（手涂绿）、放行保守下调。缺口成因：R112 回退路径会把 green 封顶成 yellow，旧判据把这个**合法行为**判成造假。代价：手改把 green 涂成 yellow/none 不再被抓。
-- **R172**（L3b 157ea99）Task L3b 立项范围：只改 `schema_anchor.py` 判据与 docstring，加 3 条测试（下调放行 / 升级拒绝 / 回退端到端过校验），既有 6 条 tier 测试一字不改。
+- **R172**（L3b 157ea99）Task L3b 立项范围：只改 `schema/anchor.py` 判据与 docstring，加 3 条测试（下调放行 / 升级拒绝 / 回退端到端过校验），既有 6 条 tier 测试一字不改。
 
 ## 5. 全局约束（追加）
 

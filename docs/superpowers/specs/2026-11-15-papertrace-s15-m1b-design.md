@@ -110,17 +110,17 @@ act→(gelu,relu,sigmoid,tanh)  transpose→(transpose,)  concat→(cat,)
 | 1A | s15-implementer | papertrace/align/candidates.py（新）、papertrace/align/struct_signal.py（**只改 docstring :27-28 与 :31-32**）、tests/test_spine_candidates.py（新）、tests/test_spine_struct.py（**只改 :16 docstring**） | spine.py、cli.py、constants.py、schema/、parse_code/、parse_paper/、judge.py、retrieve.py、embed.py、score.py、tier.py、prompts.py、client.py、test_imports.py、test_spine_end_to_end.py |
 | 1B | m1b-implementer | papertrace/parse_code/loc.py（填桩）、papertrace/parse_code/fx_nodes.py（**只改 :169 一处 + 必要 import**）、tests/test_m1b_loc.py（新） | align/、spine.py、cli.py、constants.py、schema/、parse_paper/、fx_trace.py、fx_graph.py、fx_edges.py、fx_modules.py、fx_signature.py、test_imports.py |
 | 1C | docs-implementer | papertrace/parse_paper/units.py（**只改 docstring**）、README.md、.superpowers/sdd/.../final-fix-report.md | 任何 .py 的行为代码、align/、parse_code/、spine.py、cli.py、schema/ |
-| 2 | **控制器独占** | papertrace/spine.py、**papertrace/spine_fallback.py（新 helper，见 §3 M5）**、papertrace/render_html.py、papertrace/templates/spine.html.j2、tests/test_imports.py、tests/test_spine_end_to_end.py、tests/test_spine_html.py、**tests/test_spine_fallback.py（新）**、constants.py（若需）、schema/（若需） | — |
+| 2 | **控制器独占** | papertrace/spine/spine.py、**papertrace/spine/fallback.py（新 helper，见 §3 M5）**、papertrace/render/html.py、papertrace/templates/spine.html.j2、tests/test_imports.py、tests/test_spine_end_to_end.py、tests/test_spine_html.py、**tests/test_spine_fallback.py（新）**、constants.py（若需）、schema/（若需） | — |
 | 3 | 三个只读评审 fan-out | 无写权限 | 全部 |
 | 4 | 一个 fix subagent + 恰好一次定向复审 | 按 findings | — |
 
-**为什么集成必须串行独占**：papertrace/spine.py 同时消费 S15 的候选与 M1b 的 loc（_node_text 在 :184 把 loc 拼进喂给 judge/检索的文本）。两个 implementer 都改它必然互相覆盖。tests/test_imports.py 的 MODULES 列表（:19-56）要加 candidates.py 与 spine_fallback.py，也是共享文件。
+**为什么集成必须串行独占**：papertrace/spine/spine.py 同时消费 S15 的候选与 M1b 的 loc（_node_text 在 :184 把 loc 拼进喂给 judge/检索的文本）。两个 implementer 都改它必然互相覆盖。tests/test_imports.py 的 MODULES 列表（:19-56）要加 candidates.py 与 spine/fallback.py，也是共享文件。
 
 **跨波次语义交互（不是写冲突，但必须知道）**：M1b 把 loc 从 'model.GPT' 换成真实 file:line → spine.py:184 的 _node_text 变了 → **喂给 judge 与检索的文本变了**。offline 下无影响（judge 恒归零）。波次2 必须真跑四输入确认。
 
 **测试分层（builder-check S8，免得波次1 被当成没干活）**：
 - **波次1A 的验收只到函数级**：candidate_pairs 的资格/排序/截断/空态/未知 kind，全部用手工 nodes 与 terms，**不碰 attach_paper、不碰 HTML**。
-- **「回退候选进 anchor + R112 封顶 + HTML 看得见」全部归波次2**，因为 spine.py / render_html.py 不在 1A 的写作用域里。
+- **「回退候选进 anchor + R112 封顶 + HTML 看得见」全部归波次2**，因为 spine.py / render/html.py 不在 1A 的写作用域里。
 - 所以 §6 的验收分两段：波次1 结束时只要求函数级测试 + 全量不回归；S15 的端到端收益在波次2 结束时才验收。
 
 **import 守卫窗口（builder-check S9）**：candidates.py 在波次1 落盘，但 test_imports.py 的 MODULES 到波次2 才加。**这个窗口期可接受**——该测试遍历硬编码列表而非自动发现，窗口期内只是「新模块还没被守卫覆盖」，不会红。波次2 必须补齐两个新模块。
@@ -172,7 +172,7 @@ def loc_from_stack_trace(stack_trace: str) -> str
 我原本提议把 code_expr_range 改成 `<file>:<line>#<node_id>`。**预检实测证明这个提议会静默砸掉 HTML 的彩线，撤回。**
 
 证据（output/controller-probes/r113_html_check.py，真跑 render_html）：
-- papertrace/render_html.py:82 把 `code_expr_range` **当节点 id 用**：`style_of[code_id] = ...`，:95-100 再用 `node["id"]` 去查 `style_of`。
+- papertrace/render/html.py:82 把 `code_expr_range` **当节点 id 用**：`style_of[code_id] = ...`，:95-100 再用 `node["id"]` 去查 `style_of`。
 - 格式里只要多出 `file:line#` 前缀，**没有任何节点 id 能匹配上** → 所有 anchor 的彩线全部消失，而 trace.json 看起来完全正常。这正是本项目尺子最重的那一档「静默错误事实」。
 - tests/test_spine_end_to_end.py:288 明写 `assert ":" not in anchor["code_expr_range"]`，:285/:290 钉死纯 node_id 格式，测试名就叫 `test_code_expr_range_uses_node_ids_not_source_lines`，是 R68 的守门测试。builder-check N3 独立复核：schema:226 是 {"type":"string"} 无 pattern，守门仍成立。
 
@@ -199,7 +199,7 @@ def loc_from_stack_trace(stack_trace: str) -> str
 
 spine.py **198/200，只剩 2 行**。最小增量 4-6 行（import + 回退触发 + R112 封顶 + _judge_pairs 三元组）→ 202-204，**必然超线**。
 
-**指定去处：新建 `papertrace/spine_fallback.py`（波次2 控制器独占）**，承载：
+**指定去处：新建 `papertrace/spine/fallback.py`（波次2 控制器独占）**，承载：
 - `pairs_or_fallback(signal, terms, nodes, *, per_term_limit, total_limit)` → `(grouped, fallback_flag)`：pairs 非空就直接用；空则调 candidates.candidate_pairs 并按 term.index 分组。**把 spine.py 现有的分组块整段搬过来**，spine.py 净增行数因此可能为负。
 - `resolve_code_range(node_ids, confirmed_id, fallback)` → str：回退且有 confirmed → 单节点；否则既有 first..last 逻辑。
 - `cap_tier(level, fallback)` → str：R112 封顶，**只改 tier 不改 signals**。
@@ -208,12 +208,12 @@ spine.py **198/200，只剩 2 行**。最小增量 4-6 行（import + 回退触�
 **配套义务**：≤200 行；进 tests/test_imports.py 的 MODULES；新建 tests/test_spine_fallback.py 覆盖三个函数（含「回退 + 满分检索 + 全 yes → yellow」这条 R112 守门断言）。**这些都在波次2 scope 里，不是排期外工作。**
 
 ### HTML 显示 loc（波次2，配合 M1b）
-papertrace/render_html.py:50-54 的 _node_label 现在只返回 op 名，**全页没有任何源码位置**（探针实测 "model.py" in html == False）。M1b 之后 node["loc"] 是真实 file:line，波次2 在算子行补显示 **basename:line**，完整路径放 title 属性（R116 的呈现层处理）。
+papertrace/render/html.py:50-54 的 _node_label 现在只返回 op 名，**全页没有任何源码位置**（探针实测 "model.py" in html == False）。M1b 之后 node["loc"] 是真实 file:line，波次2 在算子行补显示 **basename:line**，完整路径放 title 属性（R116 的呈现层处理）。
 **约束**：不许 import report（report 顶层 import build_trace 会把 torch 拖进纯渲染器）；autoescape 与 StrictUndefined 纪律不变（兜底一律 `| default(x, true)`，不用 `or`）；零外链不变；HTML_MAX_BYTES=8_000_000 实测当前 31934 字节，无风险（builder-check N6）。
 
 ## 4. Global Constraints（沿用脊柱切片，逐字有效）
 
-1. 单文件 ≤200 行，口径 `len(pathlib.Path(f).read_text(encoding='utf-8').splitlines())`（Get-Content .Count 少算）。**当前贴线文件**：code_table.py 200、latex_safe.py 200、openai_backend.py 199、spine.py 198、split_terms.py 196、cli.py 193。spine.py 的去处已指定为 spine_fallback.py（§3 M5），**不许硬塞、不许现场发明别的文件**。
+1. 单文件 ≤200 行，口径 `len(pathlib.Path(f).read_text(encoding='utf-8').splitlines())`（Get-Content .Count 少算）。**当前贴线文件**：code_table.py 200、latex_safe.py 200、openai_backend.py 199、spine.py 198、split_terms.py 196、cli.py 193。spine.py 的去处已指定为 spine/fallback.py（§3 M5），**不许硬塞、不许现场发明别的文件**。
 2. 禁 mock 填产品输出；测试注入的假后端必须**单实例跨调用保持状态**，且**必须断言被测路径真被走到**（计数器 +1）。
 3. 默认 offline；judge 禁自由生成；JUDGE_PROMPT / DRILL_PROMPT 正文一字不许改（sha256 钉扎已在 tests/test_spine_judge.py）。
 4. 公式写死：c = sigmoid(4·(0.30·s_retr + 0.50·s_judge + 0.20·s_struct − 0.5))；绿线 0.75 + s_struct≥0.5 门；黄线 0.45。**R112 只封 tier，绝不改 signals/confidence/s_struct**（R69）。
@@ -255,7 +255,7 @@ papertrace/render_html.py:50-54 的 _node_label 现在只返回 op 名，**全�
 - 四输入真跑全 EXIT=0：①无 --paper ②带 --paper ③--skeleton --paper ④纯 --skeleton。
 - **S15 收益可复现**：构造结构不命中场景，offline 下仍 tier=none（诚实空态），注入 yes 后端后 tier=yellow，**且 HTML 上看得见那条黄线**（单节点 confirmed → lnk-yellow ≥1）。
 - **M1b 收益可复现**：HTML 算子行显示 basename:line，title 里是完整路径。
-- 两个新模块（candidates.py、spine_fallback.py）都进了 test_imports.py 的 MODULES。
+- 两个新模块（candidates.py、spine/fallback.py）都进了 test_imports.py 的 MODULES。
 - GC8 七项仍逐字不变；行数 census 仍全 ≤200。
 
 ## 7. builder-check 的 6 条必须补 + 10 条建议补：我的处理
@@ -268,7 +268,7 @@ papertrace/render_html.py:50-54 的 _node_label 现在只返回 op 名，**全�
 | M2 | R114 按 .. 展开会画 35 条线谎称对齐 35 个算子 | **撤回原修法**，改 R117：回退 anchor 只指认 judge 确认的那一个节点；既有结构多节点缺陷 deferred 到 M4 并写明正确修法（code_node_ids 精确列表） |
 | M3 | S15 回退 anchor 多节点 → HTML 零显示，而修复在波次2 | R117 让回退 anchor 变成单节点 → **HTML 天然画得出，不需要改 render_html**；另加 §2 测试分层与 §6 两段验收 |
 | M4 | 候选总数 12 与 per_term_limit=3 自相矛盾 | §1.2 拆成三个数：资格 12 / 截断后 10 / judge 最坏 10（理论上界 12） |
-| M5 | spine.py 装不下且 helper 去处未指定 | §3 指定 **papertrace/spine_fallback.py**，三个函数名与职责写死，配套 MODULES 与新测试文件都列进波次2 scope |
+| M5 | spine.py 装不下且 helper 去处未指定 | §3 指定 **papertrace/spine/fallback.py**，三个函数名与职责写死，配套 MODULES 与新测试文件都列进波次2 scope |
 | M6 | 两句文档变假且无主 | struct_signal.py 的授权范围扩到 **:27-28 与 :31-32**；README 扩到 **:335-336** |
 | S1 | lexical_rank 算法未定义 | §3 给确定性最小定义（token 集合交集 / 两侧最大值，同分按 id 升序），并说明实测效果 |
 | S2 | hits/misses 语义未定义 | §3 定义两者内容，明写 **spine 不消费**；附带修 struct_signal.py:29-30 的过期 R38 措辞 |

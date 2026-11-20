@@ -4,7 +4,7 @@
 
 **Goal:** 让 `papertrace build --repo` 在没有论文的情况下也产出有价值的东西：代码侧符号与超参台账、每个模块在干什么、参数量与算力粗估，并在单文件 HTML 里看见。
 
-**Architecture:** 三层。① 纯函数层：`analyze_roles.module_roles(nodes)` 与 `analyze_metrics.module_metrics(nodes)` 只吃 trace 的 nodes 列表，不 import torch / 不读源码。② 组装层：`code_analysis.analyze_code(doc, model)` 填 `symbols.code`（复用既有 `build_code_symbols`）与新增的可选顶层键 `analysis`。③ 呈现层：`render_analysis.py` 造行，jinja 模板新增第 ⑥ 块「代码体检」。
+**Architecture:** 三层。① 纯函数层：`analyze_roles.module_roles(nodes)` 与 `analyze_metrics.module_metrics(nodes)` 只吃 trace 的 nodes 列表，不 import torch / 不读源码。② 组装层：`code_analysis.analyze_code(doc, model)` 填 `symbols.code`（复用既有 `build_code_symbols`）与新增的可选顶层键 `analysis`。③ 呈现层：`render/analysis.py` 造行，jinja 模板新增第 ⑥ 块「代码体检」。
 
 **Tech Stack:** Python 3.13 / pytest / jinja2 / jsonschema。零新依赖。
 
@@ -46,13 +46,13 @@
 | 文件 | 责任 | 新建/修改 |
 |---|---|---|
 | `papertrace/exit_codes.py` | 退出码常量（2/4/5），cli 与 report_dump 共用 | 新建（约 15 行） |
-| `papertrace/report_dump.py` | `dump` 子命令的正文（原 `cli._cmd_dump`） | 新建（约 45 行） |
-| `papertrace/analyze_roles.py` | `module_roles(nodes)`：角色 + 判据 | 新建（约 130 行） |
-| `papertrace/analyze_metrics.py` | `module_metrics(nodes)` / `analysis_totals(rows, nodes)` | 新建（约 90 行） |
-| `papertrace/code_analysis.py` | `analyze_code(doc, model)` / `empty_analysis()` | 新建（约 70 行） |
-| `papertrace/render_analysis.py` | summary_line / role_rows / role_counts / method_text / symbols_note | 新建（约 80 行） |
+| `papertrace/render/dump.py` | `dump` 子命令的正文（原 `cli._cmd_dump`） | 新建（约 45 行） |
+| `papertrace/analyze/roles.py` | `module_roles(nodes)`：角色 + 判据 | 新建（约 130 行） |
+| `papertrace/analyze/metrics.py` | `module_metrics(nodes)` / `analysis_totals(rows, nodes)` | 新建（约 90 行） |
+| `papertrace/build/analysis.py` | `analyze_code(doc, model)` / `empty_analysis()` | 新建（约 70 行） |
+| `papertrace/render/analysis.py` | summary_line / role_rows / role_counts / method_text / symbols_note | 新建（约 80 行） |
 | `papertrace/cli.py` | 无论文也 load_entry + analyze_code；dump 改调 report_dump | 修改（197 → 约 190） |
-| `papertrace/report.py` | `print_build_summary` 增一行代码分析摘要 | 修改（165 → 约 172） |
+| `papertrace/render/report.py` | `print_build_summary` 增一行代码分析摘要 | 修改（165 → 约 172） |
 | `papertrace/templates/spine.html.j2` | 新增第 ⑥ 块 + 符号表说明 | 修改 |
 | `schema/trace.schema.json` | 可选顶层 `analysis` + 两个 `$defs` | 修改 |
 | `tests/test_code_roles.py` | 角色判据 8 条 | 新建 |
@@ -65,21 +65,21 @@
 ## Task C1：把 dump 子命令搬出 cli.py（纯重构，零行为变化）
 
 **Files:**
-- Create: `papertrace/exit_codes.py`、`papertrace/report_dump.py`
+- Create: `papertrace/exit_codes.py`、`papertrace/render/dump.py`
 - Modify: `papertrace/cli.py`（删掉 `_cmd_dump` 与三个常量定义，改 import）
 
-**Consumes:** `papertrace/cli.py:37-41` 的三个常量、`:162-183` 的 `_cmd_dump`、`papertrace/report.py` 的 `print_ops/print_edges/print_overview`。
+**Consumes:** `papertrace/cli.py:37-41` 的三个常量、`:162-183` 的 `_cmd_dump`、`papertrace/render/report.py` 的 `print_ops/print_edges/print_overview`。
 **Produces:** `report_dump.run_dump(trace_path: str) -> int`，行为与旧 `cli._cmd_dump` **逐字节相同**（退出码 0 / 2 / 2）。
 
 **为什么先做这个：** `cli.py` 现在 197/200 行，C5 还要往里加代码；先搬走 22 行，给后面留余量。
 
 **Steps:**
 - [ ] 1. 新建 `papertrace/exit_codes.py`：`UNIMPLEMENTED = 2`、`MISSING_RUNTIME = 4`、`UNTRACEABLE = 5`，每条带一行中文注释（语义照抄 cli.py:37-41 的注释）。
-- [ ] 2. 新建 `papertrace/report_dump.py`：`from papertrace.exit_codes import UNIMPLEMENTED`；把 `cli._cmd_dump` 的正文**逐字**搬成 `run_dump(trace_path: str) -> int`（参数从 `args.trace` 变成 `trace_path`，其余不动，含两处 `return 2`/一处 `return UNIMPLEMENTED` 与全部中文错误文案）。
-- [ ] 3. `cli.py`：删掉三个常量定义与 `_cmd_dump`，改 `from papertrace.exit_codes import MISSING_RUNTIME, UNIMPLEMENTED, UNTRACEABLE` 与 `from papertrace.report_dump import run_dump`；`main()` 里 `return _cmd_dump(args)` → `return run_dump(args.trace)`；`print_ops/print_edges/print_overview/load_trace` 若在 cli 里已无其他用处就一并删掉 import（保留仍被 `_cmd_build` 用的）。
+- [ ] 2. 新建 `papertrace/render/dump.py`：`from papertrace.exit_codes import UNIMPLEMENTED`；把 `cli._cmd_dump` 的正文**逐字**搬成 `run_dump(trace_path: str) -> int`（参数从 `args.trace` 变成 `trace_path`，其余不动，含两处 `return 2`/一处 `return UNIMPLEMENTED` 与全部中文错误文案）。
+- [ ] 3. `cli.py`：删掉三个常量定义与 `_cmd_dump`，改 `from papertrace.exit_codes import MISSING_RUNTIME, UNIMPLEMENTED, UNTRACEABLE` 与 `from papertrace.render.dump import run_dump`；`main()` 里 `return _cmd_dump(args)` → `return run_dump(args.trace)`；`print_ops/print_edges/print_overview/load_trace` 若在 cli 里已无其他用处就一并删掉 import（保留仍被 `_cmd_build` 用的）。
 - [ ] 4. **对拍验证**：改动前先在 HEAD 上跑一次 `python -m papertrace dump --trace output/demo/code-only/trace.json --ops` 存 stdout 到 `output/c1-before.txt`；改动后再跑一次存 `output/c1-after.txt`；用 python 读字节比较必须完全相同（`--edges` 与无 flag 两种也各对拍一次）。
 - [ ] 5. 跑全量：**807 passed**（一条不少、一条不多）。
-- [ ] 6. 行数 census：`cli.py` 必须比改前少 ≥15 行；`report_dump.py`、`exit_codes.py` 各自 ≤200。
+- [ ] 6. 行数 census：`cli.py` 必须比改前少 ≥15 行；`render/dump.py`、`exit_codes.py` 各自 ≤200。
 - [ ] 7. 提交：`refactor: move the dump command out of cli`（`git -c core.autocrlf=false commit`）。
 
 **变异探针：** 把 `run_dump` 里 `--ops` 分支的 `print_ops(doc)` 换成 `print_overview(doc)` → 步骤 4 的字节对拍必须不等。还原后 sha256 与改前一致。
@@ -91,7 +91,7 @@
 ## Task C2：模块角色识别（纯函数）
 
 **Files:**
-- Create: `papertrace/analyze_roles.py`（约 130 行）、`tests/test_code_roles.py`
+- Create: `papertrace/analyze/roles.py`（约 130 行）、`tests/test_code_roles.py`
 
 **Consumes:** trace 的 `nodes` 列表。节点事实（已实测）：模块节点 `level != "op"`、`op` 字段是类名、`shape_*` 恒空；算子节点 `level == "op"`，`kind` ∈ {op, param, input, const}。
 **Produces:** `module_roles(nodes: list[dict]) -> list[dict]`，按 `module_id` 升序，每条 **恰好** 5 个键：`module_id` / `class` / `role` / `evidence` / `op_count`。`op_count` = 直接子节点里 `level=="op" and kind=="op"` 的个数（param/input/const 不算）。
@@ -118,7 +118,7 @@
 **Steps:**
 - [ ] 1. 写失败测试 `tests/test_code_roles.py`（8 条，见下）。
 - [ ] 2. 跑 `pytest -q tests/test_code_roles.py`，确认收集期因模块不存在而红。
-- [ ] 3. 实现 `analyze_roles.py`（`_direct_ops` / `_child_modules` / `_has_residual_add` / `_subtree_ops` 等私有 helper）。
+- [ ] 3. 实现 `analyze/roles.py`（`_direct_ops` / `_child_modules` / `_has_residual_add` / `_subtree_ops` 等私有 helper）。
 - [ ] 4. `pytest -q tests/test_code_roles.py` → 8 passed；全量 → **815 passed**（807+8）。
 - [ ] 5. 真夹具打印 34 条角色，逐条与 Acceptance 的统计对齐。
 - [ ] 6. 提交：`feat: recognize what each module is doing`。
@@ -142,7 +142,7 @@
 ## Task C3：参数 / 峰值激活 / 粗估 FLOPs（纯函数）
 
 **Files:**
-- Create: `papertrace/analyze_metrics.py`（约 90 行）、`tests/test_code_metrics.py`
+- Create: `papertrace/analyze/metrics.py`（约 90 行）、`tests/test_code_metrics.py`
 
 **Consumes:** trace 的 `nodes`。实测事实：18 个 param 节点、`shape_out` 是 int 列表；`matmul` 的 `shape_in` 是第一个输入的形状；`linear` 的 `shape_in=[2,8,32]`、`shape_out=[2,8,96]`。
 **Produces:** 两个函数：
@@ -180,7 +180,7 @@
 ## Task C4：组装层 + schema 可选 `analysis`
 
 **Files:**
-- Create: `papertrace/code_analysis.py`（约 70 行）、`tests/test_code_analysis.py`
+- Create: `papertrace/build/analysis.py`（约 70 行）、`tests/test_code_analysis.py`
 - Modify: `schema/trace.schema.json`
 
 **Consumes:** `analyze_roles.module_roles`、`analyze_metrics.module_metrics/analysis_totals`、`symbols.code_table.build_code_symbols(mod, bundle)`（既有）、trace dict。
@@ -210,7 +210,7 @@
 **Steps:**
 - [ ] 1. 写失败测试（6 条，见下）。
 - [ ] 2. `pytest -q tests/test_code_analysis.py` → ImportError 红。
-- [ ] 3. 改 schema；实现 `code_analysis.py`（`METHOD_TEXT` 常量；`analyze_code` 先填 symbols 再组装 analysis；角色与指标按 `module_id` 合并成一条）。
+- [ ] 3. 改 schema；实现 `build/analysis.py`（`METHOD_TEXT` 常量；`analyze_code` 先填 symbols 再组装 analysis；角色与指标按 `module_id` 合并成一条）。
 - [ ] 4. `pytest -q tests/test_code_analysis.py` → 6 passed；全量 → **827 passed**。
 - [ ] 5. 真夹具跑一遍：`validate_trace(doc)` 通过；`analysis.modules` 34 条；`symbols.code` 5 条。
 - [ ] 6. 提交：`feat: assemble the code-only analysis into trace.json`。
@@ -232,7 +232,7 @@
 ## Task C5：CLI 接线（无论文也分析）
 
 **Files:**
-- Modify: `papertrace/cli.py`、`papertrace/report.py`
+- Modify: `papertrace/cli.py`、`papertrace/render/report.py`
 - Create: `tests/test_code_only_cli.py`
 
 **Consumes:** `code_analysis.analyze_code / empty_analysis`、`build_trace.load_entry`。
@@ -279,14 +279,14 @@
 ## Task C6：HTML 第 ⑥ 块「代码体检」
 
 **Files:**
-- Create: `papertrace/render_analysis.py`（约 80 行）、`tests/test_code_html.py`
-- Modify: `papertrace/render_html.py`、`papertrace/templates/spine.html.j2`
+- Create: `papertrace/render/analysis.py`（约 80 行）、`tests/test_code_html.py`
+- Modify: `papertrace/render/html.py`、`papertrace/templates/spine.html.j2`
 
 **Consumes:** `doc["analysis"]`、`code_analysis.METHOD_TEXT`、`doc["symbols"]`、`meta.runtime.counts`。
 **Produces:** 模板里 `<section id="analysis">`，含 5 件东西：总量行 / 角色分布（**unknown 必须列出**）/ 模块角色表 / 降级与形状异常 / 方法说明原文；以及 ⑤ 符号表在无论文时的说明句。
 
 **实现约束：**
-- `render_html.py` 现在 183 行，只允许加 ≤8 行（把 `render_analysis` 造好的行传给模板）。
+- `render/html.py` 现在 183 行，只允许加 ≤8 行（把 `render_analysis` 造好的行传给模板）。
 - 模板读 `doc.analysis` 一律走 `| default(none, true)` 与 `{% if %}` 短路，**不许裸访问**（GC23；旧 trace 没有 analysis 时不能崩）。
 - 模块表列：模块 id / 类名 / 角色 / 参数量 / 峰值激活 / 估算 FLOPs / 判据（evidence）。按 `module_id` 排序，**不折叠 unknown**。
 - 数字用 `f"{n:,}"` 千位分隔；`est_flops` 列头写「粗估 FLOPs」，不许写「计算量」。
@@ -294,7 +294,7 @@
 **Steps:**
 - [ ] 1. 写失败测试（5 条，见下）。
 - [ ] 2. `pytest -q tests/test_code_html.py` → 红（无 analysis section）。
-- [ ] 3. 写 `render_analysis.py`；改模板与 `render_html.py`。
+- [ ] 3. 写 `render/analysis.py`；改模板与 `render/html.py`。
 - [ ] 4. `pytest -q tests/test_code_html.py` → 5 passed；全量 → **837 passed**。
 - [ ] 5. 真跑一次 CLI 生成 HTML，核对第 ⑥ 块内容（写进报告，不做或声称做浏览器视觉目检之外的判断）。
 - [ ] 6. 提交：`feat: show the code health section in the HTML`。
@@ -308,7 +308,7 @@
 
 **变异探针：** 在 `render_analysis.role_counts` 里过滤掉 `unknown` → 测试 2 必红。还原后 sha256 一致。
 
-**Acceptance:** 5 passed；全量 837 passed；`render_html.py` ≤200、`render_analysis.py` ≤200。
+**Acceptance:** 5 passed；全量 837 passed；`render/html.py` ≤200、`render/analysis.py` ≤200。
 
 ---
 
@@ -351,8 +351,8 @@
 | C5 | `e503444` | — | 839 | Approved（0/0/3）；3 条 Minor 里 2 条进 C7 批处理（cli.py 陈旧 docstring、测试 2 的 `meta.paper` 全字典断言），第 3 条 flake 证据链按「未根因」留账 |
 | C6 | `57784b4` | `c78e37e` | 844 → 847 | Important 1：`analysis` 有 modules 缺 totals 时摘要伪造「0 个模块 · 参数量 0」与 34 行表自相矛盾；另有 F-C6-1 排序钉子（`role_counts` 降序与「缺席角色不补 0」零守卫，评审三条变异全绿）+ 六条 Minor，全部在修复轮修掉，复审确认 |
 | C7 | 本提交 | — | 847 | 四条 Minor 批处理：① cli.py docstring 与行为不再矛盾；② `test_code_metrics.py` 1/4 → 1/2；③ 测试 2 补 `meta.paper` 全字典断言；④ R221（第 ⑥ 块排页面末尾）记进 README 已知局限，不开新切片 |
-| C6 修复轮 2 | `b4d12ec` | — | 851 | Important 1：`analysis.modules` 缺口径时 ⑥ 块把「模块行缺失」归因成「骨架模式」（假归因），摘要与 34 行表自相矛盾；修法 4 文件 +148/−54（`render_analysis.py` 三态渲染、`render_symbols.py` 抽出符号表说明句、`spine.html.j2` 4 行、`tests/test_code_html.py` 69 行），另补 R223 tie-break 与两处空表/行数守卫，复审确认 |
-| 收尾评审 | — | `b8d93a3` | 854 | Changes required 1 条 Important（README 与 `analyze_roles.py:14` 把枚举顺序说成判据优先级）+ 4 条 Minor：修法 7 文件 +93/−5，只动一行注释与一句模板文案，产品逻辑零改动；同一提交补 residual `inputs[0]==shape_out`、mlp 闸的 `layer_norm`/`embedding` 两个名字、totals 逐键与 bool 三类守卫（+3 条测试）。定向复审 Approved with minor notes，剩两条 Minor：旧 trace 空态文案无钉子、census 基准点标注过期（均由控制器本提交补上：一条断言 + 本行记录） |
+| C6 修复轮 2 | `b4d12ec` | — | 851 | Important 1：`analysis.modules` 缺口径时 ⑥ 块把「模块行缺失」归因成「骨架模式」（假归因），摘要与 34 行表自相矛盾；修法 4 文件 +148/−54（`render/analysis.py` 三态渲染、`render/symbols.py` 抽出符号表说明句、`spine.html.j2` 4 行、`tests/test_code_html.py` 69 行），另补 R223 tie-break 与两处空表/行数守卫，复审确认 |
+| 收尾评审 | — | `b8d93a3` | 854 | Changes required 1 条 Important（README 与 `analyze/roles.py:14` 把枚举顺序说成判据优先级）+ 4 条 Minor：修法 7 文件 +93/−5，只动一行注释与一句模板文案，产品逻辑零改动；同一提交补 residual `inputs[0]==shape_out`、mlp 闸的 `layer_norm`/`embedding` 两个名字、totals 逐键与 bool 三类守卫（+3 条测试）。定向复审 Approved with minor notes，剩两条 Minor：旧 trace 空态文案无钉子、census 基准点标注过期（均由控制器本提交补上：一条断言 + 本行记录） |
 
 ### C7 交付明细
 
@@ -366,5 +366,5 @@
   | fallback-yellow | 128 | 101 | 4（全 yellow） | 0 | 同上 | 141,271 B | 55,491 B |
 
   三份 `index.html` 都含 `<section id="analysis">`；三份 `trace.json` 都过 `validate_trace` 且 `leaked_absolute` 为 0。
-- **census**（收尾修复轮之后实测，HEAD `b8d93a3`；`b8d93a3` 只改一行注释与一句模板文案，行数不变）：`papertrace/` 递归 86 个 `.py`（b4d12ec 新增 `render_symbols.py`，28 行），无 >200 行；正好 200 行的三个文件（`parse_paper/latex_safe.py`、`render_analysis.py`、`symbols/code_table.py`）都顶格，下次改它们要腾行。`cli.py` 182 行（HEAD 177 + docstring 5 行）；C6 修复轮 2 后全量 **851 passed**，收尾修复轮后 **854 passed**。
+- **census**（收尾修复轮之后实测，HEAD `b8d93a3`；`b8d93a3` 只改一行注释与一句模板文案，行数不变）：`papertrace/` 递归 86 个 `.py`（b4d12ec 新增 `render/symbols.py`，28 行），无 >200 行；正好 200 行的三个文件（`parse_paper/latex_safe.py`、`render/analysis.py`、`symbols/code_table.py`）都顶格，下次改它们要腾行。`cli.py` 182 行（HEAD 177 + docstring 5 行）；C6 修复轮 2 后全量 **851 passed**，收尾修复轮后 **854 passed**。
 - **全量**：847 passed in 139.29s，与 C6 修复轮基线一条不多一条不少（本 Task 只加断言、不加测试条数）。

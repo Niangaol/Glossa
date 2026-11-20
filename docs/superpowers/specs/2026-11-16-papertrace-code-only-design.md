@@ -10,7 +10,7 @@
 
 | 现状（不带 `--paper`） | 证据 |
 |---|---|
-| `symbols.code` **0 条** | `output/demo/code-only/trace.json`；`build_code_symbols` 只在 `papertrace/spine.py:72` 被调用，即只在接论文时执行 |
+| `symbols.code` **0 条** | `output/demo/code-only/trace.json`；`build_code_symbols` 只在 `papertrace/spine/spine.py:72` 被调用，即只在接论文时执行 |
 | HTML ③ 论文公式项清单 / ④ 未对齐清单 / ⑤ 符号表 **全是空态** | `index.html` sections = meta/ops/terms/unresolved/symbols，h2 = ①契约与来源 ②代码算子图 ③论文公式项清单 ④未对齐清单 ⑤符号表 |
 | 唯一有内容的是「算子清单 + 分层算子图」 | 128 节点 / 101 边，其余全靠人自己读 |
 
@@ -37,11 +37,11 @@
 - `papertrace/cli.py` 在 **没有 `--paper`** 时也 `load_entry(args.repo, args.entry)`，用 trace dict 调 `build_code_symbols(mod, doc)` 填 `doc["symbols"]["code"]`。
 - `symbols.paper` 与 `symbols.mapping` 仍是**空数组**（没有论文就没有论文侧符号，也没有映射——空是事实，不是失败）。
 - 复用现成实现，**不改 `code_table.py`**；`defined_at` 由既有的 `relativize_doc` 相对化，零新代码。
-- 结果：无论文 build 后 `symbols.code` = B/T/D/H/Dh 五条，`defined_at` 指向真实行（实测 `tests/fixtures/nanogpt/model.py:20/23/24/65` 与 `papertrace/build_trace.py:20`）。
+- 结果：无论文 build 后 `symbols.code` = B/T/D/H/Dh 五条，`defined_at` 指向真实行（实测 `tests/fixtures/nanogpt/model.py:20/23/24/65` 与 `papertrace/build/trace.py:20`）。
 
 ### B. 模块级「这段代码在做什么」
 
-新模块 `papertrace/analyze_roles.py`：`module_roles(nodes) -> list[dict]`，每个模块一条：
+新模块 `papertrace/analyze/roles.py`：`module_roles(nodes) -> list[dict]`，每个模块一条：
 
 ```python
 {"module_id": "root/transformer.h.0.attn", "class": "CausalSelfAttention",
@@ -69,7 +69,7 @@
 
 ### C. 张量与算力体检
 
-新模块 `papertrace/analyze_metrics.py`：`module_metrics(nodes) -> list[dict]` + `totals(rows)`：
+新模块 `papertrace/analyze/metrics.py`：`module_metrics(nodes) -> list[dict]` + `totals(rows)`：
 
 | 字段 | 定义（诚实边界写死） |
 |---|---|
@@ -101,7 +101,7 @@
 
 ### HTML（③④⑤ 不再是唯一空态）
 
-新增 `papertrace/render_analysis.py`（行构造，≤80 行），模板新增第 ⑥ 块「代码体检」：
+新增 `papertrace/render/analysis.py`（行构造，≤80 行），模板新增第 ⑥ 块「代码体检」：
 
 1. 一句话总量：`34 个模块 · 参数量 29,856 · 峰值激活 2,048 元素 · 估算 FLOPs 884,736（粗估）`
 2. 角色分布：`attention 2 · mlp 2 · stage 8 · unknown 2`——**unknown 必须列出来，不许隐藏**（隐藏就等于宣称全都认出来了）。

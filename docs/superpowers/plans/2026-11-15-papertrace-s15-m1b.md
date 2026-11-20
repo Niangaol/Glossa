@@ -4,7 +4,7 @@
 
 **Goal:** 让 judge 在「结构同构没命中」时也能工作（S15 kind→op 候选回退 + 词法排序），同时把算子节点的 `loc` 从 `model.GPT` 换成真实 `file:line`（M1b），并把三处与代码行为相反的一手文档修正。
 
-**Architecture:** 三个独立单元并行落地 —— `papertrace/align/candidates.py`（新，纯函数，零 LLM 零 torch）、`papertrace/parse_code/loc.py`（填桩，纯字符串解析）、README/docstring 文档修正。波次2 由控制器把候选回退接进 `papertrace/spine.py`（helper 抽到新文件 `papertrace/spine_fallback.py`，因为 spine.py 已 198/200 行）、让 HTML 算子行显示 `basename:line`、并按要求改写 R37 守门测试。
+**Architecture:** 三个独立单元并行落地 —— `papertrace/align/candidates.py`（新，纯函数，零 LLM 零 torch）、`papertrace/parse_code/loc.py`（填桩，纯字符串解析）、README/docstring 文档修正。波次2 由控制器把候选回退接进 `papertrace/spine/spine.py`（helper 抽到新文件 `papertrace/spine/fallback.py`，因为 spine.py 已 198/200 行）、让 HTML 算子行显示 `basename:line`、并按要求改写 R37 守门测试。
 
 **Tech Stack:** Python 3.13.15（系统解释器）+ pydeps（pytest 9.2.0 / jsonschema / jinja2 / sympy / torch 2.15.0+cpu）。**零新依赖（GC13）**：禁 numpy / requests / antlr4 / lark。
 
@@ -25,7 +25,7 @@
 
 ## Global Constraints（12 条，逐字有效，每个 implementer 的 brief 都要原样带上）
 
-1. **单文件 ≤200 行**，口径 `len(pathlib.Path(f).read_text(encoding='utf-8').splitlines())`（Get-Content .Count 少算）。当前贴线：code_table.py 200、latex_safe.py 200、openai_backend.py 199、**spine.py 198**、split_terms.py 196、cli.py 193。**spine.py 的去处已指定为 spine_fallback.py，不许硬塞、不许现场发明别的文件。**
+1. **单文件 ≤200 行**，口径 `len(pathlib.Path(f).read_text(encoding='utf-8').splitlines())`（Get-Content .Count 少算）。当前贴线：code_table.py 200、latex_safe.py 200、openai_backend.py 199、**spine.py 198**、split_terms.py 196、cli.py 193。**spine.py 的去处已指定为 spine/fallback.py，不许硬塞、不许现场发明别的文件。**
 2. 禁 mock 填产品输出；测试注入的假后端必须**单实例跨调用保持状态**，且**必须断言被测路径真被走到**（计数器 +1）。
 3. 默认 offline；judge 禁自由生成；JUDGE_PROMPT / DRILL_PROMPT 正文一字不许改（sha256 钉扎在 tests/test_spine_judge.py）。
 4. 公式写死：`c = sigmoid(4·(0.30·s_retr + 0.50·s_judge + 0.20·s_struct − 0.5))`；绿线 0.75 + **s_struct ≥ 0.5 门**；黄线 0.45。**R112 只封 tier，绝不改 signals / confidence / s_struct**（R69）。
@@ -219,14 +219,14 @@ def loc_from_stack_trace(stack_trace: str) -> str
 
 ## 波次 2（控制器独占，串行）
 
-### Task D: 集成（spine_fallback.py + spine.py + render_html + 测试改写）
+### Task D: 集成（spine/fallback.py + spine.py + render_html + 测试改写）
 
 **Files（全部控制器独占，波次1 的子智能体禁碰）:**
-- 新建 `papertrace/spine_fallback.py`（≤200）
-- 改 `papertrace/spine.py`（198 → **净增尽量为 0**，分组块搬走）
-- 改 `papertrace/render_html.py`（176/200）
+- 新建 `papertrace/spine/fallback.py`（≤200）
+- 改 `papertrace/spine/spine.py`（198 → **净增尽量为 0**，分组块搬走）
+- 改 `papertrace/render/html.py`（176/200）
 - 改 `papertrace/templates/spine.html.j2`
-- 改 `tests/test_imports.py`（MODULES 加 `papertrace.align.candidates`、`papertrace.spine_fallback`）
+- 改 `tests/test_imports.py`（MODULES 加 `papertrace.align.candidates`、`papertrace.spine.fallback`）
 - 改 `tests/test_spine_end_to_end.py`（**R115 改写**）
 - 改 `tests/test_spine_html.py`
 - 新建 `tests/test_spine_fallback.py`
@@ -234,7 +234,7 @@ def loc_from_stack_trace(stack_trace: str) -> str
 
 **Produces:**
 ```python
-# papertrace/spine_fallback.py
+# papertrace/spine/fallback.py
 def pairs_or_fallback(signal, terms, nodes, *, per_term_limit=3, total_limit=12) -> tuple[dict, bool]
 def resolve_code_range(node_ids: list[str], confirmed_id: str | None, fallback: bool) -> str
 def cap_tier(level: str, fallback: bool) -> str
@@ -255,12 +255,12 @@ def cap_tier(level: str, fallback: bool) -> str
   - `backend.calls >= 1`（证明 judge 真被问了 —— 这与原测试相反，是 S15 的目的）。
   - **另立** `test_offline_structural_miss_stays_honestly_empty`：offline（无注入后端）+ 结构不命中 → `anchors == []`、`backend.calls == 0`、4 条 unresolved 的 ref 恰为 `S3.2-eq-attn-t0..t3`、reason 仍含「结构同构未命中，没有可判断的候选对」且含 `s_struct=0.60`。**原测试的这几条断言一条不许丢，全部迁到这里。**
 - [x] **Step 3**: 确认 RED（新文件/改写处未实现时必红）。
-- [x] **Step 4**: 实现 `spine_fallback.py` + 改 `spine.py`:
+- [x] **Step 4**: 实现 `spine/fallback.py` + 改 `spine.py`:
   - `spine.py:121-126` 的 `if not node_ids:` 分支 → `grouped, fallback = pairs_or_fallback(signal, terms, doc["nodes"])`（分组块搬进 helper），空则仍走 `_record_unresolved`。
   - `_judge_pairs` 返回三元组（R118）；回退路径把 confirmed id 传给 `resolve_code_range`，非回退路径传 `None`。
   - `level` 过一遍 `cap_tier(level, fallback)`，降级时把「结构同构未命中，候选来自算子类型回退，不出绿线」拼进 evidence。
   - **绝不改 signals / confidence / s_struct**。
-- [x] **Step 5**: 改 `render_html.py` + 模板：算子行补 `<span class="loc" title="<完整路径>"><basename>:<line></span>`；`loc` 为空或不是 `file:line`（module 节点/回落 `model.GPT`）→ 不渲染该 span（**不编**）。
+- [x] **Step 5**: 改 `render/html.py` + 模板：算子行补 `<span class="loc" title="<完整路径>"><basename>:<line></span>`；`loc` 为空或不是 `file:line`（module 节点/回落 `model.GPT`）→ 不渲染该 span（**不编**）。
 - [x] **Step 6**: `tests/test_imports.py` 的 MODULES 加两个模块。
 - [x] **Step 7**: 全量 + GC8 + 四输入 + 行数 census:
   ```powershell
@@ -304,7 +304,7 @@ def cap_tier(level: str, fallback: bool) -> str
 ## 自审（写完计划后逐条核过）
 
 1. **每个 Task 的「Files」与「Steps」自洽**：Task A 只碰 align/ 与 tests/；Task B 只碰 parse_code/ 与 tests/；Task C 只碰三个文档位；无交叠。
-2. **波次2 没有「现场发明文件」**：spine_fallback.py、tests/test_spine_fallback.py 都写进了 Files 与 MODULES。
+2. **波次2 没有「现场发明文件」**：spine/fallback.py、tests/test_spine_fallback.py 都写进了 Files 与 MODULES。
 3. **精确值只出现在本计划与 brief 里**，派发书不复述整份计划。
 4. **每条裁决都能回指用户拍板或 builder-check 证据**（R112/R115 有用户原话，R117 有 M2 的 35-vs-3 实测）。
 5. **验收两段**：波次1 只到函数级，端到端收益在波次2（builder-check S8）。

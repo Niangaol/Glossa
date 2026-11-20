@@ -4,7 +4,7 @@
 > 不要跳步，不要把多个 Task 合成一次提交。每个 Task 结束时全量 pytest 必须绿。
 
 - **Goal**：让 `build --repo … --paper …` 真跑通一条端到端脊柱（论文 → 公式项 → 符号 → 信号 → 分档 → trace.json → 单文件 HTML），并落地 U1 绿线门 `s_struct ≥ 0.5`。offline 下诚实空态，配了 openai 兼容后端就点亮。
-- **Architecture**：一条直线十段。代码侧沿用 M1a 的 `trace_module`（不改）；新增 `papertrace/spine.py` 做编排；`cli.py` 只负责把 `--paper` 接上去。所有跨模块数据只走 `schema/trace.schema.json`。
+- **Architecture**：一条直线十段。代码侧沿用 M1a 的 `trace_module`（不改）；新增 `papertrace/spine/spine.py` 做编排；`cli.py` 只负责把 `--paper` 接上去。所有跨模块数据只走 `schema/trace.schema.json`。
 - **Tech Stack**：Python 3.13.15（本机唯一可用）、torch 2.15.0+cpu、sympy 1.14.0、jinja2 3.1.6、jsonschema 4.26.0、pytest 9.2.0，全部已在 `pydeps/` 且实测 import 成功。**`pydeps/` 里没有 numpy、没有 requests**：向量用 `list[list[float]]`，HTTP 用 `urllib.request`。
   - ⚠️ 实测 `import numpy` 在本机**能成功**（2.5.4，来自系统 site-packages，不在 `pydeps/`）。**仍然禁止依赖它**——框架切片第二轮评审的 C2 就是「顶层 import numpy 但依赖里没有，干净机器上全炸，本机全绿只是环境侥幸」。同理任何不在 `pydeps/` 的包都不许 import。
 - **Spec**：`docs/superpowers/specs/2026-11-14-papertrace-spine-design.md`（**已批 m03858**）；上游 `docs/superpowers/plans/2026-11-14-papertrace-engineering-plan.md`。
@@ -45,8 +45,8 @@
 - 改 `papertrace/constants.py`（26 行 → 约 30 行）：新增 `GREEN_STRUCT_MIN = 0.5`
 - 新 `papertrace/align/tier.py`（约 45 行）
 - 改 `schema/trace.schema.json`：`$defs.anchor.properties` 增加可选 `tier` 与 `signals`
-- 新 `papertrace/schema_anchor.py`（约 55 行）：anchor 的跨字段不变量
-- 改 `papertrace/schema_structure.py`（129 行 → 约 135 行）：在 `structural_errors` 末尾调用 `anchor_errors(doc)`
+- 新 `papertrace/schema/anchor.py`（约 55 行）：anchor 的跨字段不变量
+- 改 `papertrace/schema/structure.py`（129 行 → 约 135 行）：在 `structural_errors` 末尾调用 `anchor_errors(doc)`
 - 新 `tests/test_spine_tier.py`
 
 **Interfaces**
@@ -69,7 +69,7 @@
 2. 跑 `python -m pytest tests/test_spine_tier.py -q` → **必须红**（`ModuleNotFoundError: papertrace.align.tier`）。把红的原因记进账本。
 3. 在 `constants.py` 加 `GREEN_STRUCT_MIN = 0.5`，注释写明这是 U1（年糕 m03751 拍板），门只降不升。
 4. 写 `papertrace/align/tier.py`：`tier()` 与 `tier_reason()`。docstring 要写清「为什么门长在这里而不是 HTML 里」——因为渲染时只有 confidence 无法执行门。
-5. 改 schema 加两个可选字段；写 `papertrace/schema_anchor.py::anchor_errors`，在 `schema_structure.structural_errors` 末尾 `errors.extend(anchor_errors(doc))`。
+5. 改 schema 加两个可选字段；写 `papertrace/schema/anchor.py::anchor_errors`，在 `schema_structure.structural_errors` 末尾 `errors.extend(anchor_errors(doc))`。
 6. 跑 `python -m pytest tests/test_spine_tier.py -q` → 绿。
 7. 跑全量 `python -m pytest -q` → **448 + 新增 全绿**。若旧测试因 schema 变化红，说明改动不是纯增量，回头修。
 8. 变异探针：把 `tier()` 里的 `and s_struct >= GREEN_STRUCT_MIN` 删掉 → 确认 U1 反例用例红 → 还原 → 确认 restored。
@@ -183,7 +183,7 @@
 - `tests/fixtures/nanogpt/model.py:158-169` 的 `build_model()` 用 `GPTConfig(block_size=16, vocab_size=64, n_layer=2, n_head=4, n_embd=32, dropout=0.0, bias=False)`
 - **`GPTConfig` 没有 `head_dim` 字段**（`model.py:19-26` 只有 block_size/vocab_size/n_layer/n_head/n_embd/dropout/bias）。`Dh` 必须**派生**：`D // H`，`defined_at` 指向真正算它的地方 `model.py:65`（`C // self.n_head`）。工程计划书 Task 6 写的「Dh=head_dim」在这个夹具上不成立，按派生处理并记进账本。
 - 符号名冻结 `B,T,D,H,Dh`（`Dh=D/H`）。映射：`n_embd→D`、`n_head→H`、`block_size→T`、派生→`Dh`、运行时 batch→`B`
-- `B` 不是 config 字段：`value` 取 `bundle["meta"]["runtime"]["batch"]`，`defined_at` 指向 `papertrace/build_trace.py:20`（`DEFAULT_BATCH = 2`）
+- `B` 不是 config 字段：`value` 取 `bundle["meta"]["runtime"]["batch"]`，`defined_at` 指向 `papertrace/build/trace.py:20`（`DEFAULT_BATCH = 2`）
 - **`T` 记声明值 `block_size=16`，而运行时实际序列长度是 8**（`example_inputs_for` 取 `min(block_size, DEFAULT_SEQ_LEN=8)`）。符号表记的是**声明超参**，运行时形状在 nodes 里；两者对账属 M4，本切片不做，但必须在 README 写清这个区别，不能让人以为 T=16 就是跑出来的形状。
 - `defined_at` 必须是真实的 `文件:行号`：用 `inspect.getsourcefile(type(mod))` + 读 config 类源码，正则匹配 `^\s*{var}\s*[:=]` 定位行。找不到就**不写这个符号**，改成 `unresolved{kind:"symbol"}`，绝不编一个行号。
 
@@ -348,9 +348,9 @@
 ## Task S9：编排 spine + 打通 --paper
 
 **Files**
-- 新 `papertrace/spine.py`（约 180 行，**贴着 200 行上限，写之前先算**）
+- 新 `papertrace/spine/spine.py`（约 180 行，**贴着 200 行上限，写之前先算**）
 - 改 `papertrace/cli.py`（157 行 → 约 170 行）：删掉 `:79-81` 的硬拒绝，接上 spine
-- 改 `papertrace/build_trace.py`：**不改**（181 行，加编排会破 200；编排放在 spine.py）
+- 改 `papertrace/build/trace.py`：**不改**（181 行，加编排会破 200；编排放在 spine.py）
 - 新 `tests/test_spine_end_to_end.py`
 
 **Interfaces**
@@ -388,7 +388,7 @@
 ## Task S10：单文件离线 HTML
 
 **Files**
-- 新 `papertrace/render_html.py`（约 150 行）
+- 新 `papertrace/render/html.py`（约 150 行）
 - 新 `papertrace/templates/spine.html.j2`（jinja2 模板，**不算源文件行数**，但要保持可读）
 - 改 `papertrace/cli.py`：build 成功后写 `output/index.html`
 - 新 `tests/test_spine_html.py`

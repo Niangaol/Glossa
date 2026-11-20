@@ -22,7 +22,7 @@ _FIELD_LINE = r"^\s*{name}\s*[:=]"
 #: Dh 的真正算式：C // self.n_head（夹具 model.py:65）。绝不退回 head_dim。
 _HEAD_DIM_LINE = re.compile(r"//\s*(?:self\.)?n_head\b")
 
-#: B 的声明点：papertrace/build_trace.py 里的 DEFAULT_BATCH（brief/R31）。
+#: B 的声明点：papertrace/build/trace.py 里的 DEFAULT_BATCH（brief/R31）。
 _BATCH_CONST = "DEFAULT_BATCH"
 
 
@@ -123,17 +123,17 @@ def _locate_head_dim(mod):
 
 
 def _batch_defined_at():
-    """B 的声明点：build_trace.py 里的 `DEFAULT_BATCH = 2`（brief/R31）。"""
+    """B 的声明点：build/trace.py 里的 `DEFAULT_BATCH = 2`（brief/R31）。"""
     path = None
     try:
-        from papertrace import build_trace as _module
+        from papertrace.build import trace as _module
 
         path = inspect.getsourcefile(_module)
     except ImportError:
         path = None
     if not path:
         # 退化路径：build_trace 就在本包隔壁，读的是同一个文件，不 import 也不猜
-        path = str(Path(__file__).resolve().parents[1] / "build_trace.py")
+        path = str(Path(__file__).resolve().parents[1] / "build" / "trace.py")
     hit = _find_line(_read_lines(path), _BATCH_CONST)
     return f"{path}:{hit}" if hit else None
 
@@ -162,7 +162,7 @@ def build_code_symbols(mod, bundle) -> list[dict]:
       不是运行时 seq_len——后者是 min(block_size, DEFAULT_SEQ_LEN)，R32）、
       D（config.n_embd）、H（config.n_head）、Dh（**派生** D // H，RF4）。
     - 值来自实例化后的 `mod.config`，定义位置来自**类源码**（R31）：
-      B→build_trace.py 的 DEFAULT_BATCH，T/D/H→config 类体里的字段行，
+      B→build/trace.py 的 DEFAULT_BATCH，T/D/H→config 类体里的字段行，
       Dh→真正算 head 维的那一行 `C // self.n_head`。
     - Dh = D // H 向下取整（R20）：`D % H != 0` 时仍然发出向下取整的 Dh；
       与论文侧 d_k 的精确对账是 M4 的事。codeSymbol 没有"近似"字段，

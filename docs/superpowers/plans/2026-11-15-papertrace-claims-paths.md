@@ -6,8 +6,8 @@
 **Goal:** 让「一个公式项 ↔ 一个算子节点」的归属在同一公式单元内唯一，并把 trace.json 里的本机绝对路径改成
 可分享的相对路径。
 
-**Architecture:** 两块新逻辑各自独立成模块（`papertrace/spine_claims.py`、`papertrace/paths.py`），
-只在控制器独占的波次里接线到 `papertrace/spine.py` 与 `papertrace/cli.py`。三个实现 Task 写作用域互不重叠，
+**Architecture:** 两块新逻辑各自独立成模块（`papertrace/spine/claims.py`、`papertrace/paths.py`），
+只在控制器独占的波次里接线到 `papertrace/spine/spine.py` 与 `papertrace/cli.py`。三个实现 Task 写作用域互不重叠，
 可一次并行派发；集成与既有测试改写由控制器串行完成。
 
 **Tech Stack:** Python 3.13（无新依赖）、pytest、torch.fx（既有）、jinja2（既有）。
@@ -28,7 +28,7 @@
 8. **测试不许用 `pytest tmp_path`**（沙箱递归删除 WinError 5），一律 `tests/_tmp.py::scratch_dir`。
 9. **每个 Task 一次提交**；提交信息用英文 `feat:` / `fix:` / `docs:` 前缀。
 10. **变异探针**：改产品代码让某条测试红 → 还原并核对 sha256；锚串先验证全仓唯一。
-11. 不许把 `papertrace/spine.py` 超到 200 行以上：本片要求它接完线后 **≤200**（搬出 `_judge_pairs`/`_node_text` 腾出空间）。
+11. 不许把 `papertrace/spine/spine.py` 超到 200 行以上：本片要求它接完线后 **≤200**（搬出 `_judge_pairs`/`_node_text` 腾出空间）。
 12. 不许改 `papertrace/align/struct_signal.py` 的 `KIND_TO_OPS`；不许改 `schema/trace.schema.json`（本片不需要）。
 
 ## Review Focus
@@ -44,19 +44,19 @@
 
 | 文件 | 职责 | 谁写 |
 |---|---|---|
-| `papertrace/spine_claims.py`（新） | 认领唯一性：`node_text` / `unclaimed` / `judge_first_yes` / `duplicate_claims` / `CLAIMED_REASON` | Task A |
+| `papertrace/spine/claims.py`（新） | 认领唯一性：`node_text` / `unclaimed` / `judge_first_yes` / `duplicate_claims` / `CLAIMED_REASON` | Task A |
 | `tests/test_spine_claims.py`（新） | 上述函数的函数级测试 | Task A |
 | `papertrace/paths.py`（新） | 路径便携化：`portable_path` / `portable_loc` / `relativize_doc` | Task B |
 | `tests/test_paths.py`（新） | 上述函数的函数级测试 + 四字段覆盖 | Task B |
 | `README.md`、`papertrace/align/candidates.py`（仅 docstring） | 说真话：唯一性已做、路径已相对化 | Task C |
-| `papertrace/spine.py`、`papertrace/cli.py`、`tests/test_imports.py`、`tests/test_spine_end_to_end.py` | 接线与端到端 | 控制器（波次2） |
+| `papertrace/spine/spine.py`、`papertrace/cli.py`、`tests/test_imports.py`、`tests/test_spine_end_to_end.py` | 接线与端到端 | 控制器（波次2） |
 
 ---
 
-### Task A: 认领唯一性模块（`papertrace/spine_claims.py`）
+### Task A: 认领唯一性模块（`papertrace/spine/claims.py`）
 
 **Files:**
-- Create: `papertrace/spine_claims.py`（目标 ≤120 行）
+- Create: `papertrace/spine/claims.py`（目标 ≤120 行）
 - Test: `tests/test_spine_claims.py`
 
 **Interfaces:**
@@ -73,7 +73,7 @@
   ```
 
 **行为约定（冻结）:**
-1. `node_text` 与 `papertrace/spine.py:184-187` **逐字等价**（`op label loc in=shape_in out=shape_out`，`.strip()`）。
+1. `node_text` 与 `papertrace/spine/spine.py:184-187` **逐字等价**（`op label loc in=shape_in out=shape_out`，`.strip()`）。
 2. `unclaimed` 保序返回，不改入参。
 3. `judge_first_yes`：按 `node_ids` 顺序跳过 `claimed` 里的 id、以及 `by_id` 里没有的 id；
    对剩下的逐个 `judge(term_text, node_text(node))`；第一个 `judge_score > 0` 的返回
@@ -93,7 +93,7 @@
   - `test_duplicate_claims_reports_repeated_ids`：`{0:['a','b'], 1:['b','a']}` → `['a','b']`。
   - `test_claimed_reason_mentions_claim_and_same_unit`：`CLAIMED_REASON` 同时含「认领」「同一」。
   - 假后端纪律：**单实例跨调用**，且断言被测路径真被走到（`calls`）。
-- [ ] **Step 2: 跑测试确认红**（`ModuleNotFoundError: papertrace.spine_claims` 或 AttributeError）。
+- [ ] **Step 2: 跑测试确认红**（`ModuleNotFoundError: papertrace.spine.claims` 或 AttributeError）。
 - [ ] **Step 3: 实现** 上述五个名字；`node_text` 直接从 spine 搬。
 - [ ] **Step 4: 跑测试确认绿**；再跑全量确认零回归（基线 **757 passed**）。
 - [ ] **Step 5: 变异探针**：把 `judge_first_yes` 里跳过 `claimed` 的那行删掉 → `test_claimed_candidate_is_skipped` 必红；还原并核 sha256。
@@ -158,7 +158,7 @@
 
 - [ ] **Step 1: 改 `candidates.py` docstring**：把「**不做跨 term 唯一性约束**……去重等于编造『唯一归属』」
   改成如实描述：候选生成器本身**仍然**不做跨 term 去重（它是纯函数、不知道谁被认领），
-  唯一性由 `papertrace/spine_claims.py` 在编排层执行；并写清 R135 的理由与「跨单元允许共享」。
+  唯一性由 `papertrace/spine/claims.py` 在编排层执行；并写清 R135 的理由与「跨单元允许共享」。
 - [ ] **Step 2: README 新增「一个算子只归一个公式项」小节**：说明同单元独占、跨单元可共享、被占尽的项落 unresolved、
   以及贪心而非最大匹配的已知局限（引设计文档 §6）。
 - [ ] **Step 3: README 新增/改写「路径是相对 cwd 的」小节**：四类字段、`/` 分隔符、跨目录打开会指错、
@@ -171,15 +171,15 @@
 ### Task D（控制器独占，串行）: 接线 + 既有测试改写
 
 **Files:**
-- Modify: `papertrace/spine.py`（搬出 `_judge_pairs`/`_node_text` 到 `spine_claims`，`_attach_unit` 持 `claimed`，
+- Modify: `papertrace/spine/spine.py`（搬出 `_judge_pairs`/`_node_text` 到 `spine_claims`，`_attach_unit` 持 `claimed`，
   结构路径重复 → `BuildError`；接完线 **≤200 行**）
 - Modify: `papertrace/cli.py`（`dump_trace` 之前调 `relativize_doc`，打印改写条数可省）
-- Modify: `tests/test_imports.py`（MODULES 加 `papertrace.spine_claims`、`papertrace.paths`）
+- Modify: `tests/test_imports.py`（MODULES 加 `papertrace.spine.claims`、`papertrace.paths`）
 - Modify: `tests/test_spine_end_to_end.py`（新增端到端断言）
 
 **Interfaces:** 消费 Task A 的四个名字与 Task B 的三个名字（签名见上，逐字）。
 
-- [ ] **Step 1**: `spine.py` 改用 `from papertrace.spine_claims import CLAIMED_REASON, judge_first_yes, node_text, unclaimed`；
+- [ ] **Step 1**: `spine.py` 改用 `from papertrace.spine.claims import CLAIMED_REASON, judge_first_yes, node_text, unclaimed`；
   删除本地 `_judge_pairs`/`_node_text`；`_attach_unit` 建 `claimed: set[str] = set()` 顺序传参。
 - [ ] **Step 2**: `_attach_term` 里 `available = unclaimed(node_ids, claimed)`；`available` 空但 `node_ids` 非空 →
   记 unresolved（cause = `CLAIMED_REASON`）；否则 `judge_first_yes(...)`。
@@ -210,7 +210,7 @@
 - **Step 5（补）**：黄线 `alternatives` 过滤掉 `claimed` 里的 id（R151）。
 - **Step 6（补）**：`cli.py` 用 `try/except BuildError` 包住 `attach_paper`，打印一行 + 返回 2（R148）；
   `dump_trace` 之前调 `relativize_doc(doc)`；cli.py 改完 ≤200 行。
-- **Step 7（补）**：`papertrace/spine_fallback.py:11` 的 `spine._judge_pairs` 改指 `spine_claims.judge_first_yes`（R152）。
+- **Step 7（补）**：`papertrace/spine/fallback.py:11` 的 `spine._judge_pairs` 改指 `spine_claims.judge_first_yes`（R152）。
 
 **既有测试的改动清单（分栏，R145）**：
 
@@ -219,7 +219,7 @@
 | 修改 | `tests/test_spine_end_to_end.py:199-204` `test_meta_paper_is_tex` | `paper["source"]` 期望改成 `"tests/fixtures/papers/vaswani2017/attention.tex"`（相对 cwd，`/` 分隔） |
 | 修改 | `tests/test_spine_end_to_end.py:390-442` 回退认领测试 | t3 的 `code_range` 期望改成 `"root/@045"`（该 term 候选组里第一个未被认领的节点），注释写明这是 S20 的结果 |
 | 修改 | `tests/test_spine_end_to_end.py:390-442` 回退认领测试的**输入** pairs | 被 R144 守门逼出的输入调整：旧 pairs 让 @038 同时属 t0 与 t1 → 新产品直接抛 BuildError，故 t1 候选 @038→@039（t0 期望一字未动） |
-| 新增 | `tests/test_imports.py` MODULES | 加 `papertrace.spine_claims`、`papertrace.paths` |
+| 新增 | `tests/test_imports.py` MODULES | 加 `papertrace.spine.claims`、`papertrace.paths` |
 | 新增 | `tests/test_spine_end_to_end.py` | `test_two_terms_never_claim_the_same_node`、`test_exhausted_candidates_report_claim_not_absence`、`test_structural_duplicate_is_a_build_error`、`test_cli_trace_has_no_drive_letters`、`test_gc16_anchors_do_not_share_nodes` |
 
 **新测试的 cwd 纪律（R150）**：所有走 CLI 的新测试必须 `subprocess.run(..., cwd=REPO_ROOT)`，不要继承 pytest 启动目录。
@@ -229,7 +229,7 @@
 
 | 波次 | 谁 | 写作用域 | 依赖 |
 |---|---|---|---|
-| 1 | Task A、Task B、Task C **并行三派** | `spine_claims.py`+`tests/test_spine_claims.py` / `paths.py`+`tests/test_paths.py` / `README.md`+`candidates.py` | 无 |
+| 1 | Task A、Task B、Task C **并行三派** | `spine/claims.py`+`tests/test_spine_claims.py` / `paths.py`+`tests/test_paths.py` / `README.md`+`candidates.py` | 无 |
 | 2 | 控制器 | `spine.py`、`cli.py`、`test_imports.py`、`test_spine_end_to_end.py` | 波次1 三个提交 |
 | 3 | 三份独立评审 **并行 fan-out** | 只读 | 波次2 |
 | 4 | 一个 fix agent 带完整清单 → 恰好一次定向复审 | 按 review 清单 | 波次3 |
@@ -248,8 +248,8 @@
 
 | 波次 | 内容 | 结果 |
 |---|---|---|
-| 1 | 三路并行实现：Task A 认领唯一性、Task B 路径便携化、Task C 文档 | `8987b57`（spine_claims.py 70 行 + 7 测试）、`681a29b`（paths.py 83 行 + 8 测试）、`048ada1`（README 两节 + candidates.py docstring） |
-| 2 | 控制器接线：spine.py / cli.py / spine_fallback.py，并按 R145 改写三处既有测试 | 全量 780 passed |
+| 1 | 三路并行实现：Task A 认领唯一性、Task B 路径便携化、Task C 文档 | `8987b57`（spine/claims.py 70 行 + 7 测试）、`681a29b`（paths.py 83 行 + 8 测试）、`048ada1`（README 两节 + candidates.py docstring） |
+| 2 | 控制器接线：spine.py / cli.py / spine/fallback.py，并按 R145 改写三处既有测试 | 全量 780 passed |
 | 3 | 三路独立评审并行（路径 / 认领 / 集成） | Critical 0，Important 6（路径 2、认领 1、集成 3），Minor 14 |
 | 4 | 一个 fixer 带 F1–F6 清单一次修完 + 恰好一次定向复审 | `a490da9`（9 files +479/−31），全量 **787 passed**；复审 **ALL ADDRESSED / 0 open**，新破损 0 |
 
@@ -268,7 +268,7 @@
 
 ### 留待后续（已记账，不在本切片）
 
-- `_attach_term` 9 个位置参数 → 小对象重构（`papertrace/spine.py` 正好 200 行零余量，须与 M4 第 0 步的拆文件一起做）。
+- `_attach_term` 9 个位置参数 → 小对象重构（`papertrace/spine/spine.py` 正好 200 行零余量，须与 M4 第 0 步的拆文件一起做）。
 - `relativize_doc` 与 `leaked_absolute` 与提示文案三处都吃默认 `base=Path.cwd()`：今天同源但没有测试钉住（复审判为可推迟，最坏后果是提示报错基准、不影响产物）。
 - `CLAIMED_REASON` 不点名「占位者」是谁（文案 R146 冻结，可读性 Minor）。
 - 子目录 cwd 构建（如 `cd tests && papertrace build`）产物路径相对子目录——GC14 允许，但用户可能意外；暂无提示。

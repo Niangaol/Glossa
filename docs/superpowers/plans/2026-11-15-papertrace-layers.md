@@ -38,20 +38,20 @@
 ## Task L1: 拆 spine.py（纯重构，行为零变化）
 
 **Files:**
-- Create: `papertrace/spine_anchor.py`
-- Modify: `papertrace/spine.py`（200 → 约 135 行）
+- Create: `papertrace/spine/anchor.py`
+- Modify: `papertrace/spine/spine.py`（200 → 约 135 行）
 - Test: `tests/test_spine_tier.py:169`（import 改指新模块）、`tests/test_spine_end_to_end.py`（不改）
 
 **Interfaces:**
-- Produces（`spine_anchor.py`）：
+- Produces（`spine/anchor.py`）：
   - `attach_term(doc: dict, unit, term, signal, retrieval, node_ids: list[str], by_id: dict, fallback: bool, claimed: set[str]) -> None`
   - `record_unresolved(doc: dict, term_id: str, cause: str, retrieval: dict, signals: dict) -> None`
   - 常量 `FALLBACK_EVIDENCE`、`ALTERNATIVE_LIMIT`、`EVIDENCE_LIMIT`
 - 保持：`spine.attach_paper(doc, paper_src, model) -> dict`、`spine._attach_unit`、`spine._model_meta`、`spine.UNSPLITTABLE_REASON`、`spine.NO_CANDIDATE_REASON`、`spine.FALLBACK_PAIR_NOTE`
 
 - [x] **Step 1** 把 `_attach_term`（spine.py:121-174）、`_record_unresolved`（:177-187）与常量 `FALLBACK_EVIDENCE/ALTERNATIVE_LIMIT/EVIDENCE_LIMIT` 整体搬到新文件，去掉前导下划线，模块 docstring 写清「这是 S9 的单公式项落盘逻辑，逐层展开由调用方循环」。
-- [x] **Step 2** `spine.py` 改成 `from papertrace.spine_anchor import (ALTERNATIVE_LIMIT, FALLBACK_EVIDENCE, EVIDENCE_LIMIT, attach_term, record_unresolved)`，调用点改名。
-- [x] **Step 3** `tests/test_spine_tier.py:169` 的 import 改成 `from papertrace.spine_anchor import record_unresolved`，:177 的调用同步改名。**断言一字不改。**
+- [x] **Step 2** `spine.py` 改成 `from papertrace.spine.anchor import (ALTERNATIVE_LIMIT, FALLBACK_EVIDENCE, EVIDENCE_LIMIT, attach_term, record_unresolved)`，调用点改名。
+- [x] **Step 3** `tests/test_spine_tier.py:169` 的 import 改成 `from papertrace.spine.anchor import record_unresolved`，:177 的调用同步改名。**断言一字不改。**
 - [x] **Step 4** 跑全量：**787 passed，零改动**；census 两个文件都 ≤200。
 - [x] **Step 5** 变异探针：把 `record_unresolved` 里的 `< {CONF_YELLOW:.2f}` 改成 `<= {CONF_YELLOW:.2f}` → `tests/test_spine_tier.py` 的边界用例必红 → 还原 + sha256。
 - [x] **Step 6** 提交 `refactor: split the single-term anchor writer out of spine`
@@ -126,8 +126,8 @@ def test_single_group_reports_exactly_one():
 ## Task L3: spine 逐层出 anchor（认领按层隔离）
 
 **Files:**
-- Modify: `papertrace/spine_anchor.py`（+ `code_group` 参数与落盘）
-- Modify: `papertrace/spine.py`（结构路径按组循环；回退路径不变）
+- Modify: `papertrace/spine/anchor.py`（+ `code_group` 参数与落盘）
+- Modify: `papertrace/spine/spine.py`（结构路径按组循环；回退路径不变）
 - Modify: `schema/trace.schema.json`（anchor 加可选 `code_group`）
 - Test: `tests/test_spine_end_to_end.py`（新增 6 条 + 按 R168 改期望值）、`tests/test_spine_struct.py`（不动）
 
@@ -175,8 +175,8 @@ def test_code_group_is_declared_in_schema(...):
 ## Task L4: HTML 显示层
 
 **Files:**
-- Create: `papertrace/render_terms.py`
-- Modify: `papertrace/render_html.py`（199 → 约 150）、`papertrace/templates/spine.html.j2`
+- Create: `papertrace/render/terms.py`
+- Modify: `papertrace/render/html.py`（199 → 约 150）、`papertrace/templates/spine.html.j2`
 - Test: `tests/test_spine_html.py`（新增 3 条）
 
 **Interfaces:**
@@ -185,7 +185,7 @@ def test_code_group_is_declared_in_schema(...):
 
 - [x] **Step 1 写失败测试**：`test_terms_table_has_one_row_per_layer`（8 行）、`test_layer_column_shows_group_tail`（含 `transformer.h.0.attn` 与 `transformer.h.1.attn`）、`test_ops_graph_draws_links_in_both_layers`（`lnk-` 路径数 == anchor 数，且两个组的 opbox 里都有 lnklabel）。
 - [x] **Step 2 跑确认失败**。
-- [x] **Step 3 实现**（拆 `render_terms.py`、模板加列、StrictUndefined 下新变量必须有值）。
+- [x] **Step 3 实现**（拆 `render/terms.py`、模板加列、StrictUndefined 下新变量必须有值）。
 - [x] **Step 4** 全量 **801 passed**；四种真实输入（无--paper / 带--paper / skeleton+paper / 纯 skeleton）全部 EXIT=0，HTML <8MB。
 - [x] **Step 5** 变异探针：把 `layer` 恒定为 `"—"` → `test_layer_column_shows_group_tail` 必红 → 还原 + sha256。
   **L5-I3 复盘（当时勾的 [x] 是假记录）**：这一步在 L4 落地时并没有真红——旧断言是整页子串 `"h.0.attn" in block`，被 terms 段说明散文里的「（h.0.attn / h.1.attn）」满足，`_layer_of` 恒 `"—"` 测试仍全绿（L4-I2，即 R175：守门必须解析表格行逐字断言）。波次 6 的 F2 已把该测试改成正则抓每行 「层」单元格逐字比，并补 `_layer_cells()` 助手；同款变异复跑 `1 failed in 5.76s`（RED 原文见 .superpowers/sdd/2026-11-15-papertrace-layers/wave6-fix-report.md F2 段），还原后 sha256 复核一致。 教训：变异探针的 RED 输出必须贴进报告才算做过，不能凭「想必会红」勾 [x]。
@@ -222,11 +222,11 @@ def test_code_group_is_declared_in_schema(...):
 | Task | 提交 | 内容 | 全量测试 |
 | --- | --- | --- | --- |
 | 基线 | b04b046 | docs: add the per-layer alignment design plus plan | 787 passed |
-| L1 | bc5affe | refactor: split the single-term anchor writer out of spine（spine.py 200→123，新建 spine_anchor.py 99，行为零变化） | 787 passed |
+| L1 | bc5affe | refactor: split the single-term anchor writer out of spine（spine.py 200→123，新建 spine/anchor.py 99，行为零变化） | 787 passed |
 | L2 | 06889f2 | feat: report every isomorphic layer, keep pairs on the first（struct_signal.py 170→186，StructMatch + StructSignal.groups） | 792 passed |
 | L3 | 91dde12 | feat: anchor every isomorphic layer, isolate claims per group（spine.py 123→139，schema 加可选 code_group，5 files +214/-34） | 798 passed |
-| L4 | 98cfb87 | feat: show which layer each anchor lands in（新建 render_terms.py 50 行，模板加「层」列，4 files +131/-23） | 801 passed |
-| L3b | 157ea99 | fix: let a conservative tier downgrade pass validation（schema_anchor.py 改判据 + 3 条新测试，3 files +113/-8） | 804 passed |
+| L4 | 98cfb87 | feat: show which layer each anchor lands in（新建 render/terms.py 50 行，模板加「层」列，4 files +131/-23） | 801 passed |
+| L3b | 157ea99 | fix: let a conservative tier downgrade pass validation（schema/anchor.py 改判据 + 3 条新测试，3 files +113/-8） | 804 passed |
 | L5 | 本提交 | docs: record per-layer alignment in README, plan and design | 804 passed（不改产品代码与测试） |
 
 **每 Task 一行**：L1 纯重构、L2 报全部同构组、L3 逐层出 anchor 并按「单元 × 组」隔离认领、L4 HTML 一条 anchor 一行 + 层列、L3b 修 tier 复核判据、L5 文档 + 演示 + 本记录段。
@@ -235,13 +235,13 @@ def test_code_group_is_declared_in_schema(...):
 
 **实施期裁决与偏离（计划拍板时没有，实施中定）**：
 
-- **R169**（L3）：结构信号给了 pairs 却没给 groups → BuildError fail-closed，绝不静默降级成回退路径（papertrace/spine.py:103）。产品里两者永远一致，这条守门是给回归留的闸。
+- **R169**（L3）：结构信号给了 pairs 却没给 groups → BuildError fail-closed，绝不静默降级成回退路径（papertrace/spine/spine.py:103）。产品里两者永远一致，这条守门是给回归留的闸。
 - **R170**（L3）：既有只给 pairs 的测试桩必须按逐层口径补 groups（两组 / 一组两种；回退路径桩不动），否则会被 R169 炸掉；断言值按 R168 改，不减断言。
-- **R171 / R172**（L3b，控制器发现）：schema_anchor 的 tier 复核原判据「必须等于 signals 重算结果」会把 R112 回退路径**合法**的 green→yellow 封顶判成造假（实测配置：回退 + 假 yes + 真 embeddings，4 条 anchor 全中）。裁决：判据改成「不得高于重算结果」（rank none(0) < yellow(1) < green(2)），抓升格、放行保守下调；代价：手改把 green 涂成 yellow/none 不再被抓。落地范围只含 schema_anchor.py 判据 + docstring + 3 条新测试，既有 6 条 tier 测试一字不改。
-- **R173**（L3b 控制器发现，deferred 到波次 6）：`papertrace/schema_structure.py:129` 的注释仍写 tier「必须与 signals 重算的门一致（RF3）」，R171 之后已过期（判据改成「不得高于重算结果」）。纯注释、零行为变化，L3b 因范围外未动；波次 6 F5 已改成 R171 秩比较口径（134→135 行）。
+- **R171 / R172**（L3b，控制器发现）：schema_anchor 的 tier 复核原判据「必须等于 signals 重算结果」会把 R112 回退路径**合法**的 green→yellow 封顶判成造假（实测配置：回退 + 假 yes + 真 embeddings，4 条 anchor 全中）。裁决：判据改成「不得高于重算结果」（rank none(0) < yellow(1) < green(2)），抓升格、放行保守下调；代价：手改把 green 涂成 yellow/none 不再被抓。落地范围只含 schema/anchor.py 判据 + docstring + 3 条新测试，既有 6 条 tier 测试一字不改。
+- **R173**（L3b 控制器发现，deferred 到波次 6）：`papertrace/schema/structure.py:129` 的注释仍写 tier「必须与 signals 重算的门一致（RF3）」，R171 之后已过期（判据改成「不得高于重算结果」）。纯注释、零行为变化，L3b 因范围外未动；波次 6 F5 已改成 R171 秩比较口径（134→135 行）。
 - **R174**（L4 评审 I-1）：层列原实现 `code_group.rsplit("/", 1)[-1]` 取末段，与规格「顶层模块前缀 + 点式单段路径」不符——`root/transformer.h.0.attn` 的末段是 `attn`，两层完全相同、层列零信息。裁决口径 = 去掉顶层模块前缀、保留组内路径（`transformer.h.0.attn`）；`root/a/b` 这类嵌套 id 也不能塌成末段。
 - **R175 / R177**（L4 评审 I-2）：层列守门 `test_layer_column_shows_group_tail` 用整页子串 `"h.0.attn" in block`，被模板 terms 段散文里的「（h.0.attn / h.1.attn）」满足——`_layer_of` 恒返回 `"—"` 测试仍全绿，等于没有守门。判据：必须解析表格行取「层」单元格逐字断言，模板散文删掉具体层名。波次 6 F2 落地（新增 `_layer_cells()` 助手 + `_TERM_ROW` 正则），变异复跑 `1 failed in 5.76s`，RED 原文与 sha256 见 `.superpowers/sdd/2026-11-15-papertrace-layers/wave6-fix-report.md`。
-- **R176**（控制器）：实现从 rsplit 取末段改成 `group.split("/", 1)[1]`（无 `/` 原样返回），render_terms.py 50→57 行，docstring 与 plan:181 / design:101 同步改口径。
+- **R176**（控制器）：实现从 rsplit 取末段改成 `group.split("/", 1)[1]`（无 `/` 原样返回），render/terms.py 50→57 行，docstring 与 plan:181 / design:101 同步改口径。
 - **控制器的错（R168 清单，记账）**：R168 清单把 base :367（`test_code_expr_range` 的 `backend.calls`）误列入「→8」，该处是**回退路径**的桩、必须保持 4；L3 implementer 顶住没改，是对的（执行记录 ⑤ 已记）。规约：**清单与实测冲突时，以实测为准**。
 - **R178 / R179 / R180**（L5 评审 I-1 / I-2 / I-3+I-4，波次 6 F3 / F4 / F5+F6 落地）：judge 调用口径改成分路径如实说（README + design + plan 三处）；「>2 层有单测覆盖」是假话，补三组同构合成用例并把文案改成「端到端与 HTML 仍未覆盖」；plan:188 的变异探针假 [x] 已改写成真实记录。
 - **L3 implementer 自曝的 controller-brief 漏项五处**（均已按实施口径纠正，不是缺陷）：① offline 期望 unresolved 4→8（逐层报）；② tests/test_spine_html.py 的 [green]*4 期望 → *8；③ duplicate-guard 测试桩从 pairs_or_fallback 换成 struct_signal；④ two-unit 分组键按「单元 × 组」取；⑤ :367 的 backend.calls==4 必须**保持 4**（该处是回退路径，控制器 R168 清单误列，implementer 纠正）。
@@ -269,12 +269,12 @@ def test_code_group_is_declared_in_schema(...):
 - **F2 / R175+R177**：层列守门改成正则抓表格每行的 (term_id, 层) 两个 `mono` 单元格逐字比。旧断言是整页子串 `"h.0.attn" in block`，被 terms 段说明散文满足——层列恒 `—` 时测试仍全绿，等于没有守门；模板散文里的具体层名同时删掉。
 - **F3 / R178**：judge 调用数按路径分开写。结构路径每个「公式项 × 同构组」只有 1 个候选节点 → 恰好 1 次（夹具 4×2=8）；回退路径候选由 `align/candidates.py` 产出（`per_term_limit=3`、`total_limit=12`），每项 1..3 次、全局最多 12 次。
 - **F4 / R179**：「层数 >2 有单测覆盖」是假话（全仓 `h.2`/`n_layer=3` 零命中）。补一条三组同构的合成用例，文案改成「只有结构信号层的合成用例覆盖，端到端与 HTML 仍未覆盖」。
-- **F5 / R173+R180**：`schema_structure.py:129` 的过期注释改成 R171 秩比较；plan 里「变异探针必红」的假 `[x]` 改写成如实记录；三份旧规格补「M4a 已落地」注记；design 验收第 7 条改成真实值（8 条连线只在测试路径，演示产物 with-paper offline 两子图 0 条）。
-- **F6**：`spine_anchor.py` 恢复两个空行；新增 `test_anchor_schema_declares_code_group`（schema 里删掉 `code_group` 声明原本没人报警）。
+- **F5 / R173+R180**：`schema/structure.py:129` 的过期注释改成 R171 秩比较；plan 里「变异探针必红」的假 `[x]` 改写成如实记录；三份旧规格补「M4a 已落地」注记；design 验收第 7 条改成真实值（8 条连线只在测试路径，演示产物 with-paper offline 两子图 0 条）。
+- **F6**：`spine/anchor.py` 恢复两个空行；新增 `test_anchor_schema_declares_code_group`（schema 里删掉 `code_group` 声明原本没人报警）。
 
-**定向复审（恰好一次，`layers-rer6`）**：六条 Important 全部 ADDRESSED，新破损 Critical/Important/Minor 全 0；评审自己复跑一次层列变异，RED 原文 `AssertionError: S3.2-eq-attn-t0 的两行层值不是逐层组路径：['—', '—']`，还原后 sha256 `faa6aae6…b716ccf` 一致、`git status` 干净。禁改清单（`spine.py`、`align/*`、`spine_claims.py`、`spine_fallback.py`、`paths.py`、`cli.py`、`test_spine_end_to_end.py`、`test_spine_tier.py` 既有断言）一字未动。
+**定向复审（恰好一次，`layers-rer6`）**：六条 Important 全部 ADDRESSED，新破损 Critical/Important/Minor 全 0；评审自己复跑一次层列变异，RED 原文 `AssertionError: S3.2-eq-attn-t0 的两行层值不是逐层组路径：['—', '—']`，还原后 sha256 `faa6aae6…b716ccf` 一致、`git status` 干净。禁改清单（`spine.py`、`align/*`、`spine/claims.py`、`spine/fallback.py`、`paths.py`、`cli.py`、`test_spine_end_to_end.py`、`test_spine_tier.py` 既有断言）一字未动。
 
-评审留两条先存在备案（本波不动）：`tests/test_spine_html.py` 的 `offline_doc` docstring 仍写「unresolved=4」（实际 8，L3 前遗留）；本文件 R173 行的行号括注「134→135」不精确（实际 `schema_structure.py:129-130`）。
+评审留两条先存在备案（本波不动）：`tests/test_spine_html.py` 的 `offline_doc` docstring 仍写「unresolved=4」（实际 8，L3 前遗留）；本文件 R173 行的行号括注「134→135」不精确（实际 `schema/structure.py:129-130`）。
 
 **验收现状（波次 6 后）**：全量 **807 passed**；真夹具 + 假 yes 后端 → 8 条 anchor / judge 8 次 / HTML 8 行、层列 `transformer.h.0.attn` 与 `transformer.h.1.attn`；回退路径 4 条、层列全 `—`；真 offline → 0 anchor / 8 条 unresolved；GC8 不变（nodes=128 算子 75/权重 18/输入 1、edges=101、degraded=2、fused/orphan/shape_broken/shape_unchecked 全 0）；census 无 >200 行；三份演示产物已用当前代码重生成（`code-only` 128/101/0/0、`with-paper` 128/101/0/**8**、`fallback-yellow` 128/101/**4**/0，全部 `validate_trace` 通过、盘符 0 条）。
 

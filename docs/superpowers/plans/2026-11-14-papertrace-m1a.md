@@ -142,7 +142,7 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
 
 ## Task 9: build 接真路径 ✅
 
-**Files:** `papertrace/cli.py`、`papertrace/build_trace.py`、`tests/test_build_real.py`
+**Files:** `papertrace/cli.py`、`papertrace/build/trace.py`、`tests/test_build_real.py`
 
 - [x] 不带 `--skeleton` 走真追踪；`--entry` 默认 **`model:build_model`**（工厂函数，不是 `model:GPT`）。
       原因：`GPT(config)` 需要配置，我们不猜用户的模型规模；零参类仍然可用。
@@ -153,9 +153,9 @@ outputs / dtype / inplace / source / degraded / degraded_reason / repeat=1 / sta
 
 ## Task 10: dump 可读输出 ✅
 
-**Files:** `papertrace/cli.py`、`papertrace/report.py`、`tests/test_cli.py`
+**Files:** `papertrace/cli.py`、`papertrace/render/report.py`、`tests/test_cli.py`
 
-（`cli.py` 只留参数与退出码，排版拆到 `report.py`：`cli.py` 曾涨到 275 行，违反 ≤200 行约束。）
+（`cli.py` 只留参数与退出码，排版拆到 `render/report.py`：`cli.py` 曾涨到 275 行，违反 ≤200 行约束。）
 
 - [x] `dump --trace X --ops` 按拓扑序打印 `id 模块 (in) -> (out) op [degraded: 原因]`；
       `kind != "op"` 的输入形状打 `-`，输入确实未知打 `(?)`（与 0 维的 `()` 区分）。
@@ -273,7 +273,7 @@ observe 也跟着改了：`exported.module()` 的 placeholder 被换成 target �
 去掉 kind 标注 → `--ops` 用例红。
 
 拆分（都因为 ≤200 行）：`fx_modules.py`（模块树）、`fx_signature.py`（input_specs 与真实张量）、
-`schema_structure.py`（结构校验）、`fx_runtime.py`（这次追踪怎么跑的，第九轮从 fx_signature 拆出）。
+`schema/structure.py`（结构校验）、`fx_runtime.py`（这次追踪怎么跑的，第九轮从 fx_signature 拆出）。
 
 **行数口径（踩过坑，钉死）**：用 `len(pathlib.Path(f).read_text(encoding="utf-8").splitlines())`。
 `Get-Content` 在这台机器上会**少算**（fx_nodes 实测 159 vs 真值 175、fx_signature 190 vs 208），
@@ -1006,7 +1006,7 @@ owner 不变）→ **新用例 4 failed（SelfAttnClash/Upper/NestedSelf/SelfX�
 | observe 失败也照常写 trace（标 degraded） | 直接 `TraceUnsupported` / exit 5，不写 trace | 「降级写」和「真实追踪」在一个文件里没法自证；假形状比没有形状更坏 |
 | `inputs` 含权重位置 | 只放数据入参，`shape_in = inputs[0]` | 否则 embedding 的输入是权重 `(64,32)`，形状链从第一跳就假 |
 | 边可以接模块节点 | 边两端必须都是算子，且禁自环 | 模块不是算子，接上只会制造「看起来有形状链」的错觉 |
-| `cli.py` 堆下所有打印 | 拆出 `papertrace/report.py` | 275 行违反 ≤200 行；参数/退出码与排版混在一起难审 |
+| `cli.py` 堆下所有打印 | 拆出 `papertrace/render/report.py` | 275 行违反 ≤200 行；参数/退出码与排版混在一起难审 |
 | 只有顶层参数查 param | 递归到任意容器深度 | `cat([w, x])` 里的权重在 list 里，只看顶层就把权重当输入 |
 | 权重只按「是不是 param 叶子」认 | 另加 `param_derived`：只由权重算出的中间量同样算权重 | `self.w[0]` 是 `select` 算子节点，不是 param 叶子，只看叶子就把它当数据输入 |
 | placeholder 认参数全名 | 只认 mangled 名（`p_`/`b_`） | 全名 `x` 会和形参 `x` 撞车，真输入被吞成权重且会静默 exit 0 |
@@ -1027,7 +1027,7 @@ owner 不变）→ **新用例 4 failed（SelfAttnClash/Upper/NestedSelf/SelfX�
 | `cca2a1a` | 第二遍真实执行判定边形状；`fx_shapes` 拆出；`requested`/`real_execution`；模块路径禁 `@` |
 | `8b710ee` | 第三轮前的文档与账本 |
 | `f58b123` | 第三轮必修：observe 失败即 exit 5、异常翻成 2/5、inputs 只含数据、边两端必须算子且禁自环 |
-| `fc1ca48` | `report.py` 拆出、第三轮文档与账本 |
+| `fc1ca48` | `render/report.py` 拆出、第三轮文档与账本 |
 | `2de86a2` | 第四轮必修：容器里的权重不当输入、畸形 trace 根 exit 2、`-`/`(?)` 三态、`eval()` 异常翻译 |
 | `6a87f7d` | 第四轮文档与账本（README/计划/执行账本同步） |
 | `fce6b2d` | 第五轮必修：mangled 名认权重、权重派生量不算输入、id/端点类型守卫 |

@@ -245,7 +245,7 @@ glossa/explain/render.py 160    glossa/templates/glossa.html.j2 190
 glossa/mcp/__init__.py 4        glossa/mcp/__main__.py 10    glossa/mcp/server.py 150
 glossa/mcp/tools.py 120         glossa/mcp/handlers.py 190
 ```
-复用（只 import，不改）：papertrace/paths.py 的 **portable_path**、papertrace/llm/*、papertrace/exceptions.py、papertrace/exit_codes.py、papertrace/schema_validate.py 的 **dump_trace**、papertrace/constants.py 的 HTML_MAX_BYTES、Jinja2 Environment 口径。
+复用（只 import，不改）：papertrace/paths.py 的 **portable_path**、papertrace/llm/*、papertrace/exceptions.py、papertrace/exit_codes.py、papertrace/schema/validate.py 的 **dump_trace**、papertrace/constants.py 的 HTML_MAX_BYTES、Jinja2 Environment 口径。
 **不可复用（控制器读源码实测）**：schema_validate.validate_trace（内部 structural_errors 查 nodes/symbols）、paths.relativize_doc 与 paths.leaked_absolute（都只覆盖 trace 的四处字段）——这三个是 trace 专用，glossa 用自己的 schema_repo.py 与 repo_paths.py。
 
 ## 21. 新增全局约束 GC29–GC36

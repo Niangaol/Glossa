@@ -3,7 +3,7 @@
 为什么门长在这里而不是 HTML 渲染里：渲染时手上只有一个 confidence 数字，
 执行不了「绿线还要求 s_struct >= GREEN_STRUCT_MIN」这条判据。只有分档函数
 同时见过 c 和 s_struct，门才可能被诚实执行。trace.json 被人手改涂色的问题
-由校验侧的 papertrace/schema_anchor.py 兜底（RF3）——两边都长，缺一边，
+由校验侧的 papertrace/schema/anchor.py 兜底（RF3）——两边都长，缺一边，
 「生成时守规矩、手改就能绕」或者「校验得到、生成时没这回事」就会发生。
 
 门的语义（派发裁决）：
