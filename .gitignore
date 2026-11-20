@@ -17,3 +17,16 @@ _spec_extract.txt
 .pytest-tmp/
 pytest-cache-files-*/
 
+# 打包产物（锚定在仓库根，别误伤 papertrace/build/）
+/build/
+/dist/
+*.egg-info/
+
+# 桌面杂项：资源管理器留下的快捷方式、系统缩略图缓存
+*.lnk
+Thumbs.db
+.DS_Store
+
+# studio 原型的施工区（13MB 截图 + 一次性探针脚本），不是源码
+docs/studio/
+

@@ -28,7 +28,31 @@ anchor（如 `transformer.h.0.attn` 与 `transformer.h.1.attn` 两组各出 4 �
 
 ## 快速跑通
 
-依赖装在仓库内的 `pydeps/`（见 `docs/ENVIRONMENT.md`），不污染系统 Python：
+### 从 GitHub 克隆之后（通用路径）
+
+```bash
+git clone https://github.com/Niangaol/Glossa.git
+cd Glossa
+python -m venv .venv
+# Windows：.venv\Scripts\activate      Linux/macOS：source .venv/bin/activate
+pip install -e ".[dev]"
+python -m pytest -q
+python -m papertrace --help
+python -m glossa --help
+```
+
+`.[dev]` 只装 `jsonschema` / `jinja2` / `pytest`（见 `pyproject.toml`）：台账、离线讲解页、全部 1299 项测试都能跑。
+要跑**真实算子追踪**（`build` 不带 `--skeleton`）再补一个 torch，CPU 版就够（探针默认 CPU）：
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+```
+
+没有 torch 时 `build --skeleton` 照跑，需要真实追踪的命令按退出码 4 报出来，**不会假装成功**。
+
+### 本机方案：仓库内 `pydeps/`（不污染系统 Python）
+
+仓库主人这台机器的 `pip` 会被沙箱拦（`PermissionError ... .whl.metadata`），所以依赖装在仓库内的 `pydeps/`，见 `docs/ENVIRONMENT.md`：
 
 ```bat
 cd /d D:\AgentPrograms\PaperTrace
@@ -664,3 +688,6 @@ AI 路径的退出码：**0** 成功 / **2** AI 页组装失败（含体积超�
 
 实测六个页面（2026-11-17，离线桩，三仓 × magazine + SafeTrace × report/cards + 本仓 × report 对照）：每页 **5 节 5 图**（第 1 张是 bars，其余 layered / cards）、未溯源 **0**、`<script>` **0**、外链 **0**、体积 **21,494 / 21,773 / 21,812 / 21,868 / 21,786 / 21,550** 字节（最大 21,868，离 8,000,000 的上限还有两个数量级）。逐页数字表在 [docs/glossa.md](docs/glossa.md) 的「AI 讲解模式」一节。
 
+## 许可
+
+MIT，见 [LICENSE](LICENSE)。

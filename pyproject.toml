@@ -5,9 +5,37 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "papertrace"
 version = "0.1.0"
-description = "PaperTrace：算子级数据流图与论文公式项的对账工具"
+description = "PaperTrace：算子级数据流图与论文公式项的对账工具；附笺疏 Glossa，把任意仓库讲成单文件离线讲解页"
+readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
+authors = [{ name = "Niangaol" }]
+keywords = [
+    "pytorch",
+    "torch-export",
+    "dataflow",
+    "static-analysis",
+    "code-explanation",
+    "glossa",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Documentation",
+]
 dependencies = ["jsonschema>=4.20", "jinja2>=3.1"]
+
+[project.urls]
+Homepage = "https://github.com/Niangaol/Glossa"
+Repository = "https://github.com/Niangaol/Glossa"
+Issues = "https://github.com/Niangaol/Glossa/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

@@ -45,6 +45,25 @@ python -c "import torch; print(torch.__version__)"
 （写一个 `.papertrace-write-probe`），能写就尊重用户配置；不能写才退到 `%TEMP%\papertrace-torch-cache`
 或当前目录下的 `papertrace-torch-cache`。**不覆盖**用户的环境变量。
 
+### 0.2 已装版本清单（`pydeps/` 实测，2026-11-19）
+
+`wheels/`（134MB 的 .whl 下载缓存，其中 torch 一个 126MB）已于 2026-11-19 删除。
+`fetch_deps.py` 按包名取 PyPI **最新版**，所以重装时要按下表钉版本，否则版本会漂：
+
+```
+attrs==26.1.0                 colorama==0.4.6            exceptiongroup==1.3.1
+filelock==4.2.10              fsspec==2026.9.0           iniconfig==2.3.1
+jinja2==3.1.6                 jsonschema==4.26.0         jsonschema-specifications==2025.9.1
+markupsafe==3.0.4             mpmath==1.4.1              networkx==3.7
+packaging==26.3               pluggy==1.7.0              pygments==2.21.0
+pytest==9.2.0                 referencing==0.37.0        rpds-py==2026.9.1
+setuptools==84.2.1            sympy==1.14.0              tomli==2.5.0
+torch==2.15.0                 typing-extensions==4.16.0
+```
+
+注意 `tmpinstall/requirements-framework.txt` 里记的 pluggy/packaging/pygments/attrs/rpds-py
+是 2026-11-14 的旧观测，实际解到 `pydeps/` 的版本以上表为准（PyPI 已更新）。
+
 ## 1. 安装 Python 3.11（可选）
 
 **框架切片不需要这一步**，系统 3.13.15 就能跑测试。等你真要跑 fx / 探针时再装。
