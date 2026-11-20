@@ -3,9 +3,9 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "papertrace"
+name = "glossa"
 version = "0.1.0"
-description = "PaperTrace：算子级数据流图与论文公式项的对账工具；附笺疏 Glossa，把任意仓库讲成单文件离线讲解页"
+description = "笺疏 Glossa：把任意代码仓库讲成单文件离线讲解页；附 PaperTrace，把 PyTorch 算子图与论文公式项逐项对账"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
