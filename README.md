@@ -1,5 +1,7 @@
 # PaperTrace · 笺疏 Glossa
 
+[![tests](https://github.com/Niangaol/Glossa/actions/workflows/tests.yml/badge.svg?branch=main)](https://github.com/Niangaol/Glossa/actions/workflows/tests.yml)
+
 两件工具，一套台账：`python -m papertrace` 把 PyTorch 仓库的算子级数据流图与论文里的公式项逐项对上账；`python -m glossa` 把**任意**代码仓库讲成一份可复算的事实台账 + 单文件离线讲解页。别人看结构，我们做对账。
 
 ## 现在是什么状态
