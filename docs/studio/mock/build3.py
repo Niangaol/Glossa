@@ -1,0 +1,15 @@
+import json, pathlib, sys
+tpl = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+css = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+data = pathlib.Path(sys.argv[3]).read_text(encoding="utf-8")
+doc = json.loads(data)
+out = (tpl.replace("__CSS__", css).replace("__DATA__", data)
+          .replace("__REPO__", doc["repo"])
+          .replace("__FILES_RAW__", str(doc["totals"]["files"]))
+          .replace("__SYMBOLS_RAW__", str(doc["totals"]["symbols"]))
+          .replace("__IMPORTS_RAW__", str(doc["totals"]["imports"]))
+          .replace("__DEGRADED_RAW__", str(doc["degradedTotal"]))
+          .replace("__COMMIT__", (doc.get("commit") or "unknown")[:7]))
+assert "__CSS__" not in out and "__DATA__" not in out
+pathlib.Path(sys.argv[4]).write_text(out, encoding="utf-8")
+print("html bytes", len(out.encode("utf-8")))

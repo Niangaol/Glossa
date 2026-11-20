@@ -120,7 +120,7 @@ SafeTrace 数据实测：11 个子系统，组间边只有 2 条（`scripts` →
 
 ## 12. mock v3 定稿：三层 + 深浅主题 + 动效（2026-11-17，用户 m15646 三条追加要求）
 
-> 本节取代 §2 的「两层视图」。用户原话：「我想要配色适配设备的深色浅色主题，然后分层级，第一层展示总的系统架构，双击某一个子系统展示子系统的架构，动态元素多一点」。原型：`output/studio/mock/index3.html`（单文件，550KB，离线可开）；截图：`output/studio/shots/01-system-dark.png` … `06-files-light.png`。
+> 本节取代 §2 的「两层视图」。用户原话：「我想要配色适配设备的深色浅色主题，然后分层级，第一层展示总的系统架构，双击某一个子系统展示子系统的架构，动态元素多一点」。原型：`docs/studio/mock/index3.html`（单文件，离线可开，随仓库发布）；截图 `01-system-dark.png` … `06-files-light.png` 是本地施工产物（`docs/studio/shots/`，13MB，未随仓库发布）。
 
 ### 12.1 三层结构
 
@@ -171,7 +171,7 @@ SafeTrace 数据实测：11 个子系统，组间边只有 2 条（`scripts` →
 
 ### 13.1 布局：力导向 + 依赖层播种
 
-- 三层共用 `output/studio/build_mock.py` 里的 `force_layout()`：斥力（`k²/d`，带 `2.6k` 截断）+ 边弹簧（`d²/k × log(1+count)`）+ 弱向心力 + 边界盒裁剪，跑 600–760 轮。
+- 三层共用 `docs/studio/mock/` 生成脚本里的 `force_layout()`：斥力（`k²/d`，带 `2.6k` 截断）+ 边弹簧（`d²/k × log(1+count)`）+ 弱向心力 + 边界盒裁剪，跑 600–760 轮。
 - **初始位置不是随机的**：按 `longest_layers` 算出的依赖层播种，第 0 层在左、逐层往右（`lay * 330/360`），同层向下堆；再加 `_u(crc32(key))` 的确定性抖动。同一份 repo.json 每次跑出来的图完全一致（可截图对比、可做快照测试）。
 - 画布盒子：系统层 `1100×640`、子系统层 `1180×760`、文件层 `1520×1180`；跑完力导向再 `relax_overlaps()` 做矩形去重叠（按穿透更浅的轴推开），最后 `to_cards()` 平移到正坐标。
 - 卡片尺寸随内容变：系统层 `312 + 24×min(4, files//70)`，子系统层 `300 + 26×min(3, files//10)`，文件层固定 `296×54`。**边和 fit 都必须用节点自带的 w/h**，不能再用层级的固定常量。
@@ -253,7 +253,7 @@ SafeTrace 数据实测：11 个子系统，组间边只有 2 条（`scripts` →
 
 用户 m15997 选「按照推荐的来」＝只给 **11 个顶层目录 + 6 个模块**用模型写，文件级保持启发式（实测脚本按 data.json 跑了 32 个节点，把各组的模块也一并写了）。
 
-- 脚本 `output/studio/llm_summaries.py`：从 `repo.json`+`data.json` 给每个节点拼事实卡（文件数、下级目录、主要符号、文件注释、数据流伙伴），4 批并发问 `step-5-preview`（`max_tokens=24000`，推理模型给少了会返回空 content），产出 `output/studio/mock/summaries.json`。
+- 一次性脚本 `docs/studio/llm_summaries.py`（读本机 `~/.dsh/.credentials.yaml`，未随仓库发布）：从 `repo.json`+`data.json` 给每个节点拼事实卡（文件数、下级目录、主要符号、文件注释、数据流伙伴），4 批并发问 `step-5-preview`（`max_tokens=24000`，推理模型给少了会返回空 content），产出 `docs/studio/mock/summaries.json`。
 - **核查**：模型写的中文里夹带的英文专名必须在事实里出现过（或在整个仓库的路径段/符号名里出现过），否则判为编造，重问一次；重问仍编造就丢掉这条、退回启发式。第一轮就抓到一条幻觉（`m:scripts/local` 冒出「Open-Jev GPU 部署脚本」「checkpoint_hash」）。
 - `build_mock.py` 若发现同目录有 `summaries.json`，就覆盖对应节点的 `summary` 并把 `src` 标成 `"模型"`——前端不用改，右侧面板照读。
 - 文件级另补了几条**约定型**简介：`package.json`→「包清单：声明依赖、脚本与构建入口」、`tsconfig*`→编译配置、`docker-compose.yml`→本地编排、测试文件→「测试文件：N 行，只放用例数据或桩」，比「这个文件没有符号」有用。

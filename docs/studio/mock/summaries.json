@@ -1,0 +1,130 @@
+{
+ "g:ops": {
+  "text": "ops 目录通过 scripts 子目录集中运维脚本，向系统下发运维指令并回收执行结果",
+  "src": "模型"
+ },
+ "g:.github": {
+  "text": ".github 目录通过 workflows 子目录配置工作流，驱动仓库自动化任务",
+  "src": "模型"
+ },
+ "g:Python": {
+  "text": "Python 目录通过 _cache 子目录缓存运行产物，为 Python 环境提供可复用的本地数据",
+  "src": "模型"
+ },
+ "m:.github/workflows": {
+  "text": "GitHub 工作流目录，定义仓库事件的自动化响应流程，驱动代码检查与构建任务执行",
+  "src": "模型"
+ },
+ "m:Python/_cache": {
+  "text": "Python 缓存目录，向解释器输出可复用的临时数据，减少重复加载与编译开销",
+  "src": "模型"
+ },
+ "m:contracts/schemas": {
+  "text": "契约模式目录，定义模块间数据交换的结构规范，为上下游提供字段与类型约束",
+  "src": "模型"
+ },
+ "m:docs/evidence": {
+  "text": "证据文档目录，归档质量检查产生的过程记录，向 qa-quality 子目录输出可追溯证据",
+  "src": "模型"
+ },
+ "m:fixtures/injection": {
+  "text": "注入夹具目录，构造测试用的注入数据，向被测系统提供可控的输入样本",
+  "src": "模型"
+ },
+ "m:src/qa": {
+  "text": "执行状态机并记录步骤，处理失败恢复后向外部返回结果",
+  "src": "模型"
+ },
+ "m:src/ingest": {
+  "text": "抓取外部数据并解析，支持重试与离线读取，产出解析结果交给下游契约校验",
+  "src": "模型"
+ },
+ "m:src/enrich": {
+  "text": "利用HttpFetcher拉取补充信息，将AvValue等字段压缩后交给下游",
+  "src": "模型"
+ },
+ "m:src/shared": {
+  "text": "维护SCHEMA_VERSION与IntelItem等共享契约，统一各模块数据格式",
+  "src": "模型"
+ },
+ "m:src/gateway": {
+  "text": "通过ModelGateway代理模型请求，记录用量并在离线时执行云回退",
+  "src": "模型"
+ },
+ "m:src/assets": {
+  "text": "构建产品索引并匹配组件，评估版本影响后向调用方返回结论",
+  "src": "模型"
+ },
+ "m:web/src": {
+  "text": "展示漏洞基线与差距条目，分页呈现证据和富化数据",
+  "src": "模型"
+ },
+ "m:web/scripts": {
+  "text": "存放web目录的辅助脚本，服务于前端项目的开发与运维",
+  "src": "模型"
+ },
+ "g:src": {
+  "text": "定义RawDoc与IntelItem等核心契约，经ingest采集、enrich富化后由gateway输出，并与scripts校验器交换符号",
+  "src": "模型"
+ },
+ "g:scripts": {
+  "text": "运行SafeTrace契约校验器与本地测试，用Validator检查src的schema与fixtures一致性，并回传少量符号",
+  "src": "模型"
+ },
+ "g:web": {
+  "text": "呈现VulnItem与BaselineKev等漏洞基线数据，通过Paged分页展示Evidence与Enrichment结果供前端消费",
+  "src": "模型"
+ },
+ "g:fixtures": {
+  "text": "集中存放样本、脏数据、注入与质检数据，为采集链路和测试提供输入",
+  "src": "模型"
+ },
+ "g:docs": {
+  "text": "沉淀evidence目录下的项目文档与说明材料，为开发、测试与运维提供参考依据",
+  "src": "模型"
+ },
+ "g:contracts": {
+  "text": "规定文档、实体与情报等结构模式，供全仓库校验数据契约",
+  "src": "模型"
+ },
+ "g:<root>": {
+  "text": "定义核心数据类型与契约版本，向各子目录分发类型与校验规则",
+  "src": "模型"
+ },
+ "g:config": {
+  "text": "集中存放运行参数与路径配置，供采集、校验等模块读取使用",
+  "src": "模型"
+ },
+ "m:fixtures/dirty": {
+  "text": "存放脏数据样本，为数据清洗与质量校验流程提供输入夹具",
+  "src": "模型"
+ },
+ "m:fixtures/sources": {
+  "text": "存放来源数据样本，模拟上游向处理链路投递的原始记录",
+  "src": "模型"
+ },
+ "m:fixtures/assets": {
+  "text": "存放资产数据样本，为资产相关计算与核对流程提供基准输入",
+  "src": "模型"
+ },
+ "m:fixtures/enrich": {
+  "text": "存放富化后的数据样本，作为数据富化流程的输出参照与回归基准",
+  "src": "模型"
+ },
+ "m:fixtures/qa-quality": {
+  "text": "存放质量检查样本，为质检流程提供预期结果与异常对照数据",
+  "src": "模型"
+ },
+ "m:ops/scripts": {
+  "text": "运维脚本集合，负责环境部署与服务运维的自动化执行",
+  "src": "模型"
+ },
+ "m:scripts/local": {
+  "text": "固定隔离的 Open-Jev GPU 部署脚本，包含 checkpoint_hash 校验且从不写 SafeTrace 业务库任何数据记录",
+  "src": "模型"
+ },
+ "m:scripts/test": {
+  "text": "测试脚本集合，负责自动化测试与本地验证流程的执行",
+  "src": "模型"
+ }
+}

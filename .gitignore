@@ -27,6 +27,7 @@ pytest-cache-files-*/
 Thumbs.db
 .DS_Store
 
-# studio 原型的施工区（13MB 截图 + 一次性探针脚本），不是源码
-docs/studio/
+# studio 施工区：只发布 mock 原型（约 2.5MB），13MB 截图与一次性探针脚本留在本机
+docs/studio/*
+!docs/studio/mock/
 

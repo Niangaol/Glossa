@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>笺疏 Studio · __REPO__</title>
+<style>__CSS__</style>
+</head>
+<body>
+<div class="top">
+  <div class="brand"><b>笺疏 Studio</b><span>__REPO__</span></div>
+  <div class="stats">
+    <div class="stat"><b data-n="__FILES_RAW__">0</b><span>文件</span></div>
+    <div class="stat"><b data-n="__SYMBOLS_RAW__">0</b><span>符号</span></div>
+    <div class="stat"><b data-n="__IMPORTS_RAW__">0</b><span>import</span></div>
+    <div class="stat"><b data-n="__DEGRADED_RAW__">0</b><span>降级</span></div>
+  </div>
+  <div class="spacer"></div>
+  <div class="chip" id="viewChip">系统架构</div>
+  <div class="chip warn" id="commitChip">__COMMIT__</div>
+  <button class="iconbtn" id="themeBtn" title="跟随系统 / 浅色 / 深色">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.6 1.6M17 17l1.6 1.6M18.6 5.4L17 7M7 17l-1.6 1.6"/></svg>
+  </button>
+</div>
+
+<div class="body">
+  <div class="rail">
+    <button class="tool on" id="tOverview"><span class="tip">系统架构（1）</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3.5" y="3.5" width="7" height="7"/><rect x="13.5" y="3.5" width="7" height="7"/><rect x="3.5" y="13.5" width="7" height="7"/><rect x="13.5" y="13.5" width="7" height="7"/></svg></button>
+    <button class="tool" id="tSub"><span class="tip">子系统架构（2）</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4" y="4" width="6" height="5"/><rect x="14" y="4" width="6" height="5"/><rect x="9" y="15" width="6" height="5"/><path d="M7 9v3h10V9M12 12v3"/></svg></button>
+    <button class="tool" id="tFiles"><span class="tip">文件层（3）</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 3.5h8l4 4v13H5z"/><path d="M13 3.5v4h4"/></svg></button>
+    <div class="sep"></div>
+    <button class="tool" id="tDegraded"><span class="tip">只看有降级的节点</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.6"/></svg></button>
+    <button class="tool" id="tFit"><span class="tip">适应画布（F）</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="canvas-head"><b id="canvasTitle">系统架构</b><span id="canvasSub"></span></div>
+    <svg class="graph" id="graph" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--azure)"/></marker>
+        <marker id="arwDat" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="11" markerHeight="11" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--green)"/></marker>
+        <marker id="arwLive" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="13" markerHeight="13" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="var(--azure)"/></marker>
+      </defs>
+      <g id="viewport"></g>
+    </svg>
+    <div class="legend">
+      <span><i class="dep"></i>import 依赖</span>
+      <span id="lgFlow" class="toggle"><i class="dat"></i>数据流</span>
+      <span><i class="live"></i>选中即点亮</span>
+    </div>
+    <div class="index-strip" id="indexStrip"></div>
+    <div class="hud">
+      <button id="zOut">−</button><div class="zoom" id="zVal">100%</div><button id="zIn">+</button>
+      <button id="zFit" title="适应画布"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+    </div>
+  </div>
+
+  <aside class="panel">
+    <header>
+      <div class="kicker" id="pKicker">系统架构</div>
+      <h1 id="pTitle">__REPO__</h1>
+      <div class="p" id="pPath">点一个方块看事实 · 双击进入下一层</div>
+    </header>
+    <div class="scroll" id="pBody"></div>
+  </aside>
+</div>
+
+<div class="foot">
+  <div class="crumb" id="crumb"><button>全景</button></div>
+  <div style="color:var(--ink-3)">点击选中 · 双击下钻 · 拖动平移 · 滚轮缩放 · 1/2/3 切层 · f 适应</div>
+  <div class="search">
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+    <input id="q" placeholder="搜目录 / 模块 / 文件">
+  </div>
+</div>
+
+<script>
+var DATA = __DATA__;
+(function () {
+  var svg = document.getElementById("graph"), vp = document.getElementById("viewport");
+  var state = { level: "group", group: null, module: null, sel: null, scale: 1, tx: 0, ty: 0, q: "", onlyDegraded: false, theme: "auto", showFlow: true };
+  var GW = 320, GH = 168, MW = 320, MH = 164, FW = 300, FH = 74;
+  var ROLE = { code: "#4a6b96", test: "#4a7a5f", config: "#a8762a", docs: "#8d8577", data: "#7a5f93", other: "#7d7767" };
+  var ROLE_NAME = { code: "代码", test: "测试", config: "配置", docs: "文档", data: "数据", other: "其它" };
+  var anim = null;
+
+  function el(name, attrs, text) {
+    var n = document.createElementNS("http://www.w3.org/2000/svg", name);
+    for (var k in attrs) if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function cut(s, n) { s = String(s || ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+  function wrap(s, per) {
+    s = String(s || "");
+    if (s.length <= per) return [s];
+    var cutAt = per;
+    for (var i = per; i > per * 0.6; i--) {
+      if (/[\s，、：；,;·]/.test(s.charAt(i - 1))) { cutAt = i; break; }
+    }
+    if (/[A-Za-z]/.test(s.charAt(cutAt - 1)) && /[A-Za-z]/.test(s.charAt(cutAt))) {
+      for (var j = cutAt; j > per * 0.5; j--) {
+        if (!/[A-Za-z0-9]/.test(s.charAt(j - 1))) { cutAt = j; break; }
+      }
+    }
+    var head = s.slice(0, cutAt).replace(/[\s，、：；,;·]+$/, "");
+    var tail = s.slice(cutAt).replace(/^[\s，、：；,;·]+/, "");
+    return [head, tail.length > per ? tail.slice(0, per - 1) + "…" : tail];
+  }
+
+  function fmt(n) { return (n === null || n === undefined) ? "—" : String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ","); }
+  function groupById(id) { for (var i = 0; i < DATA.groups.length; i++) if (DATA.groups[i].id === id) return DATA.groups[i]; return null; }
+
+  function view() {
+    if (state.level === "group") return { nodes: DATA.groups, edges: DATA.groupEdges, flows: DATA.groupFlows || [], w: GW, h: GH, card: "group" };
+    if (state.level === "sub") {
+      var s = DATA.subs[state.group] || { nodes: [], edges: [], flows: [] };
+      return { nodes: s.nodes, edges: s.edges, flows: s.flows || [], w: MW, h: MH, card: "module" };
+    }
+    var f = DATA.files[state.group] || { nodes: [], edges: [], dropped: 0 };
+    var nodes = f.nodes, edges = f.edges, flows = f.flows || [];
+    if (state.module) {
+      var m = null;
+      (DATA.subs[state.group].nodes || []).forEach(function (x) { if (x.id === state.module) m = x; });
+      if (m) {
+        var inScope = function (dir) {
+          if (!dir) return false;
+          if (m.root_bucket) return dir === m.prefix || dir === ".";
+          return dir === m.prefix || dir.indexOf(m.prefix + "/") === 0;
+        };
+        nodes = f.nodes.filter(function (n) { return inScope(n.kind === "dir" ? n.label.replace(/\/$/, "") : n.dir); });
+        var keep = {}; nodes.forEach(function (n) { keep[n.id] = 1; });
+        edges = f.edges.filter(function (e) { return keep[e.from] && keep[e.to]; });
+        flows = flows.filter(function (e) { return keep[e.from] && keep[e.to]; });
+      }
+    }
+    var drown = nodes.filter(function (n) { return n.kind !== "dir"; }).length;
+    var dropped = state.module ? Math.max(0, (moduleNode() || { files: 0 }).files - drown) : f.dropped;
+    return { nodes: nodes, edges: edges, flows: flows, w: FW, h: FH, card: "file", dropped: dropped };
+  }
+
+  function borderPt(cx, cy, w, h, tx, ty) {
+    var dx = tx - cx, dy = ty - cy;
+    if (!dx && !dy) return [cx, cy];
+    var sx = dx ? (w / 2) / Math.abs(dx) : Infinity;
+    var sy = dy ? (h / 2) / Math.abs(dy) : Infinity;
+    var s = Math.min(sx, sy);
+    return [cx + dx * s, cy + dy * s];
+  }
+
+  /* 卡片边界之间的有机曲线：中点沿法线鼓出去，鼓多少由边的序号决定（同一张图每次一致） */
+  function edgeGeom(a, b, idx, spread) {
+    var acx = a.x + a.w / 2, acy = a.y + a.h / 2;
+    var bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+    var ux = bcx - acx, uy = bcy - acy;
+    var ul = Math.sqrt(ux * ux + uy * uy) || 1;
+    var nx = -uy / ul, ny = ux / ul;
+    var sp = spread || 0;
+    var p0 = borderPt(acx, acy, a.w, a.h, bcx + nx * sp, bcy + ny * sp);
+    var p1 = borderPt(bcx, bcy, b.w, b.h, acx + nx * sp, acy + ny * sp);
+    var dx = p1[0] - p0[0], dy = p1[1] - p0[1];
+    var d = Math.hypot(dx, dy) || 1;
+    var sign = String(a.id) < String(b.id) ? 1 : -1;
+    var amp = state.level === "files" ? 22 : 38;
+    var bow = sign * amp * (0.55 + 0.45 * ((idx * 37) % 100) / 100);
+    var nx = -dy / d, ny = dx / d;
+    var c1 = [p0[0] + dx * 0.28 + nx * bow, p0[1] + dy * 0.28 + ny * bow];
+    var c2 = [p0[0] + dx * 0.72 + nx * bow, p0[1] + dy * 0.72 + ny * bow];
+    return {
+      p0: p0, p1: p1, c2: c2,
+      d: "M" + p0[0].toFixed(1) + " " + p0[1].toFixed(1) + " C" + c1[0].toFixed(1) + " " + c1[1].toFixed(1) +
+         " " + c2[0].toFixed(1) + " " + c2[1].toFixed(1) + " " + p1[0].toFixed(1) + " " + p1[1].toFixed(1),
+      mid: [(p0[0] + p1[0]) / 2 + nx * bow * 0.75, (p0[1] + p1[1]) / 2 + ny * bow * 0.75 - 6],
+      len: d
+    };
+  }
+
+  function cardText(n, base, need) {
+    return cut(n.label || "", Math.max(8, Math.floor((n.w - 28) / 8.4)));
+  }
+
+  function drawGroupCard(n) {
+    var w = n.w, h = n.h;
+    var loose = n.linked === false;
+    var g = el("g", { class: "node" + (loose ? " loose" : ""), "data-id": n.id, "data-key": n.label, "data-role": n.role || "other", transform: "translate(" + n.x + "," + n.y + ")" });
+    g.appendChild(el("rect", { class: "sheet", x: 3, y: 4.5, width: w, height: h, rx: 3 }));
+    g.appendChild(el("rect", { class: "card", x: 0, y: 0, width: w, height: h, rx: 3 }));
+    g.appendChild(el("rect", { class: "accent", x: 0, y: 0, width: 3.5, height: h, fill: ROLE[n.role] || ROLE.other }));
+    g.appendChild(el("text", { class: "title", x: 16, y: 29 }, cardText(n)));
+    var dom = n.dominant && n.dominant[0] ? fmt(n.dominant[1]) + " 个 " + n.dominant[0] + " 文件" : "多种扩展名混在一起";
+    g.appendChild(el("text", { class: "path", x: 16, y: 47 }, cut(dom, Math.floor((w - 30) / 7.4))));
+    if (n.summary) {
+      var lines = wrap(n.summary.text, Math.floor((w - 32) / 6.6));
+      g.appendChild(el("text", { class: "sum", x: 16, y: 68 }, lines[0] || ""));
+      if (lines[1]) g.appendChild(el("text", { class: "sum", x: 16, y: 85 }, lines[1]));
+    }
+    (n.top || []).slice(0, 2).forEach(function (t, i) {
+      g.appendChild(el("text", { class: "item", x: 16, y: 107 + i * 17 }, "· " + cut(t, Math.floor((w - 34) / 7.2))));
+    });
+    g.appendChild(el("rect", { class: "rule", x: 0, y: h - 30, width: w, height: 1 }));
+    g.appendChild(el("text", { class: "count", x: 16, y: h - 11 }, n.files + " 文件"));
+    g.appendChild(el("text", { class: "meta", x: Math.round(w * 0.40), y: h - 11 }, fmt(n.symbols) + " 符号"));
+    if (n.degraded) g.appendChild(el("text", { class: "meta", x: Math.round(w * 0.74), y: h - 11, fill: "var(--amber)" }, n.degraded + " 降级"));
+    return g;
+  }
+
+  function drawModuleCard(n) {
+    var w = n.w, h = n.h;
+    var g = el("g", { class: "node", "data-id": n.id, "data-key": n.label, "data-role": n.role || "other", transform: "translate(" + n.x + "," + n.y + ")" });
+    g.appendChild(el("rect", { class: "sheet", x: 3, y: 4.5, width: w, height: h, rx: 3 }));
+    g.appendChild(el("rect", { class: "card", x: 0, y: 0, width: w, height: h, rx: 3 }));
+    g.appendChild(el("rect", { class: "accent", x: 0, y: 0, width: 3.5, height: h, fill: ROLE[n.role] || ROLE.other }));
+    g.appendChild(el("text", { class: "title", x: 16, y: 30 }, cardText(n)));
+    var dom = n.dominant && n.dominant[0] ? fmt(n.dominant[1]) + " 个 " + n.dominant[0] + " 文件" : "没有扩展名统计";
+    g.appendChild(el("text", { class: "path", x: 16, y: 48 }, cut(dom, Math.floor((w - 30) / 7.4))));
+    if (n.summary) {
+      var lines = wrap(n.summary.text, Math.floor((w - 32) / 6.6));
+      g.appendChild(el("text", { class: "sum", x: 16, y: 70 }, lines[0] || ""));
+      if (lines[1]) g.appendChild(el("text", { class: "sum", x: 16, y: 87 }, lines[1]));
+    }
+    g.appendChild(el("text", { class: "item", x: 16, y: 110 }, cut(n.prefix || "（仓库根）", Math.floor((w - 30) / 7.2))));
+    g.appendChild(el("rect", { class: "rule", x: 0, y: h - 30, width: w, height: 1 }));
+    g.appendChild(el("text", { class: "count", x: 16, y: h - 11 }, n.files + " 文件"));
+    g.appendChild(el("text", { class: "meta", x: Math.round(w * 0.40), y: h - 11 }, fmt(n.symbols) + " 符号"));
+    if (n.degraded) g.appendChild(el("text", { class: "meta", x: Math.round(w * 0.74), y: h - 11, fill: "var(--amber)" }, n.degraded + " 降级"));
+    return g;
+  }
+
+  function drawFileCard(n) {
+    var w = n.w, h = n.h;
+    var g = el("g", { class: "node", "data-id": n.id, "data-key": n.label, "data-path": n.path, "data-role": n.degraded ? "degraded" : "code", transform: "translate(" + n.x + "," + n.y + ")" });
+    g.appendChild(el("rect", { class: "sheet", x: 3, y: 4.5, width: w, height: h, rx: 3 }));
+    g.appendChild(el("rect", { class: "card", x: 0, y: 0, width: w, height: h, rx: 3 }));
+    g.appendChild(el("rect", { class: "accent", x: 0, y: 0, width: 3, height: h, fill: n.degraded ? "var(--amber)" : (ROLE.code) }));
+    g.appendChild(el("text", { class: "fname", x: 14, y: 22 }, cut(n.label, Math.floor((w - 28) / 8.0))));
+    if (n.rel) g.appendChild(el("text", { class: "fdir", x: 14 + Math.min(n.label.length, 30) * 7.4 + 8, y: 22 }, cut(n.rel + "/", Math.floor((w - 40) / 6.2) - Math.min(n.label.length, 30))));
+    var sum = n.summary ? n.summary.text : "";
+    g.appendChild(el("text", { class: "fsum", x: 14, y: 41 }, cut(sum, Math.floor((w - 28) / 6.4))));
+    g.appendChild(el("text", { class: "fmeta", x: 14, y: 60 }, cut((n.lang || "?") + " · " + fmt(n.lines) + " 行 · " + n.symbols + " 符号" + (n.degraded ? " · " + n.degraded + " 降级" : ""), Math.floor((w - 28) / 6.6))));
+    return g;
+  }
+
+  function render() {
+    anim && cancelAnimationFrame(anim);
+    var v = view(), byId = {};
+    v.nodes.forEach(function (n) { n.w = n.w || v.w; n.h = n.h || v.h; byId[n.id] = n; });
+    vp.textContent = "";
+
+    var gE = el("g", { class: "edges" });
+    var arrowTops = [];
+    var arrowSlots = {};
+    function pickArrowSlot(a, b, i, cls, toKey) {
+      var key = String(toKey);
+      var slots = arrowSlots[key] || (arrowSlots[key] = []);
+      var cands = [0, -18, 18, -36, 36, -54, 54, -72, 72];
+      var bestG = null, bestD = -1;
+      for (var k = 0; k < cands.length; k++) {
+        var cand = ((i % 5) - 2) * 5 + cands[k];
+        var gg = edgeGeom(a, b, i + (cls === "dep" ? 0 : 23), cand);
+        var dd = 1e9;
+        for (var m = 0; m < slots.length; m++) {
+          var ddx = slots[m][0] - gg.p1[0], ddy = slots[m][1] - gg.p1[1];
+          dd = Math.min(dd, Math.sqrt(ddx * ddx + ddy * ddy));
+        }
+        if (dd > bestD) { bestD = dd; bestG = gg; }
+        if (dd > 24) break;
+      }
+      slots.push([bestG.p1[0], bestG.p1[1]]);
+      return bestG;
+    }
+
+    function paintEdge(list, cls, marker, scale, packetLimit, labelSuffix) {
+      list.forEach(function (e, i) {
+        var a = byId[e.from], b = byId[e.to];
+        if (!a || !b) return;
+        var g = pickArrowSlot(a, b, i, cls, e.to);
+        var cnt = e.count || 1;
+        var weight = scale(cnt);
+        var glow = el("path", { class: "edge glow " + cls, d: g.d });
+        glow.style.strokeWidth = (weight + 6).toFixed(1) + "px";
+        gE.appendChild(glow);
+        var p = el("path", { class: "edge " + cls, d: g.d });
+        p.id = "pe-" + cls + i;
+        p.style.strokeWidth = weight.toFixed(2) + "px";
+        p.setAttribute("data-from", e.from);
+        p.setAttribute("data-to", e.to);
+        gE.appendChild(p);
+        if (i < packetLimit) {
+          var dot = el("circle", { class: "packet " + cls, r: (2.2 + Math.min(1.8, Math.log1p(cnt) * 0.6)).toFixed(1) });
+          var am = el("animateMotion", { dur: (2.4 + (i % 6) * 0.45).toFixed(2) + "s", repeatCount: "indefinite", begin: ((i % 5) * 0.4).toFixed(2) + "s" });
+          var mp = el("mpath", {});
+          mp.setAttribute("href", "#pe-" + cls + i);
+          mp.setAttributeNS("http://www.w3.org/1999/xlink", "xlink:href", "#pe-" + cls + i);
+          am.appendChild(mp);
+          dot.appendChild(am);
+          gE.appendChild(dot);
+        }
+        var tdx = g.p1[0] - g.c2[0], tdy = g.p1[1] - g.c2[1];
+        var tdl = Math.sqrt(tdx * tdx + tdy * tdy) || 1;
+        tdx /= tdl; tdy /= tdl;
+        var L = cls === "dat" ? 14 + Math.min(8, weight * 2.0) : 9 + Math.min(4, weight * 1.1);
+        var gap = cls === "dat" ? 7 : 4;
+        arrowTops.push({ x: g.p1[0] + tdx * gap, y: g.p1[1] + tdy * gap, dx: tdx, dy: tdy, len: L, cls: cls, from: e.from, to: e.to });
+        if (cnt > 1 && (cls === "dat" || cnt >= 4)) {
+          gE.appendChild(el("text", { class: "edge-label " + cls, x: g.mid[0], y: g.mid[1] }, "×" + cnt + (labelSuffix || "")));
+        }
+      });
+    }
+
+    paintEdge(v.edges || [], "dep", "arw", function (c) { return 1.0 + Math.min(2.4, Math.log1p(c) * 0.9); }, 4, "");
+    if (state.showFlow) {
+      paintEdge(v.flows || [], "dat", "arwDat", function (c) { return 2.6 + Math.min(4.2, Math.log1p(c) * 1.9); }, 14, "");
+    }
+    vp.appendChild(gE);
+
+    var gN = el("g", {});
+    v.nodes.forEach(function (n, i) {
+      if (n.kind === "dir") {
+        var dg = el("g", { class: "dirnode", transform: "translate(" + n.x + "," + n.y + ")" });
+        dg.appendChild(el("text", { class: "dirlabel", x: 0, y: 0 }, n.label));
+        dg.appendChild(el("text", { class: "dircount", x: 6 + n.label.length * 7.2, y: 0 }, n.files + " 文件"));
+        gN.appendChild(dg);
+        return;
+      }
+      var g = v.card === "group" ? drawGroupCard(n)
+            : v.card === "module" ? drawModuleCard(n)
+            : drawFileCard(n);
+      g.style.setProperty("--i", Math.min(i, 40));
+      if (n.id === state.sel) g.classList.add("sel");
+      g.addEventListener("click", function (ev) { ev.stopPropagation(); select(n.id); });
+      g.addEventListener("dblclick", function (ev) { ev.stopPropagation(); descend(n); });
+      gN.appendChild(g);
+    });
+    vp.appendChild(gN);
+    if (state.sel) {
+      var selG = gN.querySelector(".node.sel"), sn = byId[state.sel];
+      if (selG && sn) decorate(selG, sn.w || v.w, sn.h || v.h, v.card === "file");
+    }
+
+    var gT = el("g", { class: "arrowtops" });
+    arrowTops.forEach(function (t) {
+      var W = t.len * 0.56;
+      var bx = t.x - t.dx * t.len, by = t.y - t.dy * t.len;
+      var px = -t.dy, py = t.dx;
+      var pts = [[t.x, t.y], [bx + px * W, by + py * W], [bx - px * W, by - py * W]];
+      var poly = el("polygon", {
+        class: "arrowtip " + t.cls,
+        points: pts.map(function (q) { return q[0].toFixed(1) + "," + q[1].toFixed(1); }).join(" "),
+        "data-from": t.from, "data-to": t.to
+      });
+      gT.appendChild(poly);
+    });
+    vp.appendChild(gT);
+
+    applyTransform();
+    paintChrome();
+    paintPanel();
+    applyHot();
+    if (state.q) filter(state.q);
+    applyDegradedFilter();
+  }
+
+  function descend(n) {
+    if (state.level === "group") {
+      state.group = n.id; state.sel = null; state.module = null;
+      var subs = (DATA.subs[n.id] || { nodes: [] }).nodes || [];
+      state.level = subs.length ? "sub" : "files";      // 没有下级目录的组：不留空层，直接看文件
+      render(); fit();
+    }
+    else if (state.level === "sub") { state.level = "files"; state.module = n.id; state.sel = n.id; render(); fit(); }
+  }
+  function ascend() {
+    if (state.level === "files") { state.level = "sub"; state.module = null; state.sel = state.module || null; render(); fit(); }
+    else if (state.level === "sub") { state.level = "group"; state.group = null; state.sel = null; render(); fit(); }
+  }
+
+  /* 朱批：选中卡上先落一道朱线，再盖一枚小印 */
+  function undecorate(g) {
+    ["rect.pulse", "path.annot", "g.stamp"].forEach(function (q) {
+      var o = g.querySelector(q);
+      if (o) o.remove();
+    });
+  }
+
+  function decorate(g, W, H, isFile) {
+    undecorate(g);
+    g.insertBefore(el("rect", { class: "pulse", x: 0, y: 0, width: W, height: H, rx: 2,
+      fill: "none", stroke: "var(--flow)", "stroke-width": 1.4 }), g.firstChild);
+
+    var tn = g.querySelector("text.fname") || g.querySelector("text.title");
+    var tw = 0, ty = isFile ? 22 : 29;
+    if (tn) {
+      ty = +tn.getAttribute("y") || ty;
+      try { tw = tn.getComputedTextLength(); } catch (err) { tw = 0; }
+    }
+    var len = Math.max(52, Math.min(isFile ? 150 : 172, tw ? tw * 0.94 : 120));
+    var y = ty + 6;
+    var x0 = 14, x1 = x0 + len;
+    var p = el("path", { class: "annot", d: "M" + x0 + " " + y
+      + " C" + Math.round(x0 + len * 0.33) + " " + (y - 3)
+      + " " + Math.round(x0 + len * 0.67) + " " + (y + 2.8)
+      + " " + x1 + " " + (y - 1) });
+    g.appendChild(p);
+    var L = len;
+    try { L = p.getTotalLength() || len; } catch (err) { L = len; }
+    p.style.strokeDasharray = L;
+    p.style.strokeDashoffset = L;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { p.style.strokeDashoffset = "0"; });
+    });
+
+    var s = isFile ? 26 : 30, sx = isFile ? -14 : -13;
+    var sg = el("g", { class: "stamp" });
+    sg.appendChild(el("rect", { x: sx, y: sx, width: s, height: s, rx: 2 }));
+    sg.appendChild(el("text", { x: sx + s / 2, y: sx + s / 2 + (isFile ? 4.8 : 5.6) }, "阅"));
+    g.appendChild(sg);
+  }
+
+  function select(id) {
+    state.sel = id;
+    Array.prototype.forEach.call(vp.querySelectorAll(".node"), function (n) {
+      var on = n.getAttribute("data-id") === id;
+      n.classList.toggle("sel", on);
+      if (on) {
+        var card = n.querySelector("rect.card");
+        decorate(n, +card.getAttribute("width"), +card.getAttribute("height"), !!n.querySelector("text.fname"));
+      } else {
+        undecorate(n);
+      }
+    });
+    applyHot();
+    markIndex();
+    paintPanel();
+  }
+
+  /* 档案卡索引条：只在系统层出现，点一下等于选中并飞过去 */
+  function paintIndex() {
+    var strip = document.getElementById("indexStrip");
+    if (!strip) return;
+    var on = state.level === "group";
+    strip.style.display = on ? "" : "none";
+    if (!on) return;
+    if (strip.getAttribute("data-for") === String(DATA.groups.length)) { markIndex(); return; }
+    strip.textContent = "";
+    DATA.groups.slice().sort(function (a, b) { return String(a.label).localeCompare(String(b.label)); })
+      .forEach(function (g) {
+        var b = document.createElement("button");
+        b.className = "tab";
+        b.setAttribute("data-id", g.id);
+        b.title = g.label + " · " + g.files + " 文件";
+        var lbl = String(g.label || "?");
+        var key = lbl.replace(/^[._\-]+/, "") || lbl;
+        var ch = /^[A-Za-z0-9]/.test(key) ? key.slice(0, 2) : key.slice(0, 1);
+        b.innerHTML = '<span class="ch">' + ch + "</span>"
+          + '<span class="lb">' + g.label + "</span>"
+          + '<span class="ct">' + g.files + "</span>";
+        b.onclick = function (ev) { ev.stopPropagation(); select(g.id); focusNode(g.id); };
+        strip.appendChild(b);
+      });
+    strip.setAttribute("data-for", String(DATA.groups.length));
+    markIndex();
+  }
+
+  function markIndex() {
+    Array.prototype.forEach.call(document.querySelectorAll("#indexStrip .tab"), function (b) {
+      b.classList.toggle("on", b.getAttribute("data-id") === state.sel);
+    });
+  }
+
+  function focusNode(id) {
+    var v = view(), n = null;
+    v.nodes.forEach(function (x) { if (x.id === id) n = x; });
+    if (!n) return;
+    var r = document.getElementById("stage").getBoundingClientRect();
+    var sc = Math.max(0.55, Math.min(1.05, state.scale));
+    var cx = n.x + (n.w || v.w) / 2, cy = n.y + (n.h || v.h) / 2;
+    camera(sc, r.width / 2 - cx * sc, r.height / 2 - cy * sc, 380);
+  }
+
+  function applyHot() {
+    Array.prototype.forEach.call(vp.querySelectorAll(".edge"), function (p) {
+      var hot = state.sel && (p.getAttribute("data-from") === state.sel || p.getAttribute("data-to") === state.sel);
+      p.classList.toggle("live", !!hot);
+    });
+    Array.prototype.forEach.call(vp.querySelectorAll(".arrowtip"), function (a) {
+      a.classList.toggle("live", !!(state.sel && (a.getAttribute("data-from") === state.sel || a.getAttribute("data-to") === state.sel)));
+    });
+  }
+
+  function applyDegradedFilter() {
+    if (!state.onlyDegraded) { Array.prototype.forEach.call(vp.querySelectorAll(".node.dim"), function (n) { n.classList.remove("dim"); }); return; }
+    Array.prototype.forEach.call(vp.querySelectorAll(".node"), function (n) {
+      var bad = /降级/.test(n.textContent);
+      n.classList.toggle("dim", !bad);
+    });
+  }
+
+  function paintChrome() {
+    var v = view();
+    document.getElementById("viewChip").textContent =
+      state.level === "group" ? "系统架构 · " + DATA.groups.length + " 个子系统"
+      : state.level === "sub" ? "子系统架构 · " + (groupById(state.group) || {}).label + " · " + v.nodes.length + " 个模块"
+      : "文件层 · " + v.nodes.filter(function (n) { return n.kind !== "dir"; }).length + " 个文件" + (v.dropped ? " · 另有 " + v.dropped + " 个未画" : "");
+    document.getElementById("canvasTitle").textContent =
+      state.level === "group" ? "系统架构"
+      : state.level === "sub" ? (groupById(state.group) || {}).label + " · 内部结构"
+      : (state.module ? (moduleLabel() || "") + "的文件" : (groupById(state.group) || {}).label + " · 文件");
+    document.getElementById("canvasSub").textContent =
+      state.level === "group" ? DATA.groups.length + " 个子系统 · " + DATA.groupEdges.length + " 条依赖 · " + DATA.groupFlows.length + " 条数据流"
+      : state.level === "sub" ? v.nodes.length + " 个模块 · " + v.edges.length + " 条依赖 · " + v.flows.length + " 条数据流"
+      : v.nodes.filter(function (n) { return n.kind !== "dir"; }).length + " 个文件 · " + v.flows.length + " 条数据流";
+    var home = '<button data-go="root">全景</button>';
+    if (state.group) home += '<span class="sep2">›</span><button data-go="group">' + cut((groupById(state.group) || {}).label, 22) + "</button>";
+    if (state.level === "files" && state.module) home += '<span class="sep2">›</span><button data-go="module">' + cut(moduleLabel(), 22) + "</button>";
+    var crumb = document.getElementById("crumb");
+    crumb.innerHTML = home;
+    Array.prototype.forEach.call(crumb.querySelectorAll("button"), function (b) {
+      b.onclick = function () {
+        var go = b.getAttribute("data-go");
+        if (go === "root") { state.level = "group"; state.group = null; state.sel = null; state.module = null; render(); fit(); }
+        if (go === "group") { state.level = "sub"; state.sel = null; state.module = null; render(); fit(); }
+        if (go === "module") { state.level = "files"; render(); fit(); }
+      };
+    });
+    document.getElementById("tOverview").classList.toggle("on", state.level === "group");
+    document.getElementById("tSub").classList.toggle("on", state.level === "sub");
+    document.getElementById("tFiles").classList.toggle("on", state.level === "files");
+    paintIndex();
+  }
+
+  (function bindLegend() {
+    var lg = document.getElementById("lgFlow");
+    if (!lg) return;
+    lg.classList.toggle("off", !state.showFlow);
+    lg.onclick = function () {
+      state.showFlow = !state.showFlow;
+      lg.classList.toggle("off", !state.showFlow);
+      render();
+    };
+  })();
+
+  function moduleNode() {
+    var s = DATA.subs[state.group] || { nodes: [] };
+    for (var i = 0; i < s.nodes.length; i++) if (s.nodes[i].id === state.module) return s.nodes[i];
+    return null;
+  }
+
+  function moduleLabel() {
+    var s = DATA.subs[state.group] || { nodes: [] };
+    for (var i = 0; i < s.nodes.length; i++) if (s.nodes[i].id === state.module) return s.nodes[i].label;
+    return "";
+  }
+
+  function paintPanel() {
+    var body = document.getElementById("pBody"), kicker = document.getElementById("pKicker"),
+        title = document.getElementById("pTitle"), path = document.getElementById("pPath");
+    body.classList.remove("fade"); void body.offsetWidth; body.classList.add("fade");
+
+    var g = groupById(state.sel);
+    if (g) {
+      kicker.textContent = "子系统 · " + (ROLE_NAME[g.role] || "");
+      title.textContent = g.label;
+      path.textContent = (g.path && g.path !== g.label) ? g.path : "";
+      var ins = DATA.groupEdges.filter(function (e) { return e.to === g.id; });
+      var outs = DATA.groupEdges.filter(function (e) { return e.from === g.id; });
+      var nm = function (id) { var r = groupById(id); return r ? r.label : id; };
+      body.innerHTML = '<div class="facts">'
+        + '<div class="fact"><b>' + g.files + '</b><span>文件</span></div>'
+        + '<div class="fact"><b>' + fmt(g.symbols) + '</b><span>符号</span></div>'
+        + '<div class="fact"><b>' + fmt(g.imports) + '</b><span>import</span></div>'
+        + '<div class="fact"><b>' + g.degraded + '</b><span>降级</span></div></div>'
+        + (g.summary ? '<div class="sec">它是干什么的</div><div class="intro">' + g.summary.text + "</div>" : "")
+        + (g.linked ? "" : '<div class="warnbox">没有跨组依赖：它和任何其它目录之间都没有 import。</div>')
+        + '<div class="sec">目录里有什么</div><ul class="deps">' + (g.top || []).map(function (t) { return "<li>" + t + "</li>"; }).join("") + "</ul>"
+        + '<div class="sec">数据流</div><ul class="deps">'
+        + ((DATA.groupFlows || []).filter(function (f) { return f.from === g.id || f.to === g.id; }).map(function (f) {
+            var out = f.from === g.id;
+            return "<li><b>" + nm(out ? f.to : f.from) + "</b> <em>" + (out ? "→ 用它的 " : "→ 用这里 ") + f.count + " 个符号：" + (f.names || []).join("、") + "</em></li>";
+          }).join("") || "<li>没有跨组的数据流</li>")
+        + "</ul>"
+        + '<div class="sec">依赖</div><ul class="deps">'
+        + (outs.map(function (e) { return "<li><b>" + nm(e.to) + "</b> <em>→ 它依赖别人</em></li>"; }).join("") || "<li>没有它依赖别的目录的记录</li>")
+        + (ins.map(function (e) { return "<li><b>" + nm(e.from) + "</b> <em>→ 别人依赖它</em></li>"; }).join(""))
+        + "</ul>"
+        + '<div class="sec">操作</div><button class="btn primary" id="enterSub">进入子系统架构</button>';
+      document.getElementById("enterSub").onclick = function () { state.level = "sub"; state.group = g.id; state.sel = null; render(); fit(); };
+      return;
+    }
+
+    var m = null;
+    (DATA.subs[state.group] || { nodes: [] }).nodes.forEach(function (x) { if (x.id === state.sel) m = x; });
+    if (m) {
+      if (state.level === "sub") { /* 选中模块：下面顺带显示文件入口 */ }
+      kicker.textContent = "模块 · " + (ROLE_NAME[m.role] || "");
+      title.textContent = m.label; path.textContent = m.prefix || "（仓库根）";
+      body.innerHTML = '<div class="facts">'
+        + '<div class="fact"><b>' + m.files + '</b><span>文件</span></div>'
+        + '<div class="fact"><b>' + fmt(m.symbols) + '</b><span>符号</span></div>'
+        + '<div class="fact"><b>' + fmt(m.imports) + '</b><span>import</span></div>'
+        + '<div class="fact"><b>' + m.degraded + '</b><span>降级</span></div></div>'
+        + (m.summary ? '<div class="sec">它是干什么的</div><div class="intro">' + m.summary.text + "</div>" : "")
+        + '<div class="sec">它在子系统里的位置</div><div class="intro">' + cut(m.prefix || "（仓库根）", 40) + "，共 " + m.files + " 个文件。</div>"
+        + '<div class="sec">操作</div><button class="btn primary" id="enterFiles">看这个模块的文件</button>';
+      document.getElementById("enterFiles").onclick = function () { state.level = "files"; state.module = m.id; state.sel = m.id; render(); zoomTo(0.72, 24, 46); };
+      return;
+    }
+
+    var d = DATA.details[state.sel];
+    if (d) {
+      kicker.textContent = "文件 · " + (d.lang || "?");
+      title.textContent = d.path.split("/").pop(); path.textContent = d.path;
+      var dep = function (x) { return "<li>" + x.specifier + ' <em>→</em> ' + (x.target || "未解析") + "</li>"; };
+      body.innerHTML = '<div class="facts">'
+        + '<div class="fact"><b>' + fmt(d.lines) + '</b><span>行</span></div>'
+        + '<div class="fact"><b>' + fmt(d.bytes) + '</b><span>字节</span></div>'
+        + '<div class="fact"><b>' + (d.symbols || []).length + '</b><span>符号</span></div>'
+        + '<div class="fact"><b>' + (d.degraded || []).length + '</b><span>降级</span></div></div>'
+        + (d.summary ? '<div class="sec">它是干什么的</div><div class="intro">' + d.summary.text + "</div>" : "")
+        + '<div class="sec">符号</div><ul class="deps">'
+        + ((d.symbols || []).map(function (s) { return "<li><b>" + s.name + "</b> <em>" + s.kind + " · 第 " + s.line + " 行</em></li>"; }).join("") || "<li>无</li>") + "</ul>"
+        + '<div class="sec">import</div><ul class="deps">' + ((d.imports || []).map(dep).join("") || "<li>无</li>") + "</ul>"
+        + ((d.degraded && d.degraded.length) ? '<div class="sec">降级原因</div>' + d.degraded.map(function (t) { return '<div class="warnbox">' + t + "</div>"; }).join("") : "")
+        + (d.snippet ? '<div class="sec">源码 · 前 80 行</div><pre class="src" id="src">' + d.snippet.replace(/&/g, "&amp;").replace(/</g, "&lt;") + "</pre>"
+            + '<div style="margin-top:7px"><button class="btn" id="more">展开 / 收起</button></div>' : "");
+      var more = document.getElementById("more");
+      if (more) more.onclick = function () { document.getElementById("src").classList.toggle("open"); };
+      return;
+    }
+
+    kicker.textContent = state.level === "group" ? "系统架构" : "子系统架构";
+    title.textContent = DATA.repo; path.textContent = "commit " + (DATA.commit || "unknown");
+    body.innerHTML = '<div class="intro">' + (state.level === "group"
+        ? "每个方块是一个顶层目录；有依赖的排在顶部一行，线是跨目录 import 的次数。双击方块进入它的内部结构。"
+        : "这里是这个子系统内部的模块：方块是它的下一级目录。双击进入文件层，点任意方块看事实。") + "</div>"
+      + '<div class="sec">总量</div><div class="intro">' + fmt(DATA.totals.files) + " 个文件 · "
+      + fmt(DATA.totals.symbols) + " 个符号 · " + fmt(DATA.totals.imports) + " 条 import · " + DATA.degradedTotal + " 条降级</div>";
+  }
+
+  function filter(q) {
+    state.q = q;
+    Array.prototype.forEach.call(vp.querySelectorAll(".node"), function (n) {
+      if (!q) { n.classList.remove("hit"); return; }
+      var hay = (n.getAttribute("data-key") || "") + " " + (n.getAttribute("data-path") || "") + " " + n.textContent;
+      n.classList.toggle("hit", hay.toLowerCase().indexOf(q.toLowerCase()) >= 0);
+    });
+  }
+
+  function applyTransform() {
+    vp.setAttribute("transform", "translate(" + state.tx + "," + state.ty + ") scale(" + state.scale + ")");
+    document.getElementById("zVal").textContent = Math.round(state.scale * 100) + "%";
+  }
+
+  function camera(scale, tx, ty, dur) {
+    dur = dur === undefined ? 420 : dur;
+    if (anim) cancelAnimationFrame(anim);
+    var s0 = state.scale, x0 = state.tx, y0 = state.ty, t0 = performance.now();
+    if (Math.abs(s0 - scale) < 0.002 && Math.abs(x0 - tx) < 1 && Math.abs(y0 - ty) < 1) {
+      state.scale = scale; state.tx = tx; state.ty = ty; applyTransform(); return;
+    }
+    vp.classList.add("nofx");
+    function step(t) {
+      var k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      state.scale = s0 + (scale - s0) * e;
+      state.tx = x0 + (tx - x0) * e;
+      state.ty = y0 + (ty - y0) * e;
+      applyTransform();
+      if (k < 1) anim = requestAnimationFrame(step);
+      else { anim = null; setTimeout(function () { vp.classList.remove("nofx"); }, 20); }
+    }
+    anim = requestAnimationFrame(step);
+  }
+  function zoomTo(scale, tx, ty) { camera(scale, tx, ty); }
+
+  function fit() {
+    var v = view();
+    if (!v.nodes.length) return;
+    var minX = 1e9, minY = 1e9, maxX = -1e9, maxY = -1e9;
+    v.nodes.forEach(function (n) {
+      var nw = n.w || v.w, nh = n.h || v.h;
+      minX = Math.min(minX, n.x); minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + nw); maxY = Math.max(maxY, n.y + nh);
+    });
+    var r = document.getElementById("stage").getBoundingClientRect(), pad = 56;
+    var availH = r.height - pad * 2 - (state.level === "group" ? 42 : 0);
+    var s = Math.min((r.width - pad * 2) / (maxX - minX), availH / (maxY - minY), 1.1);
+    var sc = Math.max(0.25, s);
+    var tx = (r.width - (maxX - minX) * sc) / 2 - minX * sc;
+    var centered = (r.height - (maxY - minY) * sc) / 2 - minY * sc + 14;
+    var ty = state.level === "group" ? Math.max(44, centered) : 78 - minY * sc;
+    camera(sc, tx, ty, 460);
+  }
+
+  var drag = null;
+  svg.addEventListener("mousedown", function (e) {
+    if (e.target.closest(".node")) return;
+    drag = { x: e.clientX - state.tx, y: e.clientY - state.ty };
+    svg.classList.add("dragging");
+  });
+  window.addEventListener("mousemove", function (e) {
+    if (!drag) return;
+    vp.classList.add("nofx");
+    state.tx = e.clientX - drag.x; state.ty = e.clientY - drag.y; applyTransform();
+  });
+  window.addEventListener("mouseup", function () {
+    drag = null; svg.classList.remove("dragging");
+    setTimeout(function () { vp.classList.remove("nofx"); }, 30);
+  });
+  svg.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    var r = svg.getBoundingClientRect();
+    var mx = e.clientX - r.left, my = e.clientY - r.top;
+    var next = Math.min(3, Math.max(0.25, state.scale * (e.deltaY < 0 ? 1.1 : 0.91)));
+    var k = next / state.scale;
+    state.tx = mx - (mx - state.tx) * k;
+    state.ty = my - (my - state.ty) * k;
+    state.scale = next;
+    applyTransform();
+  }, { passive: false });
+
+  var THEMES = ["auto", "light", "dark"];
+  document.getElementById("themeBtn").onclick = function () {
+    state.theme = THEMES[(THEMES.indexOf(state.theme) + 1) % 3];
+    document.documentElement.setAttribute("data-theme", state.theme);
+    document.getElementById("themeBtn").title = state.theme === "auto" ? "跟随系统" : state.theme === "light" ? "浅色" : "深色";
+  };
+  document.getElementById("zIn").onclick = function () { state.scale = Math.min(3, state.scale * 1.2); applyTransform(); };
+  document.getElementById("zOut").onclick = function () { state.scale = Math.max(0.25, state.scale / 1.2); applyTransform(); };
+  document.getElementById("zFit").onclick = fit;
+  document.getElementById("tFit").onclick = fit;
+  document.getElementById("tOverview").onclick = function () { state.level = "group"; state.group = null; state.sel = null; state.module = null; render(); fit(); };
+  document.getElementById("tSub").onclick = function () {
+    var gid = state.group || state.sel;
+    if (!gid || !DATA.subs[gid]) return;
+    state.level = "sub"; state.group = gid; state.sel = null; render(); fit();
+  };
+  document.getElementById("tFiles").onclick = function () {
+    if (!state.group || !DATA.files[state.group]) return;
+    state.level = "files"; state.sel = state.module; render(); zoomTo(0.72, 24, 46);
+  };
+  document.getElementById("tDegraded").onclick = function () {
+    state.onlyDegraded = !state.onlyDegraded; this.classList.toggle("on", state.onlyDegraded); applyDegradedFilter();
+  };
+  document.getElementById("q").addEventListener("input", function (e) { filter(e.target.value.trim()); });
+  window.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "INPUT") return;
+    if (e.key === "1") { state.level = "group"; state.group = null; state.sel = null; render(); fit(); }
+    if (e.key === "2" && state.group) { state.level = "sub"; state.sel = null; render(); fit(); }
+    if (e.key === "3" && state.group) { state.level = "files"; render(); zoomTo(0.72, 24, 46); }
+    if (e.key === "f" || e.key === "F") fit();
+    if (e.key === "Escape") ascend();
+  });
+
+  // 顶部数字滚动
+  (function countUp() {
+    var ns = document.querySelectorAll(".stat b[data-n]");
+    Array.prototype.forEach.call(ns, function (n) {
+      var to = +n.getAttribute("data-n"), t0 = performance.now();
+      function step(t) {
+        var k = Math.min(1, (t - t0) / 700), e = 1 - Math.pow(1 - k, 3);
+        n.textContent = fmt(Math.round(to * e));
+        if (k < 1) requestAnimationFrame(step);
+      }
+      requestAnimationFrame(step);
+    });
+  })();
+
+  render(); fit();
+  window.addEventListener("resize", fit);
+})();
+</script>
+</body>
+</html>
