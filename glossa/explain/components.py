@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from glossa import fact_ids
 from glossa.explain import comp_file, comp_graph, comp_repo, comp_text, guard, outline
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 UNTRACED_MARK = '<mark class="untraced">'
 _MARKED = frozenset({"text", "custom"})

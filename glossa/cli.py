@@ -23,9 +23,9 @@ import sys
 from glossa import cli_explain, cli_facts, schema_repo
 from glossa.cli_facts import KINDS, doc_or_exit, fail
 from glossa.explain import ai_pipeline, llm_config, narrate, render
-from papertrace.exceptions import BuildError, LLMUnavailable, TraceSchemaError
-from papertrace.exit_codes import MISSING_RUNTIME
-from papertrace.schema_validate import dump_trace
+from papertrace.api import BuildError, LLMUnavailable, TraceSchemaError
+from papertrace.api import MISSING_RUNTIME
+from papertrace.api import dump_trace
 
 OK = 0
 SCHEMA_FAIL = 1

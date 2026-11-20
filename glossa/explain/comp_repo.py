@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import html
 
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 def fmt(value) -> str:
     """统一出口：None → 空、bool → 是否、int → 千分位、其余转义。"""

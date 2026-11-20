@@ -22,8 +22,8 @@ from glossa import entries as entries_mod
 from glossa import (fact_ids, facts_io, graph, lang, manifests, manifests_cs, repo_paths,
                     resolve, resolve_cs, scan)
 from glossa.lang import generic
-from papertrace.exceptions import BuildError
-from papertrace.paths import portable_path
+from papertrace.api import BuildError
+from papertrace.api import portable_path
 
 _TOOL = {"name": "glossa", "version": "0.1.0"}
 _SHA = re.compile(r"^[0-9a-f]{40}$")

@@ -11,7 +11,7 @@ from __future__ import annotations
 import html
 
 from glossa.explain import guard, markdown
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 _COLUMNS: dict[str, tuple[str, ...]] = {
     "files": ("path", "lang", "lines", "bytes", "symbols", "parse"),

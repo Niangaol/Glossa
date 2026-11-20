@@ -13,7 +13,7 @@ from glossa import keyfiles
 from glossa.exclude import SYMBOL_LANGS
 from glossa.explain.comp_repo import fmt, package_finder
 from glossa.explain.comp_text import cell
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 def _row(doc, path):
     """doc.files 里那一行；没有就抛 BuildError（path 已由 validate_blocks 挡过，这是二道闸）。"""

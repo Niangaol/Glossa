@@ -13,7 +13,7 @@ import json
 import pathlib
 
 from glossa import facts as facts_mod
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 CACHE_ROOT = pathlib.Path("output") / "mcp-cache"
 

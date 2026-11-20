@@ -1,7 +1,7 @@
 r"""repo.json 的便携化与泄漏诊断（T6，R291：trace 专用函数不可复用）。
 
 papertrace.paths.portable_path 的五类行为照用（base 之下转相对、base 自身 '.', 相对输入
-只统一分隔符、base 之外原样返回、URL 原样返回），但 schema_validate.relativize_doc /
+只统一分隔符、base 之外原样返回、URL 原样返回），但 schema.validate.relativize_doc /
 leaked_absolute 只认 trace 的四处字段；repo.json 有 11 个键、facts 里还有模型可能写进
 text 的字符串，所以这里另写递归遍历：
 - portable_doc 改写**所有**本机绝对路径串，返回改写条数；
@@ -19,7 +19,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from papertrace.paths import portable_path
+from papertrace.api import portable_path
 
 _ABS = re.compile(r"^[A-Za-z]:[\\/]|^\\\\|^/")
 _ABS_TOKEN = re.compile(r"[A-Za-z]:[\\/][^\s，。、；：\"'（）]*|\\\\[^\s，。、；：\"'（）]*")

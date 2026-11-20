@@ -23,7 +23,7 @@ import html as _html
 import json
 import re
 
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 NAME, BOGUS = "fake", 8675309   # BOGUS 是溯源闸探针：任何台账里都不会有这个数
 MAX_CARD, MAX_EDGE = 3, 4       # 一节最多搬几条事实 / 一张图最多画几条边

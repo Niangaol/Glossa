@@ -17,8 +17,8 @@ from glossa.cli_facts import KINDS
 from glossa.explain import ai_pipeline, components, outline, render
 from glossa.mcp.state import (cache_meta, default_dir, ensure, fail, int_arg, ok,
                               repo_root, store)
-from papertrace.exceptions import BuildError
-from papertrace.schema_validate import dump_trace
+from papertrace.api import BuildError
+from papertrace.api import dump_trace
 
 MAX_SOURCE_LINES = 200
 MODE_KINDS = ("program", "ai")           # R510：mode 只认这两个小写值

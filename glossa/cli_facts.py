@@ -12,8 +12,8 @@ import pathlib
 import sys
 
 from glossa import facts as facts_mod, schema_repo
-from papertrace.exceptions import BuildError, TraceSchemaError
-from papertrace.exit_codes import UNIMPLEMENTED, UNTRACEABLE
+from papertrace.api import BuildError, TraceSchemaError
+from papertrace.api import UNIMPLEMENTED, UNTRACEABLE
 
 KINDS = ("file", "pkg", "project", "entry", "import", "symbol", "namespace",
          "graph", "excluded", "degraded", "source", "totals", "bonus")

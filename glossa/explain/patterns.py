@@ -12,7 +12,7 @@ pattern/caption/nodes/edges/groups（R512 另加 bars/cards 数据数组，没�
 
 from __future__ import annotations
 
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 MAX_NODES = 60
 MAX_BARS, MAX_CARDS = 12, 8      # R512：AI 给的柱状/卡片数据也有上限，超了截断并记一句

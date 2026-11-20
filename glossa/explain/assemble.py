@@ -17,7 +17,7 @@ import pathlib
 from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
 from glossa.explain import draw, gates, styles
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 _TEMPLATE_DIR = pathlib.Path(__file__).resolve().parent.parent / "templates"
 _TEMPLATE = "ai_page.html.j2"

@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 
 from glossa.explain import fake_llm, llm_config, narrate
-from papertrace.exceptions import BuildError, LLMUnavailable
+from papertrace.api import BuildError, LLMUnavailable
 
 DEV_FAKE = "本页由离线桩生成，未调用真实模型"
 STUB_MODE = "本页由离线桩分节组装，未调用真实模型"   # R519：不许与「模型分节撰写」并存
@@ -38,7 +38,7 @@ def backend():
         timeout, limit = llm_config.timeout_seconds(), llm_config.max_tokens()
         if timeout is None and limit is None:
             return narrate.get_llm()          # 两项都没配：保持后端自己的默认
-        from papertrace.llm.openai_backend import OpenAICompatBackend
+        from papertrace.api import OpenAICompatBackend
         kwargs = {}
         if timeout is not None:
             kwargs["timeout"] = timeout

@@ -22,8 +22,8 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoes
 
 from glossa import keyfiles
 from glossa.explain import components
-from papertrace.constants import HTML_MAX_BYTES
-from papertrace.exceptions import BuildError
+from papertrace.api import HTML_MAX_BYTES
+from papertrace.api import BuildError
 
 _TEMPLATE_DIR = pathlib.Path(__file__).resolve().parent.parent / "templates"
 _TEMPLATE = "glossa.html.j2"

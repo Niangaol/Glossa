@@ -24,7 +24,7 @@ from glossa.explain import assemble, fake_llm, gates, pack as pack_mod, prompt
 from glossa.explain.llm_bridge import (ChatAdapter, DEV_FAKE, STUB_MODE,   # R517：真后端适配层
                                       as_completer, backend, deviation,
                                       build_llm as _build_llm, mode_text)
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 MODE = "ai"
 MAX_SECTIONS = 8

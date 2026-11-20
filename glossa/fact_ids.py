@@ -19,7 +19,7 @@ import re
 
 from glossa import fact_text, facts_io
 from glossa.facts_io import numbers_of
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 FACT_KINDS: tuple[str, ...] = (
     "totals", "files", "file", "pkg", "project", "entry", "import", "symbol",

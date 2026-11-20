@@ -1,6 +1,6 @@
 """repo.json 的唯一校验入口（T6，R291/R295）。
 
-**不复用** papertrace.schema_validate.validate_trace：它内部调 structural_errors 查
+**不复用** papertrace.schema.validate.validate_trace：它内部调 structural_errors 查
 nodes/symbols，是 trace 专用；硬复用会让 repo.json 的校验静默漏掉全部字段。
 这里用 Draft202012Validator + glossa/schema/repo.json（11 顶层键全 required、
 additionalProperties: false 覆盖到每个嵌套对象），错误**一次全报**、按字段路径排序。
@@ -13,7 +13,7 @@ import pathlib
 
 import jsonschema
 
-from papertrace.exceptions import TraceSchemaError
+from papertrace.api import TraceSchemaError
 
 SCHEMA_PATH = pathlib.Path(__file__).parent / "schema" / "repo.json"
 

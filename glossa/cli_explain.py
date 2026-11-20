@@ -13,8 +13,8 @@ import pathlib
 
 from glossa import cli_facts
 from glossa.explain import ai_pipeline, llm_config, styles
-from papertrace.exceptions import BuildError, LLMUnavailable
-from papertrace.exit_codes import MISSING_RUNTIME
+from papertrace.api import BuildError, LLMUnavailable
+from papertrace.api import MISSING_RUNTIME
 
 KINDS = ("fake", "openai", "ollama")   #: --llm 的两个 AI 路径取值；裸 --llm 仍走旧路径
 CHOICES = ("fake", "openai", "ollama", "offline")   # R510：argparse 直接挡掉拼错的值

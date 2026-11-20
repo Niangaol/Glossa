@@ -15,8 +15,8 @@ import re
 from glossa import fact_ids, keyfiles
 from glossa.explain import components, outline
 from glossa.explain.narrate_graph import entry_text, gaps_text, graph_text, join_text, sentence
-from papertrace.exceptions import BuildError
-from papertrace.llm.client import get_llm
+from papertrace.api import BuildError
+from papertrace.api import get_llm
 
 ENV_GLOSSA_BACKEND = "GLOSSA_LLM_BACKEND"
 ENV_PAPER_BACKEND = "PAPERTRACE_LLM_BACKEND"

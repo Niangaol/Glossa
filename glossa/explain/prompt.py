@@ -16,7 +16,7 @@ import json
 
 from glossa.explain import pack as pack_mod
 from glossa.explain import patterns, styles
-from papertrace.exceptions import BuildError
+from papertrace.api import BuildError
 
 MAX_FACT_CHARS = 120        # 每条事实在提示里只留这么长（全文在段包里）
 PEEK = 200                  # 报错时附的原文长度
