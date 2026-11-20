@@ -22,6 +22,8 @@ import sys
 from pathlib import Path
 
 import pytest
+
+pytest.importorskip("torch", reason="这两个模块要真实追踪才能构造 trace（CPU 版 torch 即可）")
 from markupsafe import escape
 
 from papertrace.align import embed as embed_module

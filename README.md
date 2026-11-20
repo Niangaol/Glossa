@@ -41,7 +41,7 @@ python -m papertrace --help
 python -m glossa --help
 ```
 
-`.[dev]` 只装 `jsonschema` / `jinja2` / `pytest`（见 `pyproject.toml`）：台账、离线讲解页、全部 1299 项测试都能跑。
+`.[dev]` 只装 `jsonschema` / `jinja2` / `pytest`（见 `pyproject.toml`）：台账与离线讲解页开箱可用。整套 **1299 项测试**里有 464 项要真实追踪（`torch.export`），没装 torch 时那 41 个测试模块整块 skip（不是失败），其余 **794 项照跑**；装了 torch 就是 1299 全绿。
 要跑**真实算子追踪**（`build` 不带 `--skeleton`）再补一个 torch，CPU 版就够（探针默认 CPU）：
 
 ```bash

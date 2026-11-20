@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pytest
 
+pytest.importorskip("torch", reason="这两个模块要真实追踪才能构造 trace（CPU 版 torch 即可）")
+
 from papertrace.align import embed as embed_module
 from papertrace.align import judge as judge_module
 from papertrace.align.score import confidence
